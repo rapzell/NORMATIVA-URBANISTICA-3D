@@ -1,3 +1,6 @@
+# NORMATIVA GALICIA 3D
+[![Smoke](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml)
+
 ## Troubleshooting
 
 ### PowerShell bloquea la ejecución de scripts (ExecutionPolicy)
