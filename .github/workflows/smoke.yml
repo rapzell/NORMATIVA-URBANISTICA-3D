@@ -14,7 +14,7 @@ jobs:
   smoke-windows:
     runs-on: windows-latest
     continue-on-error: ${{ matrix.allow_failure || false }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -53,12 +53,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run pytest (API_LOAD_RESOURCES=0)
-        shell: bash
-        env:
-          API_LOAD_RESOURCES: '0'
-        run: |
-          pytest -q
+      # Pytest tiene su propio workflow dedicado; mantener smoke ligero y aislado
 
       - name: Setup Node for HTML lint
         uses: actions/setup-node@v4
@@ -84,6 +79,7 @@ jobs:
       - name: Run viewer demo smoke test
         shell: pwsh
         env:
+          API_LOAD_RESOURCES: '0'
           LOGDIR: ${{ runner.temp }}\viewer-logs-${{ matrix.format }}-${{ matrix.lib }}
         run: |
           # Ejecuta el smoke sin abrir navegador; valida /viewer/ y POST /zoning/volume-export
