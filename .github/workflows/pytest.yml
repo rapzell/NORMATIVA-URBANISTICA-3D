@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pytest:
     runs-on: windows-latest
@@ -41,3 +45,4 @@ jobs:
             **/.pytest_cache/**
             **/pytest-*.log
           if-no-files-found: ignore
+          retention-days: 7
