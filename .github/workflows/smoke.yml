@@ -5,6 +5,10 @@ on:
   push:
     branches: [ main, master ]
 
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke-windows:
     runs-on: windows-latest
@@ -90,3 +94,4 @@ jobs:
         with:
           name: viewer-logs-${{ matrix.format }}-${{ matrix.lib }}
           path: ${{ runner.temp }}\viewer-logs-${{ matrix.format }}-${{ matrix.lib }}
+          retention-days: 7
