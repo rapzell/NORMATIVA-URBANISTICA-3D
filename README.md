@@ -274,7 +274,7 @@ Política de precedencia recomendada:
 
 - Por defecto, se prioriza normativa municipal sobre autonómica si existe superposición. La API y el `rules engine` pueden utilizar `precedence='municipal_over_autonomic'` para dejar constancia de la regla aplicada.
 
-Ejemplo de CSV (ver `datos/planes_municipales_sample.csv`):
+Ejemplo de CSV (ver `datos/planes_ejemplo_residencial.csv`):
 
 ```csv
 municipio,subzona,altura_maxima_m,retranqueo_min_m,setback_front_m,setback_side_m,setback_back_m,front_direction_default,ocupacion_max,edificabilidad_max_m2_m2
@@ -312,13 +312,13 @@ Invoke-RestMethod -Uri http://127.0.0.1:8000/zoning/volume -Method Post -Content
 }'
 ```
 
-### CSV de ejemplo Vigo/Boiro y script de extracción
+### CSV de ejemplo residencial
 
-- CSV listo para usar: `datos/planes_vigo_boiro.csv` (valores residenciales iniciales extraídos de los PDFs oficiales de Vigo y Boiro).
+- CSV listo para usar: `datos/planes_ejemplo_residencial.csv` (muestras residenciales mínimas para pruebas locales y CI).
 - Activación rápida (PowerShell):
   ```powershell
   $env:PLAN_PROVIDER = 'csv'
-  $env:PLAN_CSV_PATH = 'datos/planes_vigo_boiro.csv'
+  $env:PLAN_CSV_PATH = 'datos/planes_ejemplo_residencial.csv'
   uvicorn app.main:app --reload
   ```
 - Script de extracción (plantilla) para regenerar el CSV desde semillas confirmadas y verificar presencia de PDFs fuente:
