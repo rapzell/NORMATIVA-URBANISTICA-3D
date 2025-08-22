@@ -1,0 +1,29 @@
+# Normalize text files and control EOLs across platforms
+* text=auto
+
+# Unix-style line endings for source and data files commonly used in CI
+*.py   text eol=lf
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.csv  text eol=lf
+*.html text eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
+
+# Windows-style for Windows scripts
+*.ps1  text eol=crlf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.glb binary
+*.gltf binary
+*.gz binary
