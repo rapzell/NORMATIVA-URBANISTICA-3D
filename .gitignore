@@ -43,3 +43,9 @@ resultados/
 # Temporary
 tmp/
 *.tmp
+
+# Data (keep only minimal samples)
+datos/
+!datos/sample_parcela.geojson
+!datos/sample_street_axis.geojson
+!datos/planes_ejemplo_residencial.csv
