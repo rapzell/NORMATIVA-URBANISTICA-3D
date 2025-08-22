@@ -1,0 +1,36 @@
+groups:
+- name: zoning-volume-export
+  interval: 1m
+  rules:
+  - alert: VolumeExportHighErrorRate
+    expr: |
+      (sum by (format) (rate(api_volume_export_requests_total{status!~"2.."}[5m]))
+       /
+       sum by (format) (rate(api_volume_export_requests_total[5m]))) > 0.05
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: High error rate on volume export ({{ $labels.format }})
+      description: Error rate >5% for 10m on format {{ $labels.format }}
+
+  - alert: VolumeExportHighP95Size
+    expr: |
+      histogram_quantile(0.95, sum by (le, format) (rate(api_volume_export_size_bytes_bucket{status="200"}[5m])))
+        > 5e6
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: High p95 payload size on volume export
+      description: p95 size > 5 MB for 10m (format={{ $labels.format }})
+
+  - alert: VolumeExportLowTraffic
+    expr: |
+      sum(rate(api_volume_export_requests_total[15m])) < 0.001
+    for: 30m
+    labels:
+      severity: info
+    annotations:
+      summary: Low traffic on volume export endpoint
+      description: Requests per second < 0.001 in the last 30 minutes

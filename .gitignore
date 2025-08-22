@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.build/
+build/
+dist/
+.coverage*
+.pytest_cache/
+
+# Environments
+.env
+.env.*
+.venv/
+venv/
+
+# Logs and smoke artifacts
+logs-*/
+logs-smoke-*/
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Node / Web (keep actual app files tracked; ignore common noise)
+node_modules/
+*.map
+
+# Results/output
+resultados/
+
+# Temporary
+tmp/
+*.tmp

@@ -1,0 +1,3303 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Visor 3D (GLTF/GLB) - Zoning</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #toolbar { position: relative; z-index: 1000; padding: 8px; background: #f6f8fa; border-bottom: 1px solid #e1e4e8; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #map { position: absolute; left:0; right:0; bottom:0; top:48px; display:none; z-index: 0; }
+    #canvas { position: relative; width: 100%; height: calc(100% - 48px); display: block; z-index: 1; }
+    /* Asegurar que log/metrics quedan por encima del canvas y acciones debug */
+    #log { z-index: 920; }
+    #metrics { z-index: 910; }
+    input[type="text"] { width: 520px; }
+    .hint { color: #666; font-size: 12px; }
+    /* Marcadores UI para pruebas */
+    #toolbar button, #toolbar select, #toolbar input[type="checkbox"], #toolbar input[type="number"], #toolbar input[type="text"] { position: relative; }
+    .ui-marker { position: absolute; top: -6px; right: -6px; background: #ffeb3b; color: #000; border: 1px solid #c9b200; border-radius: 10px; padding: 0 4px; font-size: 10px; line-height: 14px; pointer-events: none; z-index: 2; }
+    /* Forzar salto de fila en toolbar */
+    .toolbar-break { flex-basis: 100%; height: 0; margin: 0; padding: 0; border: 0; }
+    /* Modo compacto */
+    body.compact #toolbar { padding: 6px; gap: 6px; }
+    body.compact #canvas { height: calc(100% - 40px); }
+    body.compact #map { top: 40px; }
+    body.compact input[type="text"] { width: 420px; }
+    body.compact .hint { font-size: 11px; }
+    body.compact #log, body.compact #metrics { font-size: 11px; padding: 5px 7px; }
+    /* Badge de aviso */
+    .badge { display:inline-block; padding:1px 6px; border-radius:10px; font-size:11px; }
+    .badge-warn { background:#fdd; color:#900; border:1px solid #f99; }
+    /* Vista dividida: mapa visible en 40% inferior */
+    body.map-split #map { display:block; position:absolute; left:0; right:0; height:40%; bottom:0; top:auto; z-index: 0; }
+    body.map-split #canvas { height: calc(60% - 48px); }
+    body.compact.map-split #map { height:40%; bottom:0; top:auto; }
+    body.compact.map-split #canvas { height: calc(60% - 40px); }
+    /* Controles avanzados: ocultos por defecto */
+    .adv { display: none; }
+    body.adv-on .adv { display: initial; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <label>URL GLTF/GLB:</label>
+    <input id="url" type="text" placeholder="http://localhost:8000/zoning/volume-export?format=glb&download=true" />
+    <button id="load">Cargar</button>
+    <label style="margin-left:8px">Librerías:</label>
+    <select id="lib-source">
+      <option value="auto">Auto</option>
+      <option value="local">Local</option>
+      <option value="jsdelivr">CDN (jsDelivr)</option>
+      <option value="unpkg">CDN (unpkg)</option>
+    </select>
+    <span id="lib-status" class="hint" style="margin-left:6px"></span>
+    <button id="check-libs" class="adv">Verificar libs locales</button>
+    <button id="clear-log">Limpiar log</button>
+    <button id="toggle-panels">Ocultar paneles</button>
+    <button id="toggle-panels-pos" title="Posición de los paneles de diagnóstico">Paneles: abajo</button>
+    <button id="toggle-compact">Compacto</button>
+    <button id="toggle-advanced" title="Mostrar/ocultar controles avanzados">Más…</button>
+    <button id="toggle-markers" class="adv" title="Poner números a los controles para reportar">UI markers</button>
+    <div class="toolbar-break"></div>
+    <button id="toggle-map" class="adv" title="Mostrar mapa base (experimental)">Mapa: off</button>
+    <input id="map-style-url" class="adv" type="text" placeholder="URL style MapLibre (opcional)" style="width:360px" />
+    <select id="map-style-preset" class="adv" title="Estilos de mapa (presets)">
+      <option value="">Presets…</option>
+      <option value="https://demotiles.maplibre.org/style.json">MapLibre Demo (Vector)</option>
+      <option value="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json">Carto Positron GL</option>
+      <option value="https://tiles.openfreemap.org/styles/bright-matter/style.json">OpenFreeMap Bright</option>
+      <option value="https://tiles.openfreemap.org/styles/liberty/style.json">OpenFreeMap Liberty</option>
+      <option value="https://api.maptiler.com/maps/streets/style.json?key=YOUR_KEY">MapTiler Streets (requiere API key)</option>
+      <option value="raster:osm_standard">Raster: OSM Standard</option>
+      <option value="raster:esri_world_imagery">Raster: Esri World Imagery</option>
+    </select>
+    <button id="apply-map-style" class="adv" title="Aplicar estilo del mapa">Aplicar estilo</button>
+    <span id="reproj-warn-badge" class="badge badge-warn adv" style="display:none;margin-left:6px" title="Aviso de reproyección (CRS)">⚠ CRS</span>
+    <input id="auto-frame" class="adv" type="checkbox" style="margin-left:8px" />
+    <label for="auto-frame" class="hint adv">Auto encuadrar</label>
+    <input id="sync-reverse" class="adv" type="checkbox" style="margin-left:8px" />
+    <label for="sync-reverse" class="hint adv" title="Acoplar movimientos 3D → mapa">Sync 3D→mapa</label>
+    <label class="hint adv" style="margin-left:8px" for="sync-factor">Sync factor</label>
+    <input id="sync-factor" class="adv" type="number" min="0.2" max="2" step="0.1" style="width:70px" title="Intensidad acoplamiento (0.2-2.0)" />
+    <label class="hint adv" style="margin-left:8px">Umbral tris:</label>
+    <input id="tri-warn-input" class="adv" type="number" min="0" step="10000" style="width:110px" title="0 desactiva el aviso" />
+    <button id="tri-warn-apply" class="adv" title="Aplicar umbral de triángulos">Fijar</button>
+    <span id="tri-warn-badge" class="badge badge-warn adv" style="display:none" title="Triángulos exceden el umbral">⚠ tris</span>
+    <input id="axis-quality-enable" class="adv" type="checkbox" style="margin-left:10px" />
+    <label for="axis-quality-enable" class="hint adv" title="Activar/desactivar evaluación de calidad del eje">Calidad eje</label>
+    <label class="hint adv" style="margin-left:8px" title="Distancia máxima eje→parcela para considerarlo válido">Eje dist (m):</label>
+    <input id="axis-thres-m" class="adv" type="number" min="0" step="1" style="width:90px" />
+    <label class="hint adv" style="margin-left:6px" title="Desalineación angular máxima respecto al borde más cercano">Eje ∠ (°):</label>
+    <input id="axis-thres-deg" class="adv" type="number" min="0" max="90" step="1" style="width:80px" />
+    <button id="axis-thres-apply" class="adv" title="Aplicar umbrales de calidad de eje">Aplicar</button>
+    <div class="toolbar-break"></div>
+    <button id="demo-glb" class="adv">Demo GLB</button>
+    <button id="demo-gltf" class="adv">Demo GLTF</button>
+    <button id="preset-vigo">Preset: Vigo Centro (GLB)</button>
+    <button id="preset-vigo-auto" title="Usa derivación automática del backend">Preset: Vigo (Auto)</button>
+    <button id="preset-boiro" class="adv">Preset: Boiro RZ-2 (GLB)</button>
+    <button id="preset-axis-used" class="adv" title="Eje pegado a la parcela → debería usarse">Preset: eje usado</button>
+    <button id="preset-axis-ignored" class="adv" title="Eje lejos de la parcela → probablemente ignorado">Preset: eje ignorado</button>
+    <button id="toggle-grid" title="Mostrar/ocultar rejilla 3D">Rejilla: on</button>
+    <button id="toggle-parcela" class="adv">Parcela: on/off</button>
+    <button id="toggle-eje" class="adv">Eje calle: on/off</button>
+    <button id="upload-eje" class="adv" title="Cargar eje de calle (GeoJSON LineString/MultiLineString)">Cargar eje…</button>
+    <button id="clear-eje" class="adv" title="Borrar eje de calle persistido y quitar del mapa">Borrar eje</button>
+    <button id="reanchor-sync" class="adv" title="Recalcular anclaje mapa↔3D con el estado actual">Reanclar sync</button>
+    <button id="anchor-from-click" class="adv" title="Selecciona un punto en el mapa para fijar el anclaje">Anclar con clic</button>
+    <button id="save-anchor" class="adv" title="Guardar anclaje en este navegador">Guardar anclaje</button>
+    <button id="clear-anchor" class="adv" title="Borrar anclaje guardado">Borrar anclaje</button>
+    <button id="center-view" title="Centrar vista en modelo/parcela (C)">Centrar</button>
+    <span class="hint adv" style="margin-left:8px">Ease (ms):</span>
+    <input id="sync-ease-ms" class="adv" type="number" min="0" max="500" step="10" style="width:90px" title="Duración de suavizado para la sincronización" />
+    <span class="hint adv" style="margin-left:8px">Ajuste fino (m):</span>
+    <label class="adv">X</label>
+    <input id="fine-off-x" class="adv" type="number" step="0.1" style="width:90px" title="Offset local X (metros)" />
+    <label class="adv">Z</label>
+    <input id="fine-off-z" class="adv" type="number" step="0.1" style="width:90px" title="Offset local Z (metros)" />
+    <span class="hint adv">(Ctrl+clic mapa para fijar anclaje)</span>
+    <span id="front-badge" class="badge" style="display:none" title="Lado de frente detectado">front: —</span>
+    <span id="axis-badge" class="badge" style="display:none" title="Uso de eje de calle">axis: —</span>
+    <span id="body-badge" class="badge" style="display:none" title="Resumen de la última petición">body: —</span>
+    <button id="toggle-bodybadge" class="adv" title="Mostrar/ocultar resumen de la última petición">Body</button>
+    <button id="copy-bodybadge" class="adv" title="Copiar resumen de la última petición" aria-label="Copiar resumen del body">Copy</button>
+    <button id="fine-off-apply" class="adv" title="Aplicar offsets de alineación fina">Aplicar</button>
+    <button id="fine-off-reset" class="adv" title="Quitar offsets de alineación fina">Reset</button>
+    <input id="diag-full" type="checkbox" style="margin-left:10px" />
+    <label for="diag-full" class="hint" title="Forzar diagnostics_verbosity=full en peticiones">Diag full</label>
+    <button id="demo-cityjson-gzip" class="adv">Descargar CityJSON (gzip)</button>
+    <button id="demo-cityjson-holes" class="adv">CityJSON con agujeros (descargar)</button>
+    <button id="demo-cityjson-mpoly" class="adv">CityJSON MultiPolygon (descargar)</button>
+    <button id="demo-cityjson-plain" class="adv">Descargar CityJSON (sin gzip)</button>
+    <button id="demo-cityjson-mpoly-holes" class="adv">CityJSON MultiPolygon con agujeros (descargar)</button>
+    <button id="share-scenario" title="Copiar URL reproducible del escenario actual">Compartir</button>
+    <span class="hint">Pega la URL del endpoint. Soporta: GLB con download=true (recomendado), GLTF con download=true, o respuesta JSON { glb_b64 } con download=false.</span>
+    <div class="hint" style="margin-top:4px;color:#555">Nota: este visor solo visualiza GLB/GLTF. Los CityJSON se descargan (no se renderizan).</div>
+    <div class="adv" style="margin-top:6px">
+      <span class="hint">Origen geodésico del modelo:</span>
+      <label>Lon</label>
+      <input id="model-org-lon" type="number" step="0.000001" style="width:110px" title="Longitud (°)" />
+      <label>Lat</label>
+      <input id="model-org-lat" type="number" step="0.000001" style="width:110px" title="Latitud (°)" />
+      <label>Alt</label>
+      <input id="model-org-alt" type="number" step="0.1" style="width:90px" title="Altura (m)" />
+      <button id="model-org-apply" title="Aplicar origen geodésico del modelo">Aplicar</button>
+      <button id="model-org-reset" title="Eliminar origen geodésico del modelo">Reset</button>
+      <button id="model-org-from-anchor" title="Usar el anclaje actual del mapa como origen">Origen=anclaje</button>
+    </div>
+  </div>
+  <div id="map"></div>
+  <canvas id="canvas"></canvas>
+  <div id="log" style="position:fixed;left:8px;bottom:8px;max-width:60%;max-height:30%;overflow:auto;background:#000;color:#0f0;padding:6px 8px;font:12px/1.4 monospace;border-radius:4px;opacity:.85"></div>
+  <div id="metrics" style="position:fixed;right:8px;bottom:8px;max-width:38%;max-height:40%;overflow:auto;background:#111;color:#fff;padding:8px 10px;font:12px/1.4 monospace;border-radius:4px;opacity:.9"></div>
+  <div id="debug" style="position:fixed;right:8px;top:104px;max-width:38%;max-height:40%;overflow:auto;background:#1b2631;color:#e8f6f3;padding:8px 10px;font:12px/1.4 monospace;border-radius:4px;opacity:.95;z-index:800"></div>
+  <div id="debug-actions" style="position:fixed;right:8px;top:72px;display:flex;gap:6px;z-index:900">
+    <button id="dbg-copy-req" title="Copiar última petición JSON" style="font-size:11px">Copy req</button>
+    <button id="dbg-save-req" title="Descargar última petición JSON" style="font-size:11px">Save req</button>
+    <button id="dbg-copy-resp" title="Copiar resumen de última respuesta" style="font-size:11px">Copy resp</button>
+    <button id="dbg-retry" title="Repetir la última carga con la misma URL" style="font-size:11px">Retry</button>
+    <button id="dbg-copy-url" title="Copiar la última URL usada" style="font-size:11px">Copy URL</button>
+    <button id="dbg-copy-curl" title="Copiar comando curl para reproducir la última petición" style="font-size:11px">Copy cURL</button>
+  </div>
+
+  <!-- Import map para resolver el specifier 'three' usado dentro de los loaders/controladores -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+
+  <!-- MapLibre GL (CDN) -->
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <!-- Proj4js para reproyección básica EPSG:25829 -> WGS84 -->
+  <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
+
+  <script type="module">
+    // Bootstrap con imports dinámicos y fallback de CDN
+    const logEl = document.getElementById('log');
+    const metrDiv = document.getElementById('metrics');
+    const debugDiv = document.getElementById('debug');
+    let librarySource = 'desconocido';
+    let currentDracoPath = '';
+    const metricsHistory = [];
+    let fps = 0; let __fps_last = performance.now(); let __fps_frames = 0;
+    const sceneStats = { draws: 0, tris: 0, geos: 0, tex: 0, prog: 0 };
+    let triWarn = parseInt(localStorage.getItem('viewer_tri_warn') || '1000000', 10);
+    let triWarnNotified = false;
+    const triWarnBadge = document.getElementById('tri-warn-badge');
+    const diagFullEl = document.getElementById('diag-full');
+    // Global UI helper: toast
+    function showToast(message, timeoutMs = 3500) {
+      try {
+        let toast = document.getElementById('toast');
+        if (!toast) {
+          toast = document.createElement('div'); toast.id = 'toast';
+          toast.style.cssText = 'position:fixed;right:12px;bottom:12px;max-width:360px;background:rgba(0,0,0,0.8);color:#fff;padding:10px 12px;border-radius:6px;z-index:99999;font:12px system-ui,Segoe UI,Arial;box-shadow:0 2px 10px rgba(0,0,0,0.3)';
+          document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.style.display = 'block';
+        setTimeout(() => { toast.style.display = 'none'; }, Math.max(1000, timeoutMs));
+      } catch { alert(message); }
+    }
+    // Warn toast with title and multiline body
+    function toastWarn(title, body, timeoutMs = 4500) {
+      try {
+        let toast = document.getElementById('toast');
+        if (!toast) {
+          toast = document.createElement('div'); toast.id = 'toast';
+          toast.style.cssText = 'position:fixed;right:12px;bottom:12px;max-width:360px;background:rgba(0,0,0,0.85);color:#fff;padding:10px 12px;border-radius:6px;z-index:99999;font:12px system-ui,Segoe UI,Arial;box-shadow:0 2px 10px rgba(0,0,0,0.3)';
+          document.body.appendChild(toast);
+        }
+        toast.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${title}</div><div style="white-space:pre-line">${body}</div>`;
+        toast.style.display = 'block';
+        setTimeout(() => { toast.style.display = 'none'; }, Math.max(1000, timeoutMs));
+      } catch { alert(`${title}:\n${body}`); }
+    }
+    const updateTriWarnBadge = () => {
+      if (triWarn > 0 && sceneStats.tris > triWarn) {
+        triWarnBadge.style.display = '';
+        triWarnBadge.textContent = '⚠ tris';
+      } else {
+        triWarnBadge.style.display = 'none';
+      }
+
+      // UI helpers: badges
+
+      function updateFrontBadges(props) {
+        try {
+          const front = props && props.front_detected_side;
+          const used = props && props.street_axis_used;
+          const fb = document.getElementById('front-badge');
+          const ab = document.getElementById('axis-badge');
+          if (front) { fb.style.display = 'inline-block'; fb.textContent = `front: ${front}`; }
+          else { fb.style.display = 'none'; }
+          if (typeof used === 'boolean') { ab.style.display = 'inline-block'; ab.textContent = used ? 'axis: used' : 'axis: ignored'; }
+          else { ab.style.display = 'none'; }
+        } catch {}
+      }
+      // Raster basemap support (dynamic source/layer)
+      function clearRasterBasemap() {
+        try {
+          if (!mapInstance) return;
+          if (mapInstance.getLayer('raster-base')) {
+            mapInstance.removeLayer('raster-base');
+          }
+          if (mapInstance.getSource('raster-src')) {
+            mapInstance.removeSource('raster-src');
+          }
+        } catch {}
+      }
+      function applyRasterPreset(presetId) {
+        if (!mapInstance) return;
+        let tiles = null, tileSize = 256, maxzoom = 19, attribution = '';
+        if (presetId === 'raster:osm_standard') {
+          tiles = [ 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' ];
+          attribution = '© OpenStreetMap contributors';
+          tileSize = 256; maxzoom = 19;
+        } else if (presetId === 'raster:esri_world_imagery') {
+          tiles = [ 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' ];
+          attribution = 'Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+          tileSize = 256; maxzoom = 19;
+        }
+        try {
+          if (!tiles) { clearRasterBasemap(); localStorage.removeItem('viewer_raster_preset'); return; }
+          // Create or update source
+          if (mapInstance.getSource('raster-src')) {
+            try { mapInstance.removeLayer('raster-base'); } catch {}
+            try { mapInstance.removeSource('raster-src'); } catch {}
+          }
+          mapInstance.addSource('raster-src', {
+            type: 'raster',
+            tiles, tileSize, attribution, maxzoom
+          });
+          // Insert layer low in stack; ensure parcel/eje remain on top
+          const beforeId = mapInstance.getLayer('parcel-line') ? 'parcel-line' : undefined;
+          if (beforeId) {
+            mapInstance.addLayer({ id:'raster-base', type:'raster', source:'raster-src' }, beforeId);
+          } else {
+            mapInstance.addLayer({ id:'raster-base', type:'raster', source:'raster-src' });
+          }
+          try { localStorage.setItem('viewer_raster_preset', presetId); } catch {}
+          log('Capa raster aplicada: ' + presetId);
+        } catch (e) { log('Error aplicando raster: ' + e); }
+      }
+    };
+
+    // Ajusta el mapa para encuadrar la parcela actual (fuera de updateTriWarnBadge para ser accesible globalmente)
+    function fitMapToParcel() {
+      try {
+        if (!mapInstance || !mapVisible) return;
+        const src = mapInstance.getSource('parcel-src');
+        const data = src?.serialize?.().data;
+        const feat = data?.features?.[0];
+        if (!feat) return;
+        const coords = feat.geometry.type === 'Polygon' ? feat.geometry.coordinates[0] : (feat.geometry.coordinates?.[0]?.[0] || []);
+        let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+        for (const [lon,lat] of coords) { minX=Math.min(minX,lon); minY=Math.min(minY,lat); maxX=Math.max(maxX,lon); maxY=Math.max(maxY,lat); }
+        if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) {
+          mapInstance.fitBounds([[minX,minY],[maxX,maxY]], { padding: 40, duration: Math.min(800, Math.max(0, syncEaseMs||0)) });
+        }
+      } catch {}
+    }
+
+    function renderMetrics(latest) {
+      const lines = [];
+      if (latest) metricsHistory.unshift(latest);
+      while (metricsHistory.length > 5) metricsHistory.pop();
+      if (metricsHistory.length === 0) {
+        metrDiv.textContent = '';
+        return;
+      }
+
+      // Atajos de teclado: C → compacto, T → foco input umbral, M → Más/Menos, P → Mostrar/Ocultar paneles, B → Paneles arriba/abajo, H → Ayuda, F → Presentación
+      document.addEventListener('keydown', (ev) => {
+        const tag = document.activeElement?.tagName?.toLowerCase();
+        const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || document.activeElement?.isContentEditable;
+        if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        if (ev.key === 'c' || ev.key === 'C') {
+          if (!typing) {
+            ev.preventDefault();
+            compactBtn.click();
+          }
+        } else if (ev.key === 't' || ev.key === 'T') {
+          if (!typing) {
+            ev.preventDefault();
+            triInput.focus();
+            triInput.select();
+          }
+        } else if (ev.key === 'm' || ev.key === 'M') {
+          if (!typing) { ev.preventDefault(); document.getElementById('toggle-advanced')?.click(); }
+        } else if (ev.key === 'p' || ev.key === 'P') {
+          if (!typing) { ev.preventDefault(); document.getElementById('toggle-panels')?.click(); }
+        } else if (ev.key === 'b' || ev.key === 'B') {
+          if (!typing) { ev.preventDefault(); document.getElementById('toggle-panels-pos')?.click(); }
+        } else if (ev.key === 'h' || ev.key === 'H' || ev.key === '?') {
+          if (!typing) { ev.preventDefault(); document.getElementById('help-ui')?.click(); }
+        } else if (ev.key === 'f' || ev.key === 'F') {
+          if (!typing) { ev.preventDefault(); document.getElementById('toggle-present')?.click(); }
+        }
+      });
+      const fmt = (ms) => `${ms.toFixed(1)} ms`;
+      const fmtB = (b) => b != null ? `${b.toLocaleString()} B` : '—';
+      lines.push(`[Métricas] Origen libs: ${librarySource}`);
+      if (currentDracoPath) lines.push(`DRACO: ${currentDracoPath}`);
+      lines.push(`FPS: ${fps.toFixed(1)}`);
+      const [m] = metricsHistory;
+      lines.push(`Última: ${m.method} ${m.url}`);
+      lines.push(`Status: ${m.status}${m.ok ? ' OK' : ''}`);
+      lines.push(`Fetch: ${fmt(m.t_fetch)}  |  Cuerpo: ${fmt(m.t_body)}  |  Loader: ${m.t_loader!=null?fmt(m.t_loader):'—'}  |  Total: ${fmt(m.t_total)}`);
+      lines.push(`Bytes: ${fmtB(m.bytes)}  |  Tipo: ${m.type}`);
+      lines.push(`Escena: draws=${sceneStats.draws}  tris=${sceneStats.tris.toLocaleString()}  geos=${sceneStats.geos}  tex=${sceneStats.tex}  progs=${sceneStats.prog}`);
+      if (triWarn > 0) {
+        const over = sceneStats.tris > triWarn;
+        lines.push(`Umbral triángulos: ${triWarn.toLocaleString()}  ${over ? '⚠ Excedido' : ''}`);
+      }
+      if (metricsHistory.length > 1) {
+        lines.push('Historial (últ. 5):');
+        metricsHistory.slice(1).forEach((h, i) => {
+          lines.push(`  ${i+1}) ${h.method} ${new URL(h.url, location.href).pathname.split('/').pop()}  ${h.status}  ${fmt(h.t_total)}`);
+        });
+      }
+      metrDiv.textContent = lines.join('\n');
+      updateTriWarnBadge();
+    }
+
+    // Debug panel: muestra última petición y respuesta (diagnósticos)
+    let lastRequestBody = null;
+    let lastResponseInfo = null; // { status, ok, type, diagnostics, properties, error }
+    let lastExportUrl = null; // última URL pasada a loadURL (POST volume-export)
+    function renderDebugPanel() {
+      try {
+        const req = lastRequestBody ? JSON.stringify(lastRequestBody, null, 2) : '—';
+        const respParts = [];
+        if (lastResponseInfo) {
+          respParts.push(`status: ${lastResponseInfo.status}${lastResponseInfo.ok ? ' OK' : ''}`);
+          if (lastResponseInfo.type) respParts.push(`type: ${lastResponseInfo.type}`);
+          if (lastResponseInfo.error) respParts.push(`error: ${String(lastResponseInfo.error).slice(0, 400)}`);
+          if (lastResponseInfo.properties) respParts.push('properties: ' + JSON.stringify(lastResponseInfo.properties, null, 2));
+          if (lastResponseInfo.diagnostics) respParts.push('diagnostics: ' + JSON.stringify(lastResponseInfo.diagnostics, null, 2));
+        } else {
+          respParts.push('—');
+        }
+        const body = [
+          'Última petición JSON:',
+          req,
+          '',
+          'Última respuesta:',
+          respParts.join('\n')
+        ].join('\n');
+        debugDiv.textContent = body;
+      } catch (e) {
+        try { debugDiv.textContent = 'Error renderizando debug: ' + e; } catch {}
+      }
+    }
+
+    // Debug action buttons
+    try {
+      const btnCopyReq = document.getElementById('dbg-copy-req');
+      const btnSaveReq = document.getElementById('dbg-save-req');
+      const btnCopyResp = document.getElementById('dbg-copy-resp');
+      const btnRetry = document.getElementById('dbg-retry');
+      const btnCopyUrl = document.getElementById('dbg-copy-url');
+      const btnCopyCurl = document.getElementById('dbg-copy-curl');
+      btnCopyReq?.addEventListener('click', async () => {
+        try {
+          const txt = lastRequestBody ? JSON.stringify(lastRequestBody, null, 2) : '';
+          await navigator.clipboard.writeText(txt);
+          showToast('Petición copiada al portapapeles');
+        } catch (e) { alert('No se pudo copiar la petición: ' + e); }
+      });
+      btnSaveReq?.addEventListener('click', () => {
+        try {
+          if (!lastRequestBody) { alert('No hay petición para guardar.'); return; }
+          const blob = new Blob([JSON.stringify(lastRequestBody, null, 2)], { type: 'application/json' });
+          const a = document.createElement('a');
+          const ts = new Date().toISOString().replace(/[:.]/g,'-');
+          a.href = URL.createObjectURL(blob);
+          a.download = `viewer_request_${ts}.json`;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+        } catch (e) { alert('No se pudo guardar la petición: ' + e); }
+      });
+      btnCopyResp?.addEventListener('click', async () => {
+        try {
+          const parts = [];
+          if (lastResponseInfo) {
+            parts.push(`status: ${lastResponseInfo.status}${lastResponseInfo.ok ? ' OK' : ''}`);
+            if (lastResponseInfo.type) parts.push(`type: ${lastResponseInfo.type}`);
+            if (lastResponseInfo.error) parts.push('error: ' + String(lastResponseInfo.error));
+            if (lastResponseInfo.properties) parts.push('properties: ' + JSON.stringify(lastResponseInfo.properties));
+            if (lastResponseInfo.diagnostics) parts.push('diagnostics: ' + JSON.stringify(lastResponseInfo.diagnostics));
+          }
+          const txt = parts.join('\n');
+          await navigator.clipboard.writeText(txt);
+          showToast('Respuesta copiada al portapapeles');
+        } catch (e) { alert('No se pudo copiar la respuesta: ' + e); }
+      });
+      btnRetry?.addEventListener('click', async () => {
+        try {
+          if (!lastExportUrl) { alert('No hay URL anterior para reintentar.'); return; }
+          await loadURL(lastExportUrl);
+        } catch (e) { alert('No se pudo reintentar: ' + e); }
+      });
+      btnCopyUrl?.addEventListener('click', async () => {
+        try {
+          if (!lastExportUrl) { alert('No hay URL anterior.'); return; }
+          await navigator.clipboard.writeText(lastExportUrl);
+          showToast('URL copiada al portapapeles');
+        } catch (e) { alert('No se pudo copiar la URL: ' + e); }
+      });
+      btnCopyCurl?.addEventListener('click', async () => {
+        try {
+          if (!lastExportUrl) { alert('No hay URL anterior.'); return; }
+          let cmd = '';
+          const hasBody = !!lastRequestBody;
+          if (hasBody) {
+            // Construir curl POST con JSON pretty seguro para shell
+            const bodyStr = JSON.stringify(lastRequestBody);
+            // Escapar comillas para PowerShell/cmd: usamos comillas simples en bash; para cross-shell dejamos JSON en archivo temporal virtual (no viable). Optamos por bash-friendly.
+            const esc = bodyStr.replace(/"/g, '\\"');
+            cmd = `curl -sS -X POST -H "Content-Type: application/json" --data "${esc}" "${lastExportUrl}" -o out.glb`;
+          } else {
+            cmd = `curl -sS "${lastExportUrl}" -o out.bin`;
+          }
+          await navigator.clipboard.writeText(cmd);
+          showToast('cURL copiado al portapapeles');
+        } catch (e) { alert('No se pudo copiar cURL: ' + e); }
+      });
+    } catch {}
+
+    function log(msg) {
+      const t = new Date().toLocaleTimeString();
+      logEl.textContent += `[${t}] ${msg}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(msg);
+    }
+
+    // Utilidad: debounce
+    function debounce(fn, wait = 120) {
+      let tId;
+      return (...args) => {
+        clearTimeout(tId);
+        tId = setTimeout(() => fn.apply(null, args), wait);
+      };
+    }
+
+    // Reordenar controles esenciales en la toolbar sin mover el HTML (usando flex order)
+    function applyToolbarOrder() {
+      try {
+        const orderMap = new Map([
+          // fila esencial: URL, Cargar, Compartir, Centrar, Diag, Paneles, Paneles pos, Compacto
+          ['url', 1],
+          ['load', 2],
+          ['share-scenario', 3],
+          ['center-view', 4],
+          ['diag-full', 5],
+          ['toggle-panels', 6],
+          ['toggle-panels-pos', 7],
+          ['toggle-compact', 8],
+          // resto
+        ]);
+        // Asignar orden bajo a labels/inputs cercanos
+        const diagLabel = document.querySelector('label[for="diag-full"]');
+        if (diagLabel) diagLabel.style.order = 5;
+        // Aplicar orden por ID
+        orderMap.forEach((ord, id) => {
+          const el = document.getElementById(id);
+          if (el) el.style.order = ord;
+        });
+        // Empujar los .adv al final
+        document.querySelectorAll('#toolbar .adv').forEach(el => {
+          el.style.order = (el.style.order ? parseInt(el.style.order,10) : 100) + 100;
+        });
+      } catch {}
+    }
+
+    async function loadDeps() {
+      const pref = (localStorage.getItem('viewer_lib_source') || 'auto');
+      let bases;
+      if (pref === 'local') bases = ['/viewer/lib'];
+      else if (pref === 'jsdelivr') bases = ['https://cdn.jsdelivr.net/npm/three@0.160.0'];
+      else if (pref === 'unpkg') bases = ['https://unpkg.com/three@0.160.0'];
+      else bases = ['https://cdn.jsdelivr.net/npm/three@0.160.0','/viewer/lib','https://unpkg.com/three@0.160.0'];
+      let lastErr;
+      for (const base of bases) {
+        try {
+          log(`Cargando librerías desde ${base} ...`);
+          // Si base es local, la estructura de archivos difiere (sin carpetas build/examples)
+          const local = base.startsWith('/');
+          const three = await import(local ? `${base}/three.module.js` : `${base}/build/three.module.js`);
+          const controls = await import(local ? `${base}/OrbitControls.js` : `${base}/examples/jsm/controls/OrbitControls.js`);
+          const gltf = await import(local ? `${base}/GLTFLoader.js` : `${base}/examples/jsm/loaders/GLTFLoader.js`);
+          const draco = await import(local ? `${base}/DRACOLoader.js` : `${base}/examples/jsm/loaders/DRACOLoader.js`);
+          window.THREE = three;
+          window.OrbitControls = controls.OrbitControls;
+          window.GLTFLoader = gltf.GLTFLoader;
+          window.DRACOLoader = draco.DRACOLoader;
+          librarySource = base;
+          // Configurar ruta DRACO esperada por DRACOLoader
+          // - Local: assets en /viewer/lib/draco/
+          // - CDN: assets en <cdn>/examples/jsm/libs/draco/gltf/
+          window.__DRACO_DECODER_PATH__ = local ? '/viewer/lib/draco/' : `${base}/examples/jsm/libs/draco/gltf/`;
+          log('Librerías cargadas.');
+          return;
+        } catch (e) {
+          lastErr = e;
+          log(`Fallo importando desde ${base}: ${e}`);
+        }
+      }
+      throw lastErr || new Error('No se pudieron cargar las dependencias Three.js');
+    }
+
+    async function main() {
+      // Param URL: ?lib=auto|local|jsdelivr|unpkg → fijar preferencia antes de cargar deps
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const libParam = (p.get('lib') || '').toLowerCase();
+        if (['auto','local','jsdelivr','unpkg'].includes(libParam)) {
+          localStorage.setItem('viewer_lib_source', libParam);
+          log(`Preferencia de librería establecida por URL (?lib=${libParam})`);
+        }
+        const triWarnParam = p.get('triWarn');
+        if (triWarnParam != null && triWarnParam !== '') {
+          const v = parseInt(triWarnParam, 10);
+          if (!Number.isNaN(v) && v >= 0) {
+            triWarn = v;
+            localStorage.setItem('viewer_tri_warn', String(v));
+            log(`Umbral de triángulos establecido por URL (?triWarn=${v}).`);
+          }
+        }
+        const markersParam = p.get('markers');
+        if (markersParam === '1') { localStorage.setItem('viewer_markers', '1'); }
+        // UI state params
+        const advParam = p.get('adv');
+        if (advParam === '1' || advParam === '0') {
+          localStorage.setItem('viewer_adv_on', advParam);
+        }
+        const panelsParam = p.get('panels');
+        if (panelsParam === '1' || panelsParam === '0') {
+          localStorage.setItem('viewer_panels_visible', panelsParam);
+        }
+        const panposParam = (p.get('panpos') || '').toLowerCase();
+        if (['top','bottom','bottom-left'].includes(panposParam)) {
+          localStorage.setItem('viewer_panels_pos', panposParam);
+        }
+        const compactParam = p.get('compact');
+        if (compactParam === '1' || compactParam === '0') {
+          localStorage.setItem('viewer_compact', compactParam);
+        }
+        const diagParam = (p.get('diag') || '').toLowerCase();
+        if (diagParam === 'full') {
+          localStorage.setItem('viewer_diag_full', '1');
+        }
+        const presentParam = p.get('present');
+        if (presentParam === '1') {
+          // Marca temporal: se consumirá tras construir la UI
+          localStorage.setItem('viewer_present_once', '1');
+        }
+      } catch {}
+
+      // UI: set selector segun preferencia guardada
+      const sel = document.getElementById('lib-source');
+      let savedPref = localStorage.getItem('viewer_lib_source') || 'auto';
+      sel.value = savedPref;
+      sel.addEventListener('change', () => {
+        const v = sel.value;
+        localStorage.setItem('viewer_lib_source', v);
+        if (confirm('Cambiar el origen de librerías requiere recargar la página. ¿Recargar ahora?')) {
+          location.reload();
+        }
+      });
+
+      // Botones extra del panel
+      document.getElementById('clear-log').addEventListener('click', () => { logEl.textContent = ''; });
+      const toggleBtn = document.getElementById('toggle-panels');
+      let panelsVisible = (localStorage.getItem('viewer_panels_visible') ?? '1') === '1';
+      document.getElementById('log').style.display = panelsVisible ? '' : 'none';
+      document.getElementById('metrics').style.display = panelsVisible ? '' : 'none';
+      document.getElementById('debug').style.display = panelsVisible ? '' : 'none';
+      document.getElementById('debug-actions').style.display = panelsVisible ? 'flex' : 'none';
+      toggleBtn.textContent = panelsVisible ? 'Ocultar paneles' : 'Mostrar paneles';
+      toggleBtn.addEventListener('click', () => {
+        panelsVisible = !panelsVisible;
+        localStorage.setItem('viewer_panels_visible', panelsVisible ? '1' : '0');
+        document.getElementById('log').style.display = panelsVisible ? '' : 'none';
+        document.getElementById('metrics').style.display = panelsVisible ? '' : 'none';
+        document.getElementById('debug').style.display = panelsVisible ? '' : 'none';
+        document.getElementById('debug-actions').style.display = panelsVisible ? 'flex' : 'none';
+        toggleBtn.textContent = panelsVisible ? 'Ocultar paneles' : 'Mostrar paneles';
+        try { positionDebugUI(); } catch {}
+      });
+      localStorage.setItem('viewer_panels_visible', panelsVisible ? '1' : '0');
+
+      // Botón modo compacto
+      const compactBtn = document.getElementById('toggle-compact');
+      let isCompact = (localStorage.getItem('viewer_compact') ?? '0') === '1';
+      const applyCompact = () => {
+        document.body.classList.toggle('compact', isCompact);
+        compactBtn.textContent = isCompact ? 'Normal' : 'Compacto';
+      };
+      applyCompact();
+      compactBtn.addEventListener('click', () => {
+        isCompact = !isCompact;
+        localStorage.setItem('viewer_compact', isCompact ? '1' : '0');
+        applyCompact();
+        try { positionDebugUI(); } catch {}
+      });
+
+      // Controles avanzados: ocultos por defecto, persistidos
+      const advBtn = document.getElementById('toggle-advanced');
+      let advOn = (localStorage.getItem('viewer_adv_on') ?? '0') === '1';
+      const applyAdv = () => {
+        document.body.classList.toggle('adv-on', advOn);
+        advBtn.textContent = advOn ? 'Menos…' : 'Más…';
+      };
+      applyAdv();
+      advBtn.addEventListener('click', () => {
+        advOn = !advOn;
+        localStorage.setItem('viewer_adv_on', advOn ? '1' : '0');
+        applyAdv();
+        try { positionDebugUI(); } catch {}
+      });
+
+      // Diag full: persistencia y UI
+      // 1) Leer parámetro de URL ?diag=full|off y sincronizar localStorage antes de cargar el estado
+      try {
+        const usp = new URLSearchParams(location.search);
+        const diagQ = (usp.get('diag') || '').toLowerCase();
+        if (diagQ === 'full') { localStorage.setItem('viewer_diag_full','1'); }
+        else if (diagQ === 'off') { localStorage.setItem('viewer_diag_full','0'); }
+      } catch {}
+      // 2) Aplicar estado guardado a la UI y registrar handler de cambios
+      try {
+        const savedDiag = (localStorage.getItem('viewer_diag_full') ?? '0') === '1';
+        diagFullEl.checked = savedDiag;
+        diagFullEl.addEventListener('change', () => {
+          const on = !!diagFullEl.checked;
+          localStorage.setItem('viewer_diag_full', on ? '1' : '0');
+        });
+      } catch {}
+
+      // Colocación dinámica del layout completo (canvas/map y panel debug) según la altura real del toolbar
+      function computeToolbarBottom() {
+        const toolbar = document.getElementById('toolbar');
+        if (!toolbar) return 48;
+        const r = toolbar.getBoundingClientRect();
+        // rect.bottom es relativo a viewport; usamos clientTop + offsetHeight como fallback robusto
+        const h = Math.max(48, Math.ceil(toolbar.offsetHeight || (r.bottom - r.top)));
+        return h; // altura en px
+      }
+      // Posición de paneles: top/bottom
+      const panelsPosBtn = document.getElementById('toggle-panels-pos');
+      let panelsPos = (localStorage.getItem('viewer_panels_pos') || 'top'); // 'top'|'bottom'|'bottom-left'
+      const applyPanelsPosBtn = () => {
+        panelsPosBtn.textContent = (
+          panelsPos === 'top' ? 'Paneles: abajo' :
+          panelsPos === 'bottom' ? 'Paneles: abajo-izq' :
+          'Paneles: arriba'
+        );
+      };
+      applyPanelsPosBtn();
+      panelsPosBtn.addEventListener('click', () => {
+        panelsPos = panelsPos === 'top' ? 'bottom' : (panelsPos === 'bottom' ? 'bottom-left' : 'top');
+        localStorage.setItem('viewer_panels_pos', panelsPos);
+        applyPanelsPosBtn();
+        positionLayout();
+      });
+
+      function positionLayout() {
+        try {
+          const topPx = computeToolbarBottom();
+          // Ajustar canvas y mapa para no quedar debajo del toolbar dinámico
+          const canvas = document.getElementById('canvas');
+          const mapEl = document.getElementById('map');
+          if (canvas) { canvas.style.height = `calc(100% - ${topPx}px)`; }
+          if (mapEl) {
+            // Si el mapa está en split, usamos reglas CSS, pero cuando mapVisible=false respetamos top dinámico
+            if (!document.body.classList.contains('map-split')) {
+              mapEl.style.top = `${topPx}px`;
+            }
+          }
+          // Reposicionar debug
+          const debugEl = document.getElementById('debug');
+          const dbgActEl = document.getElementById('debug-actions');
+          if (debugEl && dbgActEl) {
+            // Reset valores conflictivos
+            debugEl.style.top = '';
+            debugEl.style.bottom = '';
+            debugEl.style.left = '';
+            debugEl.style.right = '8px';
+            dbgActEl.style.top = '';
+            dbgActEl.style.bottom = '';
+            dbgActEl.style.left = '';
+            dbgActEl.style.right = '8px';
+            if (panelsPos === 'bottom') {
+              // Colocar en la esquina inferior derecha, por encima de métricas
+              debugEl.style.bottom = '72px';
+              dbgActEl.style.bottom = '8px';
+            } else if (panelsPos === 'bottom-left') {
+              // Esquina inferior izquierda, para evitar solape con métricas/mapa
+              debugEl.style.bottom = '72px';
+              debugEl.style.right = '';
+              debugEl.style.left = '8px';
+              dbgActEl.style.bottom = '8px';
+              dbgActEl.style.right = '';
+              dbgActEl.style.left = '8px';
+            } else {
+              const baseTop = topPx + 8; // margen
+              dbgActEl.style.top = (baseTop - 32) + 'px';
+              debugEl.style.top = baseTop + 'px';
+            }
+          }
+        } catch {}
+      }
+
+      function positionDebugUI() { positionLayout(); }
+      positionLayout();
+      const onResizeDeb = debounce(positionLayout, 150);
+      window.addEventListener('resize', onResizeDeb);
+
+      // Ordenar la toolbar (fila esencial primero)
+      try { applyToolbarOrder(); } catch {}
+
+      // Botón avanzado: Reset UI (limpia preferencias y recarga)
+      (function ensureResetUIButton(){
+        try {
+          const tb = document.getElementById('toolbar');
+          if (!tb) return;
+          let btn = document.getElementById('reset-ui');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'reset-ui';
+            btn.className = 'adv';
+            btn.title = 'Restablecer preferencias UI (localStorage)';
+            btn.textContent = 'Reset UI';
+            // ordenar al final de los avanzados
+            btn.style.order = 999;
+            tb.appendChild(btn);
+          }
+          btn.onclick = () => {
+            if (!confirm('¿Borrar preferencias del visor y recargar?')) return;
+            try {
+              const keys = [];
+              for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && k.startsWith('viewer_')) keys.push(k);
+              }
+              keys.forEach(k => localStorage.removeItem(k));
+            } catch {}
+            location.reload();
+          };
+        } catch {}
+      })();
+
+      // Modo Presentación: layout minimalista con restauración del estado previo
+      (function ensurePresentationUIButton(){
+        try {
+          const tb = document.getElementById('toolbar');
+          if (!tb) return;
+          let btn = document.getElementById('toggle-present');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'toggle-present';
+            btn.className = 'adv';
+            btn.title = 'Modo presentación (F): compacto ON, paneles OFF, avanzados OFF, mapa OFF';
+            btn.textContent = 'Presentación';
+            btn.style.order = 997;
+            tb.appendChild(btn);
+          }
+          let snapshot = null;
+          function isAdvOn() {
+            try { return (localStorage.getItem('viewer_adv_on') ?? '0') === '1' || document.body.classList.contains('adv-on'); } catch { return document.body.classList.contains('adv-on'); }
+          }
+          function setAdv(on) {
+            const advBtn = document.getElementById('toggle-advanced');
+            const want = !!on;
+            const has = isAdvOn();
+            if (want !== has) advBtn?.click();
+          }
+          function setPanels(on) {
+            const want = !!on;
+            const has = (localStorage.getItem('viewer_panels_visible') ?? '1') === '1';
+            if (want !== has) document.getElementById('toggle-panels')?.click();
+          }
+          function setCompact(on) {
+            const want = !!on;
+            const has = document.body.classList.contains('compact');
+            if (want !== has) document.getElementById('toggle-compact')?.click();
+          }
+          function setMap(on) {
+            const want = !!on;
+            const has = typeof mapVisible !== 'undefined' ? mapVisible : false;
+            if (want !== has) document.getElementById('toggle-map')?.click();
+          }
+          function enterPresentation() {
+            snapshot = {
+              adv: isAdvOn(),
+              panels: (localStorage.getItem('viewer_panels_visible') ?? '1') === '1',
+              compact: document.body.classList.contains('compact'),
+              map: (typeof mapVisible !== 'undefined') ? mapVisible : false,
+              panpos: (localStorage.getItem('viewer_panels_pos') || 'bottom')
+            };
+            setCompact(true);
+            setPanels(false);
+            setAdv(false);
+            setMap(false);
+            btn.dataset.on = '1';
+            btn.textContent = 'Presentación: on';
+          }
+          function exitPresentation() {
+            const snap = snapshot || {};
+            setCompact(!!snap.compact);
+            setPanels(!!snap.panels);
+            setAdv(!!snap.adv);
+            setMap(!!snap.map);
+            if (snap.panpos) try { localStorage.setItem('viewer_panels_pos', snap.panpos); } catch {}
+            snapshot = null;
+            btn.dataset.on = '0';
+            btn.textContent = 'Presentación';
+            try { positionLayout(); } catch {}
+          }
+          btn.onclick = () => {
+            const on = btn.dataset.on === '1';
+            if (on) exitPresentation(); else enterPresentation();
+          };
+          // Auto-activar si lo pidió la URL (una sola vez)
+          try {
+            const once = localStorage.getItem('viewer_present_once');
+            if (once === '1') {
+              localStorage.removeItem('viewer_present_once');
+              if (btn.dataset.on !== '1') btn.click();
+            }
+          } catch {}
+        } catch {}
+      })();
+
+      // Accesibilidad: ARIA roles/estados para toolbar y toggles
+      (function ensureAccessibility(){
+        try {
+          const tb = document.getElementById('toolbar');
+          if (tb) {
+            tb.setAttribute('role', 'toolbar');
+            tb.setAttribute('aria-label', 'Barra de herramientas del visor');
+          }
+          // Áreas de contenido con feedback
+          try { document.getElementById('debug')?.setAttribute('aria-live','polite'); } catch {}
+          try {
+            const bb = document.getElementById('body-badge');
+            if (bb) { bb.setAttribute('role','status'); bb.setAttribute('aria-live','polite'); }
+          } catch {}
+          const isAdvOn = () => {
+            try { return (localStorage.getItem('viewer_adv_on') ?? '0') === '1' || document.body.classList.contains('adv-on'); } catch { return document.body.classList.contains('adv-on'); }
+          };
+          const toggles = [
+            { id: 'toggle-advanced', state: () => isAdvOn() },
+            { id: 'toggle-panels', state: () => ((localStorage.getItem('viewer_panels_visible') ?? '1') === '1') },
+            { id: 'toggle-panels-pos', state: null },
+            { id: 'toggle-compact', state: () => document.body.classList.contains('compact') },
+            { id: 'toggle-map', state: () => (typeof mapVisible !== 'undefined' ? !!mapVisible : false) },
+            { id: 'toggle-grid', state: () => (typeof grid !== 'undefined' ? !!grid.visible : false) },
+            { id: 'toggle-parcela', state: () => {
+                try {
+                  const ls = localStorage.getItem('viewer_parcela_visible');
+                  if (ls === '1' || ls === '0') return ls === '1';
+                } catch {}
+                return (typeof parcelaVisible !== 'undefined') ? !!parcelaVisible : false;
+              }
+            },
+            { id: 'toggle-eje', state: () => {
+                try {
+                  const ls = localStorage.getItem('viewer_eje_visible');
+                  if (ls === '1' || ls === '0') return ls === '1';
+                } catch {}
+                return (typeof ejeVisible !== 'undefined') ? !!ejeVisible : false;
+              }
+            },
+            { id: 'toggle-markers', state: () => {
+                try { return (localStorage.getItem('viewer_markers') ?? '0') === '1'; } catch { return false; }
+              }
+            },
+            { id: 'toggle-bodybadge', state: () => ((localStorage.getItem('viewer_body_badge_visible') ?? '1') === '1') },
+            { id: 'help-ui', state: null }
+          ];
+          const sync = () => {
+            for (const t of toggles) {
+              const el = document.getElementById(t.id);
+              if (!el) continue;
+              el.setAttribute('tabindex', '0');
+              el.setAttribute('aria-label', el.getAttribute('title') || el.textContent || 'botón');
+              if (t.state) {
+                const on = !!t.state();
+                el.setAttribute('aria-pressed', String(on));
+              }
+              // aria-controls / aria-expanded para toggles conocidos
+              if (t.id === 'toggle-panels') {
+                el.setAttribute('aria-controls', 'debug metrics debug-actions');
+                const vis = (localStorage.getItem('viewer_panels_visible') ?? '1') === '1';
+                el.setAttribute('aria-expanded', String(vis));
+              } else if (t.id === 'help-ui') {
+                el.setAttribute('aria-controls', 'help-panel');
+                const p = document.getElementById('help-panel');
+                const open = !!p && p.style.display !== 'none';
+                el.setAttribute('aria-expanded', String(open));
+              } else if (t.id === 'toggle-advanced') {
+                el.setAttribute('aria-controls', 'toolbar');
+                el.setAttribute('aria-expanded', String(isAdvOn()));
+              } else if (t.id === 'toggle-map') {
+                el.setAttribute('aria-controls', 'map');
+                const on = typeof mapVisible !== 'undefined' ? !!mapVisible : false;
+                el.setAttribute('aria-expanded', String(on));
+              }
+            }
+          };
+          sync();
+          const debouncedSync = debounce(sync, 120);
+          document.addEventListener('click', () => setTimeout(sync, 0));
+          window.addEventListener('resize', debouncedSync);
+          window.addEventListener('storage', sync);
+          // Activación por teclado: Space/Enter disparan click en botones de la toolbar
+          tb?.addEventListener('keydown', (ev) => {
+            const target = ev.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.tagName.toLowerCase() !== 'button') return;
+            if (ev.key === ' ' || ev.key === 'Enter') {
+              ev.preventDefault();
+              target.click();
+            }
+          });
+        } catch {}
+      })();
+
+      // Botón avanzado: Ayuda (?)
+      (function ensureHelpUIButton(){
+        try {
+          const tb = document.getElementById('toolbar');
+          if (!tb) return;
+          let btn = document.getElementById('help-ui');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'help-ui';
+            btn.className = 'adv';
+            btn.title = 'Mostrar ayuda rápida (H)';
+            btn.textContent = 'Ayuda (?)';
+            btn.style.order = 998;
+            tb.appendChild(btn);
+          }
+          let panel = document.getElementById('help-panel');
+          if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'help-panel';
+            panel.style.position = 'fixed';
+            panel.style.zIndex = '1200';
+            panel.style.right = '8px';
+            panel.style.width = '360px';
+            panel.style.maxWidth = '92vw';
+            panel.style.maxHeight = '60vh';
+            panel.style.overflow = 'auto';
+            panel.style.background = 'rgba(20,20,20,0.95)';
+            panel.style.color = '#eee';
+            panel.style.border = '1px solid #444';
+            panel.style.borderRadius = '6px';
+            panel.style.padding = '12px';
+            panel.style.boxShadow = '0 6px 18px rgba(0,0,0,0.4)';
+            panel.style.display = 'none';
+            panel.innerHTML = `
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+                <strong>Ayuda del visor</strong>
+                <button id="help-close" title="Cerrar" style="padding:2px 8px;">×</button>
+              </div>
+              <div style="font-size:0.95em;line-height:1.35;">
+                <p><b>Atajos:</b> C=Compacto, M=Más/Menos, P=Paneles, B=Posición paneles, T=Umbral tris, H/?=Ayuda.</p>
+                <p><b>Paneles:</b> usa “Paneles” para ocultar/mostrar y “Paneles: …” para mover <i>arriba / abajo / abajo-izquierda</i>. Estado persistente.</p>
+                <p><b>Controles avanzados:</b> “Más…” revela opciones menos frecuentes. Estado persistente.</p>
+                <p><b>Reset UI:</b> borra preferencias <code>viewer_*</code> del navegador y recarga.</p>
+                <p><b>Selector de librería:</b> Local/CDN/Auto con DRACO automático. Ver README para detalles.</p>
+              </div>`;
+            document.body.appendChild(panel);
+          }
+          function placeHelpPanel() {
+            try {
+              const top = computeToolbarBottom() + 8;
+              panel.style.top = top + 'px';
+            } catch {}
+          }
+          const toggle = () => {
+            placeHelpPanel();
+            panel.style.display = (panel.style.display === 'none') ? 'block' : 'none';
+          };
+          btn.onclick = toggle;
+          document.getElementById('help-close')?.addEventListener('click', () => { panel.style.display = 'none'; });
+          window.addEventListener('resize', () => { if (panel.style.display !== 'none') placeHelpPanel(); });
+        } catch {}
+      })();
+
+      // Marcadores UI
+      const markersBtn = document.getElementById('toggle-markers');
+      let markersOn = (localStorage.getItem('viewer_markers') ?? '0') === '1';
+      function renderMarkers() {
+        try {
+          // limpiar existentes
+          document.querySelectorAll('.ui-marker').forEach(el => el.remove());
+          if (!markersOn) { markersBtn.textContent = 'UI markers'; return; }
+          const toolbar = document.getElementById('toolbar');
+          const controls = toolbar.querySelectorAll('button, select, input');
+          let n = 1;
+          controls.forEach(ctrl => {
+            if (ctrl.id === 'toggle-markers') return; // no numerar el propio toggle
+            const badge = document.createElement('span');
+            badge.className = 'ui-marker';
+            badge.textContent = String(n);
+            ctrl.appendChild(badge);
+            if (!ctrl.title) ctrl.title = `#${n}`;
+            n++;
+          });
+          markersBtn.textContent = 'UI markers: ON';
+        } catch {}
+      }
+      renderMarkers();
+      markersBtn.addEventListener('click', () => {
+        markersOn = !markersOn;
+        localStorage.setItem('viewer_markers', markersOn ? '1' : '0');
+        renderMarkers();
+      });
+
+      // Mapa base (experimental): oculto por defecto
+      const mapDiv = document.getElementById('map');
+      const mapBtn = document.getElementById('toggle-map');
+      const syncReverseEl = document.getElementById('sync-reverse');
+      let mapVisible = false;
+      let mapInstance = null;
+      let currentMapStyleUrl = localStorage.getItem('viewer_map_style') || 'https://demotiles.maplibre.org/style.json';
+      let lastBodyCRS = null;
+      let mapAnchor = null; // { lon0, lat0, x0, z0, zoom0, bearing0, pitch0, camVec0: THREE.Vector3, elev0, mc0?: MercatorCoordinate, mcScale?: number }
+      let lastModelBox = null; // { box: THREE.Box3, center: THREE.Vector3, sizeVec: THREE.Vector3, sizeLen: number }
+      let awaitingAnchorClick = false;
+      let isUpdatingFromMap = false;
+      let isUpdatingFromThree = false;
+      // Intensidad de acoplamiento
+      const syncFactorInput = document.getElementById('sync-factor');
+      let syncFactor = parseFloat(localStorage.getItem('viewer_sync_factor') || '1') || 1;
+      syncFactor = Math.min(2, Math.max(0.2, syncFactor));
+      syncFactorInput.value = String(syncFactor);
+      syncFactorInput.addEventListener('change', () => {
+        const v = parseFloat(syncFactorInput.value);
+        if (Number.isFinite(v)) {
+          syncFactor = Math.min(2, Math.max(0.2, v));
+          localStorage.setItem('viewer_sync_factor', String(syncFactor));
+        }
+      });
+      // Suavizado (ms)
+      const syncEaseInput = document.getElementById('sync-ease-ms');
+      let syncEaseMs = parseInt(localStorage.getItem('viewer_sync_ease_ms') || '120', 10);
+      if (!Number.isFinite(syncEaseMs)) syncEaseMs = 120;
+      syncEaseMs = Math.min(500, Math.max(0, syncEaseMs));
+      syncEaseInput.value = String(syncEaseMs);
+      syncEaseInput.addEventListener('change', () => {
+        let v = parseInt(syncEaseInput.value, 10);
+        if (!Number.isFinite(v)) v = 0;
+        syncEaseMs = Math.min(500, Math.max(0, v));
+        localStorage.setItem('viewer_sync_ease_ms', String(syncEaseMs));
+      });
+      // Origen geodésico del modelo (persistente)
+      const modelOrgLonEl = document.getElementById('model-org-lon');
+      const modelOrgLatEl = document.getElementById('model-org-lat');
+      const modelOrgAltEl = document.getElementById('model-org-alt');
+      const modelOrgApplyBtn = document.getElementById('model-org-apply');
+      const modelOrgResetBtn = document.getElementById('model-org-reset');
+      const modelOrgFromAnchorBtn = document.getElementById('model-org-from-anchor');
+      let modelOrgLon = parseFloat(localStorage.getItem('viewer_model_origin_lon') || 'NaN');
+      let modelOrgLat = parseFloat(localStorage.getItem('viewer_model_origin_lat') || 'NaN');
+      let modelOrgAlt = parseFloat(localStorage.getItem('viewer_model_origin_alt') || '0');
+      if (Number.isFinite(modelOrgLon)) modelOrgLonEl.value = String(modelOrgLon);
+      if (Number.isFinite(modelOrgLat)) modelOrgLatEl.value = String(modelOrgLat);
+      modelOrgAltEl.value = String(Number.isFinite(modelOrgAlt) ? modelOrgAlt : 0);
+      function clearModelOrigin() {
+        modelOrgLon = NaN; modelOrgLat = NaN; modelOrgAlt = 0;
+        localStorage.removeItem('viewer_model_origin_lon');
+        localStorage.removeItem('viewer_model_origin_lat');
+        localStorage.removeItem('viewer_model_origin_alt');
+        modelOrgLonEl.value = '';
+        modelOrgLatEl.value = '';
+        modelOrgAltEl.value = '0';
+      }
+      modelOrgApplyBtn.addEventListener('click', () => {
+        const lon = parseFloat(modelOrgLonEl.value);
+        const lat = parseFloat(modelOrgLatEl.value);
+        const alt = parseFloat(modelOrgAltEl.value);
+        if (Number.isFinite(lon) && Number.isFinite(lat)) {
+          modelOrgLon = lon; modelOrgLat = lat; modelOrgAlt = Number.isFinite(alt) ? alt : 0;
+          localStorage.setItem('viewer_model_origin_lon', String(modelOrgLon));
+          localStorage.setItem('viewer_model_origin_lat', String(modelOrgLat));
+          localStorage.setItem('viewer_model_origin_alt', String(modelOrgAlt));
+          applyModelGeodeticOrigin();
+          log('Origen geodésico aplicado.');
+        } else { log('Introduce lon/lat válidos para origen.'); }
+      });
+      modelOrgResetBtn.addEventListener('click', () => {
+        clearModelOrigin();
+        applyModelGeodeticOrigin();
+        log('Origen geodésico reseteado.');
+      });
+      modelOrgFromAnchorBtn.addEventListener('click', () => {
+        if (!mapAnchor) { log('No hay anclaje disponible.'); return; }
+        modelOrgLon = mapAnchor.lon0; modelOrgLat = mapAnchor.lat0;
+        modelOrgLonEl.value = String(modelOrgLon);
+        modelOrgLatEl.value = String(modelOrgLat);
+        localStorage.setItem('viewer_model_origin_lon', String(modelOrgLon));
+        localStorage.setItem('viewer_model_origin_lat', String(modelOrgLat));
+        applyModelGeodeticOrigin();
+        log('Origen establecido desde anclaje.');
+      });
+      // Registrar definiciones comunes
+      try { proj4.defs('EPSG:25829', '+proj=utm +zone=29 +ellps=GRS80 +units=m +no_defs +type=crs'); } catch {}
+      try { proj4.defs('EPSG:25830', '+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs +type=crs'); } catch {}
+      try { proj4.defs('EPSG:32629', '+proj=utm +zone=29 +datum=WGS84 +units=m +no_defs +type=crs'); } catch {}
+      try { proj4.defs('EPSG:32630', '+proj=utm +zone=30 +datum=WGS84 +units=m +no_defs +type=crs'); } catch {}
+      try { proj4.defs('EPSG:3857', '+proj=merc +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs'); } catch {}
+      function isLikelyProjected25829(coords2d) {
+        // Heurística simple: valores de cientos de miles/millones típicos UTM
+        // x ~ [450000, 650000], y ~ [4600000, 4800000]
+        const [x, y] = coords2d;
+        return Number.isFinite(x) && Number.isFinite(y) && x > 1e4 && y > 1e5;
+      }
+      function isLikelyWebMercator3857(coords2d) {
+        // EPSG:3857 en metros: |x|,|y| <= ~20037508
+        const [x, y] = coords2d;
+        const LIM = 20040000;
+        return Number.isFinite(x) && Number.isFinite(y) && Math.abs(x) <= LIM && Math.abs(y) <= LIM && (Math.abs(x) > 1e4 || Math.abs(y) > 1e4);
+      }
+      let reprojHadError = false;
+      let reprojLastError = '';
+      const reprojBadge = document.getElementById('reproj-warn-badge');
+      function reprojGeomToLonLat(geom) {
+        if (!geom || !geom.type) return null;
+        const toLL = (xy) => {
+          try {
+            if (lastBodyCRS === 'EPSG:25829') {
+              const ll = proj4('EPSG:25829','WGS84',[xy[0], xy[1]]);
+              return [ll[0], ll[1]];
+            } else if (lastBodyCRS === 'EPSG:3857') {
+              const ll = proj4('EPSG:3857','WGS84',[xy[0], xy[1]]);
+              return [ll[0], ll[1]];
+            } else if (lastBodyCRS === 'WGS84' || lastBodyCRS === 'EPSG:4326') {
+              return [xy[0], xy[1]];
+            } else if (typeof lastBodyCRS === 'string' && lastBodyCRS.startsWith('EPSG:')) {
+              // Transformación genérica si tenemos definición cargada
+              try {
+                const ll = proj4(lastBodyCRS,'WGS84',[xy[0], xy[1]]);
+                return [ll[0], ll[1]];
+              } catch(e) { /* seguirá a heurística */ }
+            }
+            if (isLikelyProjected25829(xy)) {
+              const ll = proj4('EPSG:25829','WGS84',[xy[0], xy[1]]);
+              return [ll[0], ll[1]];
+            } else if (isLikelyWebMercator3857(xy)) {
+              const ll = proj4('EPSG:3857','WGS84',[xy[0], xy[1]]);
+              return [ll[0], ll[1]];
+            }
+          } catch (e) { reprojHadError = true; reprojLastError = (e && e.message) ? e.message : String(e); return [xy[0], xy[1]]; }
+          return [xy[0], xy[1]];
+        };
+        const walk = (g) => {
+          if (!g) return g;
+          if (g.type === 'Point') return { type:'Point', coordinates: toLL(g.coordinates) };
+          if (g.type === 'Polygon') {
+            return {
+              type: 'Polygon',
+              coordinates: g.coordinates.map(ring => ring.map(toLL))
+            };
+          } else if (g.type === 'MultiPolygon') {
+            return {
+              type: 'MultiPolygon',
+              coordinates: g.coordinates.map(poly => poly.map(ring => ring.map(toLL)))
+            };
+          } else if (g.type === 'LineString') {
+            return {
+              type: 'LineString',
+              coordinates: g.coordinates.map(toLL)
+            };
+          }
+          return g;
+        };
+        const out = walk(geom);
+        // Mostrar/ocultar badge si hay errores
+        if (reprojBadge) {
+          reprojBadge.style.display = reprojHadError ? '' : 'none';
+          if (reprojHadError) reprojBadge.title = `Aviso de reproyección (CRS): ${reprojLastError}`;
+        }
+        // resetear para próximo ciclo
+        reprojHadError = false;
+        reprojLastError = '';
+        return out;
+      }
+      function bboxOfLonLatGeometry(geom) {
+        let xmin=Infinity, ymin=Infinity, xmax=-Infinity, ymax=-Infinity;
+        const acc = (pt) => { xmin=Math.min(xmin,pt[0]); ymin=Math.min(ymin,pt[1]); xmax=Math.max(xmax,pt[0]); ymax=Math.max(ymax,pt[1]); };
+        const walk = (coords) => {
+          if (Array.isArray(coords[0][0])) { coords.forEach(walk); }
+          else { coords.forEach(acc); }
+        };
+        if (!geom) return null;
+        if (geom.type === 'Polygon') walk(geom.coordinates);
+        else if (geom.type === 'MultiPolygon') walk(geom.coordinates);
+        else if (geom.type === 'LineString') geom.coordinates.forEach(acc);
+        if (!Number.isFinite(xmin)) return null;
+        return [xmin, ymin, xmax, ymax];
+      }
+      function ensureMapLayers(body) {
+        if (!mapInstance) return;
+        const parcelLL = reprojGeomToLonLat(body?.geometry);
+        const streetLL = reprojGeomToLonLat(body?.street_axis);
+        // Parcel source/layer
+        if (parcelLL) {
+          const srcId = 'parcel-src'; const lyrId = 'parcel-line';
+          if (mapInstance.getSource(srcId)) { mapInstance.removeLayer(lyrId); mapInstance.removeSource(srcId); }
+          mapInstance.addSource(srcId, { type: 'geojson', data: { type: 'Feature', geometry: parcelLL, properties: {} } });
+          mapInstance.addLayer({ id: lyrId, type: 'line', source: srcId, paint: { 'line-color': '#0077ff', 'line-width': 3 } });
+        }
+        if (streetLL) {
+          const srcId = 'street-src'; const lyrId = 'street-line';
+          if (mapInstance.getSource(srcId)) { mapInstance.removeLayer(lyrId); mapInstance.removeSource(srcId); }
+          mapInstance.addSource(srcId, { type: 'geojson', data: { type: 'Feature', geometry: streetLL, properties: {} } });
+          mapInstance.addLayer({ id: lyrId, type: 'line', source: srcId, paint: { 'line-color': '#ff5500', 'line-width': 3 } });
+        }
+        const bbox = bboxOfLonLatGeometry(parcelLL || streetLL);
+        if (bbox) {
+          mapInstance.fitBounds([[bbox[0], bbox[1]],[bbox[2], bbox[3]]], { padding: 40, maxZoom: 18, duration: 400 });
+        }
+        // Establecer anclaje para acoplamiento cámara↔mapa usando centro de la parcela
+        try {
+          if (parcelLL && body?.geometry) {
+            const llcx = (bbox[0] + bbox[2]) / 2;
+            const llcy = (bbox[1] + bbox[3]) / 2;
+            // Centro local X/Z desde geometría (coincide con frameCameraToParcelLocal)
+            const outer = body.geometry.coordinates?.[0];
+            if (Array.isArray(outer) && outer.length >= 3) {
+              let xmin=Infinity, xmax=-Infinity, zmin=Infinity, zmax=-Infinity;
+              for (const p of outer) { const x=p[0], z=p[1]; if (!Number.isFinite(x)||!Number.isFinite(z)) continue; xmin=Math.min(xmin,x); xmax=Math.max(xmax,x); zmin=Math.min(zmin,z); zmax=Math.max(zmax,z); }
+              if (Number.isFinite(xmin) && Number.isFinite(zmin) && Number.isFinite(xmax) && Number.isFinite(zmax)) {
+                const cx = (xmin + xmax) / 2; const cz = (zmin + zmax) / 2;
+                const zoom0 = mapInstance.getZoom();
+                const bearing0 = mapInstance.getBearing ? mapInstance.getBearing() : 0;
+                const pitch0 = mapInstance.getPitch ? mapInstance.getPitch() : 0;
+                let camVec0 = null;
+                let elev0 = 0;
+                try {
+                  if (typeof viewerReady !== 'undefined' && viewerReady) {
+                    camVec0 = new THREE.Vector3().subVectors(camera.position, (controls?.target||new THREE.Vector3(cx,0,cz)));
+                    elev0 = Math.atan2(camVec0.y, Math.hypot(camVec0.x, camVec0.z)) * 180 / Math.PI;
+                  }
+                } catch {}
+                // Precalcular anclaje Mercator y escala metros→mercator
+                let mc0 = null, mcScale = null;
+                try {
+                  mc0 = maplibregl.MercatorCoordinate.fromLngLat({lng: llcx, lat: llcy});
+                  // mercatorUnitsPerMeter en latitud del anclaje
+                  const unitsPerMeter = mc0.meterInMercatorCoordinateUnits();
+                  mcScale = unitsPerMeter; // multiplicar metros por este factor → unidades Mercator
+                } catch {}
+                mapAnchor = { lon0: llcx, lat0: llcy, x0: cx, z0: cz, zoom0, bearing0, pitch0, camVec0, elev0, mc0, mcScale };
+                applyFineOffsetsToAnchor();
+              }
+            }
+          }
+        } catch {}
+      }
+      function ensureMap() {
+        if (mapInstance) return mapInstance;
+        try {
+          // Centro aproximado Galicia (lon, lat)
+          mapInstance = new maplibregl.Map({
+            container: 'map',
+            style: currentMapStyleUrl,
+            center: [-8.72, 42.23],
+            zoom: 11,
+            attributionControl: true,
+          });
+          const nav = new maplibregl.NavigationControl();
+          mapInstance.addControl(nav, 'top-right');
+          // Vincular movimiento de mapa a cámara Three.js
+          const onMapMove = () => {
+            try {
+              if (isUpdatingFromThree) return; // evitar bucle
+              if (!mapAnchor || !(typeof viewerReady !== 'undefined' && viewerReady)) return;
+              isUpdatingFromMap = true;
+              const c = mapInstance.getCenter();
+              const z = mapInstance.getZoom();
+              const brg = mapInstance.getBearing ? mapInstance.getBearing() : 0; // grados CW desde norte
+              const pch = mapInstance.getPitch ? mapInstance.getPitch() : 0; // grados
+              const lon = c.lng, lat = c.lat;
+              const lon0 = mapAnchor.lon0, lat0 = mapAnchor.lat0;
+              // lon/lat → delta local vía MercatorCoordinate para precisión
+              let dx_m = 0, dz_m = 0;
+              try {
+                if (mapAnchor.mc0 && mapAnchor.mcScale) {
+                  const mcx = mapAnchor.mc0.x + (x - x0a) * mapAnchor.mcScale;
+                  const mcy = mapAnchor.mc0.y + (z - z0a) * mapAnchor.mcScale;
+                  const ll = new maplibregl.MercatorCoordinate(mcx, mcy, 0).toLngLat();
+                  return [ll.lng, ll.lat];
+                } else {
+                  // Fallback aproximado
+                  const metersPerDegLat = 111320; // ~constante
+                  const metersPerDegLon = 111320 * Math.cos((lat0 * Math.PI)/180);
+                  dx_m = (lon - lon0) * metersPerDegLon * syncFactor;
+                  dz_m = (lat - lat0) * metersPerDegLat * syncFactor;
+                }
+              } catch {}
+              const x0a = (mapAnchor.x0_adj ?? mapAnchor.x0);
+              const z0a = (mapAnchor.z0_adj ?? mapAnchor.z0);
+              const tx = x0a + dx_m;
+              const tz = z0a + dz_m;
+              const ratio = Math.pow(2, (mapAnchor.zoom0 || z) - z);
+              let camVec = mapAnchor.camVec0 ? mapAnchor.camVec0.clone().multiplyScalar(ratio * syncFactor) : new THREE.Vector3(1,1,1).multiplyScalar(50*ratio*syncFactor);
+              // Rotar vector cámara según bearing del mapa (CW grados) alrededor del eje Y
+              try {
+                const rad = (brg - (mapAnchor.bearing0 || 0)) * Math.PI / 180;
+                const cos = Math.cos(rad), sin = Math.sin(rad);
+                const x = camVec.x, z = camVec.z;
+                camVec.x = x * cos + z * sin;
+                camVec.z = -x * sin + z * cos;
+              } catch {}
+              // Ajustar elevación (pitch) manteniendo módulo de camVec
+              try {
+                const baseElev = mapAnchor.elev0 || 0;
+                const basePitch = mapAnchor.pitch0 || 0;
+                const desiredDeg = baseElev + (pch - basePitch);
+                const len = Math.max(1e-6, camVec.length());
+                const desiredRad = desiredDeg * Math.PI / 180;
+                const horiz = Math.max(1e-6, Math.hypot(camVec.x, camVec.z));
+                const newHoriz = Math.max(1e-6, len * Math.cos(desiredRad));
+                const scale = newHoriz / horiz;
+                camVec.x *= scale;
+                camVec.z *= scale;
+                camVec.y = len * Math.sin(desiredRad);
+              } catch {}
+              // Suavizado hacia objetivo
+              const desiredTarget = new THREE.Vector3(tx, 0, tz);
+              const desiredPos = new THREE.Vector3(tx, 0, tz).add(camVec);
+              const s = Math.max(0, Math.min(1, (syncEaseMs || 0) / 200));
+              if (s > 0) {
+                controls.target.lerp(desiredTarget, s);
+                camera.position.lerp(desiredPos, s);
+              } else {
+                controls.target.copy(desiredTarget);
+                camera.position.copy(desiredPos);
+              }
+              camera.updateProjectionMatrix();
+              controls.update();
+              isUpdatingFromMap = false;
+            } catch {}
+          };
+          mapInstance.on('move', onMapMove);
+          mapInstance.on('click', (e) => {
+            try {
+              if (!awaitingAnchorClick) return;
+              if (!lastBodySent || !mapAnchor) return;
+              awaitingAnchorClick = false;
+              const ll = e.lngLat;
+              // Reanclar manteniendo x0/z0 del sistema local
+              const cx = mapAnchor.x0;
+              const cz = mapAnchor.z0;
+              const zoom0 = mapInstance.getZoom();
+              const bearing0 = mapInstance.getBearing ? mapInstance.getBearing() : 0;
+              const pitch0 = mapInstance.getPitch ? mapInstance.getPitch() : 0;
+              let camVec0 = null; let elev0 = 0;
+              try {
+                if (typeof viewerReady !== 'undefined' && viewerReady) {
+                  camVec0 = new THREE.Vector3().subVectors(camera.position, (controls?.target||new THREE.Vector3(cx,0,cz)));
+                  elev0 = Math.atan2(camVec0.y, Math.hypot(camVec0.x, camVec0.z)) * 180 / Math.PI;
+                }
+              } catch {}
+              let mc0 = null, mcScale = null;
+              try {
+                mc0 = maplibregl.MercatorCoordinate.fromLngLat({lng: ll.lng, lat: ll.lat});
+                const unitsPerMeter = mc0.meterInMercatorCoordinateUnits();
+                mcScale = unitsPerMeter;
+              } catch {}
+              mapAnchor = { lon0: ll.lng, lat0: ll.lat, x0: cx, z0: cz, zoom0, bearing0, pitch0, camVec0, elev0, mc0, mcScale };
+              applyFineOffsetsToAnchor();
+              log(`Anclaje fijado en mapa: ${ll.lng.toFixed(6)}, ${ll.lat.toFixed(6)}`);
+            } catch (err) { log('No se pudo fijar anclaje: ' + err); }
+          });
+          log('Mapa base inicializado (experimental).');
+        } catch (e) {
+          log('No se pudo inicializar MapLibre: ' + e);
+        }
+        return mapInstance;
+      }
+      // Añadir/actualizar capas en el mapa para parcela y (opcional) eje de calle
+      function ensureMapLayers(body) {
+        try {
+          if (!mapInstance || !mapInstance.getStyle || !mapInstance.getSource) return;
+          if (!body || !body.geometry) { return; }
+          // Wait for style to be ready before adding/updating sources/layers
+          const styleLoaded = (typeof mapInstance.isStyleLoaded === 'function') ? mapInstance.isStyleLoaded() : true;
+          if (!styleLoaded) {
+            // Retry once the map goes idle after style load/apply
+            mapInstance.once('idle', () => {
+              try { ensureMapLayers(body); } catch (e) { log('ensureMapLayers retry error: ' + e); }
+            });
+            return;
+          }
+          // Helper: convertir coords locales (x,z) → lon/lat usando anclaje
+          const x0a = (mapAnchor.x0_adj ?? mapAnchor.x0) || 0;
+          const z0a = (mapAnchor.z0_adj ?? mapAnchor.z0) || 0;
+          const toLonLat = (x, z) => {
+            try {
+              if (mapAnchor.mc0 && mapAnchor.mcScale) {
+                const mcx = mapAnchor.mc0.x + (x - x0a) * mapAnchor.mcScale;
+                const mcy = mapAnchor.mc0.y + (z - z0a) * mapAnchor.mcScale;
+                const ll = new maplibregl.MercatorCoordinate(mcx, mcy, 0).toLngLat();
+                return [ll.lng, ll.lat];
+              } else {
+                const metersPerDegLat = 111320;
+                const metersPerDegLon = 111320 * Math.cos((mapAnchor.lat0 * Math.PI)/180);
+                const lon = mapAnchor.lon0 + (x - x0a) / metersPerDegLon;
+                const lat = mapAnchor.lat0 + (z - z0a) / metersPerDegLat;
+                return [lon, lat];
+              }
+            } catch { return [mapAnchor.lon0, mapAnchor.lat0]; }
+          };
+          // Construir GeoJSON de la parcela en WGS84
+          const geom = body.geometry;
+          const crs = (lastBodyCRS || body.crs || '').toString().toUpperCase();
+          let isWgs84 = crs.includes('4326') || crs.includes('WGS84');
+          // Heurística: si no hay CRS pero las coordenadas encajan en rango lon/lat, tratarlas como WGS84
+          try {
+            if (!isWgs84 && geom && Array.isArray(geom.coordinates)) {
+              let first = null;
+              if (geom.type === 'Polygon') first = geom.coordinates?.[0]?.[0];
+              else if (geom.type === 'MultiPolygon') first = geom.coordinates?.[0]?.[0]?.[0];
+              else if (geom.type === 'LineString') first = geom.coordinates?.[0];
+              else if (geom.type === 'MultiLineString') first = geom.coordinates?.[0]?.[0];
+              if (first && Number.isFinite(first[0]) && Number.isFinite(first[1])) {
+                const a = first[0], b = first[1];
+                if (Math.abs(a) <= 180 && Math.abs(b) <= 90) {
+                  isWgs84 = true;
+                }
+              }
+            }
+          } catch {}
+          // Si no es WGS84, requerimos anclaje para convertir local→WGS84
+          if (!isWgs84 && !mapAnchor) { return; }
+          let gjParcel = null;
+          if (geom.type === 'Polygon') {
+            const rings = (geom.coordinates || []).map(ring => ring.map(toLonLat));
+            gjParcel = { type:'Feature', geometry: { type:'Polygon', coordinates: rings } };
+          } else if (geom.type === 'MultiPolygon') {
+            const polys = (geom.coordinates || []).map(poly => poly.map(ring => ring.map(toLonLat)));
+            gjParcel = { type:'Feature', geometry: { type:'MultiPolygon', coordinates: polys } };
+          }
+          if (gjParcel) {
+            const srcId = 'parcel-src';
+            if (mapInstance.getSource(srcId)) {
+              mapInstance.getSource(srcId).setData({ type:'FeatureCollection', features:[gjParcel] });
+            } else {
+              mapInstance.addSource(srcId, { type:'geojson', data: { type:'FeatureCollection', features:[gjParcel] } });
+              // Insertar capa de línea de parcela
+              if (!mapInstance.getLayer('parcel-line')) {
+                const initVis = (typeof parcelaVisible === 'boolean' && !parcelaVisible) ? 'none' : 'visible';
+                mapInstance.addLayer({ id:'parcel-line', type:'line', source: srcId, layout:{ visibility: initVis }, paint:{ 'line-color':'#ff3b30', 'line-width': 3 } });
+              }
+              try { mapInstance.moveLayer('parcel-line'); } catch {}
+              // Encajar la vista a la parcela la primera vez
+              try {
+                const coords = gjParcel.geometry.type === 'Polygon'
+                  ? gjParcel.geometry.coordinates[0]
+                  : (gjParcel.geometry.coordinates[0]?.[0] || []);
+                let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+                for (const [lon,lat] of coords) { minX=Math.min(minX,lon); minY=Math.min(minY,lat); maxX=Math.max(maxX,lon); maxY=Math.max(maxY,lat); }
+                if (isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY)) {
+                  mapInstance.fitBounds([[minX,minY],[maxX,maxY]], { padding: 40, duration: Math.min(800, Math.max(0, syncEaseMs||0)) });
+                }
+              } catch {}
+            }
+          }
+          // Eje de calle opcional: si viene en body.street_axis con type LineString o MultiLineString (local x,z)
+          if (body.street_axis && body.street_axis.type) {
+            let gjStreet = null;
+            const sgeom = body.street_axis;
+            if (sgeom.type === 'LineString') {
+              const coords = (sgeom.coordinates||[]).map(([a,b]) => isWgs84 ? [a,b] : toLonLat(a, b));
+              gjStreet = { type:'Feature', geometry: { type:'LineString', coordinates: coords } };
+            } else if (sgeom.type === 'MultiLineString') {
+              const lines = (sgeom.coordinates||[]).map(line => line.map(([a,b]) => isWgs84 ? [a,b] : toLonLat(a, b)));
+              gjStreet = { type:'Feature', geometry: { type:'MultiLineString', coordinates: lines } };
+            }
+            if (gjStreet) {
+              const srcS = 'street-src';
+              if (mapInstance.getSource(srcS)) {
+                mapInstance.getSource(srcS).setData({ type:'FeatureCollection', features:[gjStreet] });
+              } else {
+                mapInstance.addSource(srcS, { type:'geojson', data: { type:'FeatureCollection', features:[gjStreet] } });
+                if (!mapInstance.getLayer('street-line')) {
+                  const initVis = (typeof ejeVisible === 'boolean' && !ejeVisible) ? 'none' : 'visible';
+                  mapInstance.addLayer({ id:'street-line', type:'line', source: srcS, layout:{ visibility: initVis }, paint:{ 'line-color':'#007aff', 'line-width': 2, 'line-dasharray':[2,2] } });
+                }
+                try { mapInstance.moveLayer('street-line'); } catch {}
+              }
+            }
+          }
+        } catch (e) { log('ensureMapLayers error: ' + e); }
+      }
+      // Helper: flash a MapLibre layer's paint properties briefly
+      function flashMapLayer(layerId, paintOverrides = {}, durationMs = 900) {
+        try {
+          if (!mapInstance || !mapInstance.getLayer || !mapInstance.getPaintProperty) return;
+          if (!mapInstance.getLayer(layerId)) return;
+          const prev = {};
+          for (const k of Object.keys(paintOverrides)) {
+            try { prev[k] = mapInstance.getPaintProperty(layerId, k); } catch {}
+            try { mapInstance.setPaintProperty(layerId, k, paintOverrides[k]); } catch {}
+          }
+          setTimeout(() => {
+            try {
+              for (const k of Object.keys(paintOverrides)) {
+                mapInstance.setPaintProperty(layerId, k, prev[k]);
+              }
+            } catch {}
+          }, Math.max(100, durationMs));
+        } catch {}
+      }
+      // Crear anclaje automáticamente usando centro del mapa y centroide de la geometría local
+      function autoAnchorIfNeeded() {
+        try {
+          if (!mapInstance || mapAnchor || !lastBodySent || !lastBodySent.geometry) return;
+          const c = mapInstance.getCenter();
+          const zoom0 = mapInstance.getZoom();
+          const bearing0 = mapInstance.getBearing ? mapInstance.getBearing() : 0;
+          const pitch0 = mapInstance.getPitch ? mapInstance.getPitch() : 0;
+          // centroide en local (x,z)
+          const geom = lastBodySent.geometry;
+          let cx = 0, cz = 0;
+          if (geom.type === 'Polygon' && geom.coordinates?.length) {
+            const ring = geom.coordinates[0];
+            let sx=0, sz=0; for (const [x,z] of ring) { sx += x; sz += z; }
+            const n = Math.max(1, ring.length);
+            cx = sx / n; cz = sz / n;
+          } else if (geom.type === 'MultiPolygon' && geom.coordinates?.length) {
+            const ring = geom.coordinates[0]?.[0] || [];
+            let sx=0, sz=0; for (const [x,z] of ring) { sx += x; sz += z; }
+            const n = Math.max(1, ring.length);
+            cx = sx / n; cz = sz / n;
+          }
+          let camVec0 = null; let elev0 = 0;
+          try {
+            if (typeof viewerReady !== 'undefined' && viewerReady) {
+              camVec0 = new THREE.Vector3().subVectors(camera.position, (controls?.target||new THREE.Vector3(cx,0,cz)));
+              elev0 = Math.atan2(camVec0.y, Math.hypot(camVec0.x, camVec0.z)) * 180 / Math.PI;
+            }
+          } catch {}
+          let mc0 = null, mcScale = null;
+          try {
+            mc0 = maplibregl.MercatorCoordinate.fromLngLat({lng: c.lng, lat: c.lat});
+            const unitsPerMeter = mc0.meterInMercatorCoordinateUnits();
+            mcScale = unitsPerMeter;
+          } catch {}
+          mapAnchor = { lon0: c.lng, lat0: c.lat, x0: cx, z0: cz, zoom0, bearing0, pitch0, camVec0, elev0, mc0, mcScale };
+          applyFineOffsetsToAnchor();
+          log(`Anclaje automático establecido en mapa: ${c.lng.toFixed(6)}, ${c.lat.toFixed(6)}`);
+        } catch {}
+      }
+      // Persistencia de anclaje
+      function saveAnchorToStorage() {
+        try {
+          if (!mapAnchor) { log('No hay anclaje para guardar.'); return; }
+          const data = {
+            lon0: mapAnchor.lon0, lat0: mapAnchor.lat0,
+            x0: mapAnchor.x0, z0: mapAnchor.z0,
+            x0_adj: (typeof mapAnchor.x0_adj === 'number') ? mapAnchor.x0_adj : null,
+            z0_adj: (typeof mapAnchor.z0_adj === 'number') ? mapAnchor.z0_adj : null,
+            zoom0: mapAnchor.zoom0, bearing0: mapAnchor.bearing0, pitch0: mapAnchor.pitch0,
+            camVec0: mapAnchor.camVec0 ? { x: mapAnchor.camVec0.x, y: mapAnchor.camVec0.y, z: mapAnchor.camVec0.z } : null,
+            elev0: mapAnchor.elev0 || 0
+          };
+          localStorage.setItem('viewer_map_anchor', JSON.stringify(data));
+          log('Anclaje guardado en este navegador.');
+        } catch (e) { log('No se pudo guardar anclaje: ' + e); }
+      }
+      function clearAnchorFromStorage() {
+        try {
+          localStorage.removeItem('viewer_map_anchor');
+          log('Anclaje guardado eliminado.');
+        } catch {}
+      }
+      function loadAnchorFromStorage() {
+        try {
+          const s = localStorage.getItem('viewer_map_anchor');
+          if (!s) return false;
+          const a = JSON.parse(s);
+          if (!a || !Number.isFinite(a.lon0) || !Number.isFinite(a.lat0)) return false;
+          // Crear/actualizar anclaje a partir de los datos guardados
+          let camVec0 = null;
+          try { if (a.camVec0 && Number.isFinite(a.camVec0.x)) camVec0 = new THREE.Vector3(a.camVec0.x, a.camVec0.y, a.camVec0.z); } catch {}
+          mapAnchor = {
+            lon0: a.lon0, lat0: a.lat0,
+            x0: a.x0 || 0, z0: a.z0 || 0,
+            zoom0: a.zoom0 || 12, bearing0: a.bearing0 || 0, pitch0: a.pitch0 || 0,
+            camVec0, elev0: a.elev0 || 0, mc0: null, mcScale: null
+          };
+          // Recalcular MercatorCoordinate base
+          try {
+            const mc0 = maplibregl.MercatorCoordinate.fromLngLat({lng: mapAnchor.lon0, lat: mapAnchor.lat0});
+            const unitsPerMeter = mc0.meterInMercatorCoordinateUnits();
+            mapAnchor.mc0 = mc0; mapAnchor.mcScale = unitsPerMeter;
+          } catch {}
+          // Aplicar offsets finos si estaban guardados
+          if (typeof a.x0_adj === 'number') mapAnchor.x0_adj = a.x0_adj;
+          if (typeof a.z0_adj === 'number') mapAnchor.z0_adj = a.z0_adj;
+          applyModelGeodeticOrigin();
+          log(`Anclaje cargado: ${mapAnchor.lon0.toFixed(6)}, ${mapAnchor.lat0.toFixed(6)}`);
+          return true;
+        } catch { return false; }
+      }
+      // Aplicar estilo de mapa
+      const mapStyleInput = document.getElementById('map-style-url');
+      mapStyleInput.value = currentMapStyleUrl;
+      const applyMapStyleBtn = document.getElementById('apply-map-style');
+      applyMapStyleBtn.addEventListener('click', () => {
+        const url = mapStyleInput.value.trim();
+        if (!url) { alert('Introduce una URL de estilo válida.'); return; }
+        try { localStorage.setItem('viewer_map_style', url); } catch {}
+        currentMapStyleUrl = url;
+        const m = ensureMap();
+        // Cambiar estilo y, cuando cargue, reponer capas
+        m.setStyle(currentMapStyleUrl);
+        const reAdd = () => {
+          if (lastBodySent) ensureMapLayers(lastBodySent);
+          // Reaplicar raster si había uno persistido
+          try {
+            const rp = localStorage.getItem('viewer_raster_preset');
+            if (rp && rp.startsWith('raster:')) applyRasterPreset(rp);
+          } catch {}
+          m.off('styledata', reAdd);
+        };
+        m.on('styledata', reAdd);
+      });
+      // Presets de estilo: al seleccionar, rellenar input y aplicar
+      const mapStylePreset = document.getElementById('map-style-preset');
+      if (mapStylePreset) {
+        mapStylePreset.addEventListener('change', () => {
+          const v = mapStylePreset.value;
+          if (!v) return;
+          if (v.startsWith('raster:')) {
+            // No cambiar el estilo vector, solo superponer raster y persistir
+            ensureMap();
+            applyRasterPreset(v);
+          } else {
+            // Limpiar raster si había
+            clearRasterBasemap();
+            try { localStorage.removeItem('viewer_raster_preset'); } catch {}
+            mapStyleInput.value = v;
+            applyMapStyleBtn.click();
+          }
+        });
+      }
+      mapBtn.addEventListener('click', () => {
+        mapVisible = !mapVisible;
+        if (mapVisible) {
+          document.body.classList.add('map-split');
+          mapDiv.style.display = '';
+          mapBtn.textContent = 'Mapa: on';
+          const m = ensureMap();
+          if (m && lastBodySent) {
+            const doLayers = () => {
+              const had = loadAnchorFromStorage();
+              if (!had) autoAnchorIfNeeded();
+              ensureMapLayers(lastBodySent);
+              // Reaplicar raster si estaba persistido
+              try {
+                const rp = localStorage.getItem('viewer_raster_preset');
+                if (rp && rp.startsWith('raster:')) applyRasterPreset(rp);
+              } catch {}
+              if (had) { try { fitMapToParcel(); } catch {} }
+            };
+            if (m.loaded()) doLayers();
+            else m.once('load', doLayers);
+          }
+          // Ajustar renderer al nuevo tamaño de canvas (vista dividida)
+          onResize();
+        } else {
+          document.body.classList.remove('map-split');
+          mapDiv.style.display = 'none';
+          mapBtn.textContent = 'Mapa: off';
+          // Restaurar tamaño del canvas
+          onResize();
+        }
+      });
+
+      // Control UI: Umbral tris
+      const triInput = document.getElementById('tri-warn-input');
+      const triApply = document.getElementById('tri-warn-apply');
+      triInput.value = String(triWarn);
+      triApply.addEventListener('click', () => {
+        const v = parseInt(triInput.value, 10);
+        if (Number.isNaN(v) || v < 0) {
+          alert('Valor inválido para umbral. Use 0 o un entero positivo.');
+          return;
+        }
+        triWarn = v;
+        localStorage.setItem('viewer_tri_warn', String(v));
+        triWarnNotified = false;
+        log(`Umbral de triángulos actualizado a ${v.toLocaleString()}.`);
+        updateTriWarnBadge();
+      });
+      triInput.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          triApply.click();
+        }
+      });
+
+      // Controles UI: Umbrales de calidad de eje (distancia y ángulo)
+      const axisMInput = document.getElementById('axis-thres-m');
+      const axisDegInput = document.getElementById('axis-thres-deg');
+      const axisApply = document.getElementById('axis-thres-apply');
+      const axisEnableEl = document.getElementById('axis-quality-enable');
+      // Toggle persist/initialize
+      try {
+        const savedEnable = localStorage.getItem('axis_quality_enabled');
+        axisEnableEl.checked = savedEnable == null ? true : (savedEnable === 'true');
+      } catch { axisEnableEl.checked = true; }
+      axisEnableEl.addEventListener('change', () => {
+        try { localStorage.setItem('axis_quality_enabled', String(!!axisEnableEl.checked)); } catch {}
+        showToast(axisEnableEl.checked ? 'Calidad eje: activada' : 'Calidad eje: desactivada');
+      });
+      // Valores por defecto si no existen en localStorage
+      let axisThresM = (() => { try { return parseFloat(localStorage.getItem('axis_quality_threshold_m')) || 20; } catch { return 20; } })();
+      let axisThresDeg = (() => { try { return parseFloat(localStorage.getItem('axis_quality_threshold_deg')) || 35; } catch { return 35; } })();
+      axisMInput.value = String(axisThresM);
+      axisDegInput.value = String(axisThresDeg);
+      axisApply.addEventListener('click', () => {
+        const m = parseFloat(axisMInput.value);
+        const d = parseFloat(axisDegInput.value);
+        if (!(isFinite(m) && m >= 0)) { alert('Distancia inválida'); return; }
+        if (!(isFinite(d) && d >= 0 && d <= 90)) { alert('Ángulo inválido (0-90)'); return; }
+        axisThresM = m; axisThresDeg = d;
+        try { localStorage.setItem('axis_quality_threshold_m', String(m)); } catch {}
+        try { localStorage.setItem('axis_quality_threshold_deg', String(d)); } catch {}
+        showToast(`Umbrales eje aplicados (dist=${m}m, ∠=${d}°)`);
+      });
+      axisMInput.addEventListener('keydown', (ev) => { if (ev.key==='Enter') axisApply.click(); });
+      axisDegInput.addEventListener('keydown', (ev) => { if (ev.key==='Enter') axisApply.click(); });
+
+      // Botón de verificación de libs locales
+      document.getElementById('check-libs').addEventListener('click', async () => {
+        const files = [
+          '/viewer/lib/three.module.js',
+          '/viewer/lib/OrbitControls.js',
+          '/viewer/lib/GLTFLoader.js',
+          '/viewer/lib/DRACOLoader.js',
+          '/viewer/lib/draco/draco_decoder.wasm',
+          '/viewer/lib/draco/draco_decoder.js',
+          '/viewer/lib/draco/draco_wasm_wrapper.js',
+        ];
+        let ok = 0, fail = 0;
+        log('Verificando librerías locales...');
+        for (const f of files) {
+          try {
+            const r = await fetch(f, { method: 'GET', cache: 'no-store' });
+            if (r.ok) { log(`OK: ${f}`); ok++; }
+            else { log(`FALTA: ${f} (HTTP ${r.status})`); fail++; }
+          } catch (e) {
+            log(`ERROR: ${f} (${e})`); fail++;
+          }
+        }
+        log(`Verificación completada. Presentes: ${ok} | Faltan/Errores: ${fail}`);
+      });
+
+      await loadDeps();
+
+      const canvas = document.getElementById('canvas');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xffffff);
+
+      const camera = new THREE.PerspectiveCamera(60, 2, 0.1, 10000);
+      camera.position.set(10, 10, 10);
+      scene.add(camera);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+
+      const light1 = new THREE.DirectionalLight(0xffffff, 1.0);
+      light1.position.set(10, 10, 10);
+      scene.add(light1);
+      const light2 = new THREE.AmbientLight(0xffffff, 0.4);
+      scene.add(light2);
+
+      const grid = new THREE.GridHelper(100, 100, 0x3a3a3a, 0xe0e0e0);
+      try {
+        const applyMat = (mat) => { if (!mat) return; mat.transparent = true; mat.opacity = 0.6; mat.depthTest = false; };
+        const m = grid.material; // LineBasicMaterial o array
+        if (Array.isArray(m)) { m.forEach(applyMat); } else { applyMat(m); }
+        grid.renderOrder = 999; // dibujar al final
+      } catch {}
+      scene.add(grid);
+      const axes = new THREE.AxesHelper(5);
+      scene.add(axes);
+
+      // Grupo contenedor del modelo para aplicar georreferenciación absoluta
+      const modelGroup = new THREE.Group();
+      modelGroup.name = 'ModelGeodeticGroup';
+      scene.add(modelGroup);
+
+      // Context overlay placeholders (avoid ReferenceError if features not used)
+      let parcelLine = null;
+      let streetLine = null;
+      let lastBodySent = null;
+      function drawParcel(/*geom*/) { /* no-op stub; layer rendering optional */ }
+      function drawStreetAxis(/*geom*/) { /* no-op stub; layer rendering optional */ }
+      // Helper: simple summary (vertex count and approximate length) for LineString/MultiLineString
+      function summarizeAxis(geom, crsHint) {
+        try {
+          if (!geom) return '';
+          const lines = [];
+          if (geom.type === 'LineString') lines.push(geom.coordinates);
+          else if (geom.type === 'MultiLineString') lines.push(...geom.coordinates);
+          let verts = 0; let len = 0;
+          for (const coords of lines) {
+            if (!Array.isArray(coords)) continue;
+            verts += coords.length;
+            for (let i = 1; i < coords.length; i++) {
+              const [x0, y0] = coords[i-1];
+              const [x1, y1] = coords[i];
+              const dx = (x1 - x0);
+              const dy = (y1 - y0);
+              len += Math.hypot(dx, dy);
+            }
+          }
+          const crs = crsHint || (lastBodyCRS || 'LOCAL');
+          const unit = (crs && typeof crs === 'string' && crs.toUpperCase().includes('EPSG:4326')) ? 'deg' : 'm';
+          const lenFmt = unit === 'm' ? `${len.toFixed(1)} m` : `${len.toFixed(5)}°`;
+          return `verts: ${verts}, length: ${lenFmt}, crs: ${crs}`;
+        } catch { return ''; }
+      }
+      function updateContextOverlays(body) {
+        // Minimal: remember body/CRS; actual drawing is optional
+        lastBodySent = body;
+        lastBodyCRS = (body && typeof body.crs === 'string') ? body.crs : null;
+        // Track whether the axis was explicitly provided in the request
+        const hadExplicitAxis = !!(body && body.street_axis);
+        // Update body summary badge
+        try {
+          const bb = document.getElementById('body-badge');
+          if (bb) {
+            if (body && typeof body === 'object') {
+              const m = (body.municipio || '').toString();
+              const sz = (body.subzona || '').toString();
+              const h = (body.altura_maxima_m != null) ? Number(body.altura_maxima_m) : null;
+              const r = (body.retranqueo_min_m != null) ? Number(body.retranqueo_min_m) : null;
+              const parts = [];
+              if (m) parts.push(`mun=${m}`);
+              if (sz) parts.push(`sub=${sz}`);
+              if (typeof h === 'number' && !Number.isNaN(h)) parts.push(`h=${h}`);
+              if (typeof r === 'number' && !Number.isNaN(r)) parts.push(`ret=${r}`);
+              const vis = ((localStorage.getItem('viewer_body_badge_visible') ?? '1') === '1');
+              bb.style.display = (parts.length && vis) ? 'inline-block' : 'none';
+              if (parts.length) {
+                bb.textContent = 'body: ' + parts.join(' · ');
+                bb.title = 'Resumen de la última petición: ' + parts.join(', ');
+              }
+            } else {
+              bb.style.display = 'none';
+            }
+          }
+        } catch {}
+        // Auto-apply persisted street axis if not provided
+        try {
+          if (body && !body.street_axis) {
+            const s = localStorage.getItem('viewer_street_axis');
+            if (s) {
+              const eje = JSON.parse(s);
+              if (eje && (eje.type === 'LineString' || eje.type === 'MultiLineString')) {
+                body.street_axis = eje;
+                log('Eje de calle restaurado desde este navegador y aplicado al contexto.');
+              }
+            }
+          }
+        } catch {}
+        // If overlays existed, they will be cleared by clearModel() before loading
+        try {
+          if (mapVisible && mapInstance) {
+            autoAnchorIfNeeded();
+            ensureMapLayers(lastBodySent);
+          }
+        } catch {}
+        // Update axis badge based on presence and source
+        try {
+          const ab = document.getElementById('axis-badge');
+          if (ab) {
+            if (lastBodySent && lastBodySent.street_axis) {
+              const source = hadExplicitAxis ? 'request' : 'persisted';
+              ab.style.display = 'inline-block';
+              if (source === 'request') {
+                ab.textContent = 'axis: request';
+                ab.title = 'Eje de calle aportado explícitamente en la petición';
+                ab.style.backgroundColor = '#2e7d32'; // green
+                ab.style.color = '#fff';
+              } else {
+                ab.textContent = 'axis: persisted';
+                ab.title = 'Eje de calle restaurado desde este navegador (localStorage)';
+                ab.style.backgroundColor = '#1565c0'; // blue
+                ab.style.color = '#fff';
+              }
+              // Append quick summary
+              try { ab.title += `\n${summarizeAxis(lastBodySent.street_axis, lastBodyCRS)}`; } catch {}
+            } else {
+              ab.style.display = 'none';
+            }
+          }
+        } catch {}
+        // Lightweight axis quality check: distance to parcel and angle vs nearest edge (approx, local units)
+        try {
+          const axisCheckEnabled = (() => {
+            try {
+              const el = document.getElementById('axis-quality-enable');
+              if (el) return !!el.checked;
+              const v = localStorage.getItem('axis_quality_enabled');
+              return v == null ? true : (v === 'true');
+            } catch { return true; }
+          })();
+          if (axisCheckEnabled && lastBodySent && lastBodySent.geometry && lastBodySent.street_axis) {
+            const g = lastBodySent.geometry;
+            const axis = lastBodySent.street_axis;
+            const rings = [];
+            if (g.type === 'Polygon') {
+              for (const r of g.coordinates) rings.push(r);
+            } else if (g.type === 'MultiPolygon') {
+              for (const poly of g.coordinates) if (poly[0]) rings.push(poly[0]);
+            }
+            const line = (axis.type === 'LineString') ? axis.coordinates
+                     : (axis.type === 'MultiLineString' ? axis.coordinates.flat() : null);
+            if (rings.length && line && line.length >= 2) {
+              // Helpers
+              const distPointSeg = (p, a, b) => {
+                const vx = b[0]-a[0], vy = b[1]-a[1];
+                const wx = p[0]-a[0], wy = p[1]-a[1];
+                const c1 = vx*wx + vy*wy;
+                const c2 = vx*vx + vy*vy;
+                const t = c2 > 0 ? Math.max(0, Math.min(1, c1/c2)) : 0;
+                const px = a[0] + t*vx, py = a[1] + t*vy;
+                const dx = p[0]-px, dy = p[1]-py;
+                return Math.hypot(dx, dy);
+              };
+              const lineMid = line[Math.floor((line.length-1)/2)];
+              let minDist = Number.POSITIVE_INFINITY;
+              let bestEdge = null;
+              for (const ring of rings) {
+                for (let i=0; i<ring.length-1; i++) {
+                  const a = ring[i], b = ring[i+1];
+                  // distance from axis vertices and midpoint to this edge
+                  let d = distPointSeg(lineMid, a, b);
+                  // consider also endpoints for robustness
+                  d = Math.min(d, distPointSeg(line[0], a, b), distPointSeg(line[line.length-1], a, b));
+                  if (d < minDist) { minDist = d; bestEdge = [a, b]; }
+                }
+              }
+              // angle between axis overall and bestEdge
+              const segAngle = (p, q) => Math.atan2(q[1]-p[1], q[0]-p[0]);
+              const axisA = line[0], axisB = line[line.length-1];
+              let axisAng = segAngle(axisA, axisB);
+              if (bestEdge) {
+                const edgeAng = segAngle(bestEdge[0], bestEdge[1]);
+                let dAng = Math.abs(axisAng - edgeAng) * 180/Math.PI;
+                dAng = dAng % 180; if (dAng > 90) dAng = 180 - dAng; // fold to [0,90]
+                const thresholdM = (() => { try { return parseFloat(localStorage.getItem('axis_quality_threshold_m')) || 20; } catch { return 20; } })();
+                const thresholdDeg = (() => { try { return parseFloat(localStorage.getItem('axis_quality_threshold_deg')) || 35; } catch { return 35; } })();
+                const msgs = [];
+                if (minDist > thresholdM) msgs.push(`distancia eje→parcela ≈ ${minDist.toFixed(1)}m (> ${thresholdM}m)`);
+                if (dAng > thresholdDeg) msgs.push(`desalineación angular ≈ ${dAng.toFixed(0)}° (> ${thresholdDeg}°)`);
+                if (msgs.length) {
+                  toastWarn('Calidad del eje', 'Posible problema:\n' + msgs.join('\n'));
+                  log('[axis-quality] ' + msgs.join(' | '));
+                  try {
+                    const ab2 = document.getElementById('axis-badge');
+                    if (ab2) { ab2.title += `\n${msgs.join('\n')}`; }
+                  } catch {}
+                  // Visual flash on map layers to highlight the issue
+                  try {
+                    flashMapLayer('parcel-line', { 'line-color':'#ff1744', 'line-width': 5 }, 900);
+                    flashMapLayer('street-line', { 'line-color':'#ff9100', 'line-width': 4 }, 900);
+                  } catch {}
+                } else {
+                  log('[axis-quality] OK: distancia≈' + minDist.toFixed(1) + 'm, Δθ≈' + dAng.toFixed(0) + '°');
+                }
+              }
+            }
+          }
+        } catch (e) { /* no-op */ }
+      }
+
+      // Reverse sync 3D → mapa (se arma bajo demanda cuando está activo el checkbox)
+      let reverseAttached = false;
+      let reverseHandler = null;
+      if (typeof window.__attachReverseSyncOnce !== 'function') {
+        window.__attachReverseSyncOnce = () => {
+          try {
+            if (reverseAttached) return;
+            if (!syncReverseEl || !syncReverseEl.checked) return;
+            if (!mapVisible || !mapInstance || !mapAnchor) return;
+            if (!(typeof viewerReady !== 'undefined' && viewerReady)) return;
+            // Definir handler de cambio en cámara/controles
+            reverseHandler = () => {
+              try {
+                if (!mapVisible || !mapInstance || !mapAnchor) return;
+                if (isUpdatingFromMap) return; // evitar bucle
+                isUpdatingFromThree = true;
+                // Target local ajustado por offsets
+                const x0a = (mapAnchor.x0_adj ?? mapAnchor.x0) || 0;
+                const z0a = (mapAnchor.z0_adj ?? mapAnchor.z0) || 0;
+                const tx = controls.target.x;
+                const tz = controls.target.z;
+                // Convertir delta metros → lon/lat usando MercatorCoordinate si disponible
+                let lon = mapAnchor.lon0, lat = mapAnchor.lat0;
+                try {
+                  const dx_m = (tx - x0a);
+                  const dz_m = (tz - z0a);
+                  if (mapAnchor.mc0 && mapAnchor.mcScale) {
+                    const mc = new maplibregl.MercatorCoordinate(mapAnchor.mc0.x + dx_m * mapAnchor.mcScale, mapAnchor.mc0.y + dz_m * mapAnchor.mcScale, mapAnchor.mc0.z || 0);
+                    const ll = mc.toLngLat();
+                    lon = ll.lng; lat = ll.lat;
+                  } else {
+                    const metersPerDegLat = 111320;
+                    const metersPerDegLon = 111320 * Math.cos((mapAnchor.lat0 * Math.PI)/180);
+                    lon = mapAnchor.lon0 + (dx_m / metersPerDegLon);
+                    lat = mapAnchor.lat0 + (dz_m / metersPerDegLat);
+                  }
+                } catch {}
+                // Calcular bearing desde vector cámara
+                let bearing = mapInstance.getBearing ? mapInstance.getBearing() : 0;
+                try {
+                  const camVec = new THREE.Vector3().subVectors(camera.position, controls.target);
+                  const rad = Math.atan2(camVec.x, camVec.z); // 0 mirando +Z, sentido horario
+                  const deg = rad * 180 / Math.PI;
+                  // Ajuste respecto a bearing base del anclaje
+                  bearing = (mapAnchor.bearing0 || 0) + deg;
+                } catch {}
+                // Zoom relativo según distancia cámara → objetivo
+                let zoom = mapInstance.getZoom();
+                try {
+                  const len0 = Math.max(1e-6, mapAnchor.camVec0 ? mapAnchor.camVec0.length() : 50);
+                  const len = Math.max(1e-6, new THREE.Vector3().subVectors(camera.position, controls.target).length());
+                  const ratio = len / len0;
+                  // En forward usamos 2^(zoom0 - z) ~ ratio → z ≈ zoom0 - log2(ratio)
+                  zoom = (mapAnchor.zoom0 || zoom) - Math.log2(ratio);
+                } catch {}
+                // Pitch a partir de elevación relativa
+                let pitch = mapInstance.getPitch ? mapInstance.getPitch() : 0;
+                try {
+                  const baseElev = mapAnchor.elev0 || 0;
+                  const len = Math.max(1e-6, new THREE.Vector3().subVectors(camera.position, controls.target).length());
+                  const elevDeg = Math.asin((camera.position.y - controls.target.y) / len) * 180 / Math.PI;
+                  pitch = baseElev + (elevDeg - (mapAnchor.elev0 || 0));
+                } catch {}
+                // Aplicar transición
+                mapInstance.easeTo({ center: [lon, lat], bearing, zoom, pitch, duration: Math.min(1000, Math.max(0, syncEaseMs || 0)) });
+                isUpdatingFromThree = false;
+              } catch { isUpdatingFromThree = false; }
+            };
+            controls.addEventListener('change', reverseHandler);
+            reverseAttached = true;
+            log('Sync 3D→mapa activado.');
+          } catch {}
+        };
+      }
+      // Gestionar activación/desactivación desde el checkbox
+      try {
+        syncReverseEl?.addEventListener('change', () => {
+          try {
+            if (!syncReverseEl.checked) {
+              if (reverseAttached && reverseHandler) controls.removeEventListener('change', reverseHandler);
+              reverseAttached = false; reverseHandler = null;
+              log('Sync 3D→mapa desactivado.');
+            } else {
+              // Se adjuntará en el próximo frame cuando haya mapa/anclaje
+              reverseAttached = false; // forzar reevaluación
+            }
+          } catch {}
+        });
+      } catch {}
+
+      function applyModelGeodeticOrigin() {
+        try {
+          if (!mapAnchor) return;
+          const x0a = (mapAnchor.x0_adj ?? mapAnchor.x0) || 0;
+          const z0a = (mapAnchor.z0_adj ?? mapAnchor.z0) || 0;
+          const alt = Number.isFinite(modelOrgAlt) ? modelOrgAlt : 0;
+          let dx_m = 0, dz_m = 0;
+          if (Number.isFinite(modelOrgLon) && Number.isFinite(modelOrgLat)) {
+            try {
+              if (mapAnchor.mc0 && mapAnchor.mcScale) {
+                const mcO = maplibregl.MercatorCoordinate.fromLngLat({lng: modelOrgLon, lat: modelOrgLat});
+                dx_m = (mcO.x - mapAnchor.mc0.x) / mapAnchor.mcScale;
+                dz_m = (mcO.y - mapAnchor.mc0.y) / mapAnchor.mcScale;
+              } else {
+                // Fallback aproximado
+                const metersPerDegLat = 111320;
+                const metersPerDegLon = 111320 * Math.cos((mapAnchor.lat0 * Math.PI)/180);
+                dx_m = (modelOrgLon - mapAnchor.lon0) * metersPerDegLon;
+                dz_m = (modelOrgLat - mapAnchor.lat0) * metersPerDegLat;
+              }
+            } catch {}
+          }
+          modelGroup.position.set(x0a + dx_m, alt, z0a + dz_m);
+        } catch {}
+      }
+
+      const loader = new GLTFLoader();
+      const draco = new DRACOLoader();
+      // Seleccionar ruta del decodificador según origen de librerías
+      const dracoPath = (typeof window.__DRACO_DECODER_PATH__ === 'string' && window.__DRACO_DECODER_PATH__.length)
+        ? window.__DRACO_DECODER_PATH__
+        : (librarySource && librarySource.startsWith('http'))
+          ? `${librarySource}/examples/jsm/libs/draco/gltf/`
+          : '/viewer/lib/draco/';
+      draco.setDecoderPath(dracoPath);
+      loader.setDRACOLoader(draco);
+      currentDracoPath = dracoPath;
+
+      // Comprobación no bloqueante: avisar si faltan binarios DRACO en modo local
+      if (dracoPath.startsWith('/')) {
+        fetch(dracoPath + 'draco_decoder.wasm', { method: 'HEAD' })
+          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+          .catch(err => log(`Advertencia: no se pudo acceder a DRACO en ${dracoPath} (detalle: ${err}). ` +
+                           `Verifica que existen draco_decoder.wasm/js y draco_wasm_wrapper.js en '/viewer/lib/draco/'.`));
+      }
+
+      function updateLayout() {
+        try {
+          const toolbar = document.getElementById('toolbar');
+          const mapDiv = document.getElementById('map');
+          const canvasEl = renderer.domElement;
+          const h = Math.max(40, toolbar?.offsetHeight || 48);
+          const compact = document.body.classList.contains('compact');
+          const isSplit = document.body.classList.contains('map-split');
+          if (isSplit) {
+            // 60% canvas, 40% map
+            const toolbarH = compact ? 40 : 48; // coherente con CSS
+            canvasEl.style.height = `calc(60% - ${toolbarH}px)`;
+            if (mapDiv) mapDiv.style.top = 'auto';
+          } else {
+            canvasEl.style.height = `calc(100% - ${h}px)`;
+            if (mapDiv) mapDiv.style.top = `${h}px`;
+          }
+        } catch {}
+      }
+      function onResize() {
+        updateLayout();
+        const { clientWidth, clientHeight } = renderer.domElement;
+        const w = Math.max(1, clientWidth);
+        const h = Math.max(1, clientHeight);
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      window.addEventListener('resize', onResize);
+      updateLayout();
+      onResize();
+
+      // Auto-encuadre de cámara
+      const autoFrameEl = document.getElementById('auto-frame');
+      let autoFrame = (localStorage.getItem('viewer_auto_frame') ?? '0') === '1';
+      autoFrameEl.checked = autoFrame;
+      autoFrameEl.addEventListener('change', () => {
+        autoFrame = !!autoFrameEl.checked;
+        localStorage.setItem('viewer_auto_frame', autoFrame ? '1' : '0');
+        if (autoFrame && lastBodySent?.geometry) {
+          try { frameCameraToParcelLocal(lastBodySent.geometry); } catch {}
+        }
+      });
+
+      function frame() {
+        // FPS simple
+        __fps_frames++;
+        const now = performance.now();
+        if (now - __fps_last >= 500) { // actualizar ~2 veces por segundo
+          fps = (__fps_frames * 1000) / (now - __fps_last);
+          __fps_frames = 0; __fps_last = now;
+        }
+        __attachReverseSyncOnce();
+        controls.update();
+        renderer.render(scene, camera);
+        if (!triWarnNotified && triWarn > 0 && sceneStats.tris > triWarn) {
+          log(`Aviso: modelo pesado. Triángulos (${sceneStats.tris.toLocaleString()}) superan el umbral (${triWarn.toLocaleString()}).`);
+          triWarnNotified = true;
+        }
+        updateTriWarnBadge();
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+
+      function clearModel() {
+        // Remove previous model content but KEEP the modelGroup and helpers/lights
+        const keep = new Set([grid.uuid, axes.uuid, light1.uuid, light2.uuid, camera.uuid, modelGroup.uuid]);
+        for (let i = scene.children.length - 1; i >= 0; i--) {
+          const obj = scene.children[i];
+          if (!keep.has(obj.uuid)) {
+            scene.remove(obj);
+            obj.traverse?.(child => {
+              if (child.geometry) child.geometry.dispose();
+              if (child.material) {
+                if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                else child.material.dispose();
+              }
+            });
+          }
+        }
+        // Also clear children inside modelGroup safely
+        for (let i = modelGroup.children.length - 1; i >= 0; i--) {
+          const child = modelGroup.children[i];
+          modelGroup.remove(child);
+          child.traverse?.(n => {
+            if (n.geometry) n.geometry.dispose();
+            if (n.material) {
+              if (Array.isArray(n.material)) n.material.forEach(m => m.dispose());
+              else n.material.dispose();
+            }
+          });
+        }
+        // Clear context overlays
+        if (parcelLine) { scene.remove(parcelLine); parcelLine.geometry.dispose(); parcelLine.material.dispose(); parcelLine = null; }
+        if (streetLine) { scene.remove(streetLine); streetLine.geometry.dispose(); streetLine.material.dispose(); streetLine = null; }
+      }
+
+      function frameCameraToParcelLocal(geom) {
+        try {
+          if (!geom || geom.type !== 'Polygon' || !Array.isArray(geom.coordinates) || geom.coordinates.length === 0) return;
+          const outer = geom.coordinates[0];
+          if (!Array.isArray(outer) || outer.length < 3) return;
+          let xmin=Infinity, xmax=-Infinity, zmin=Infinity, zmax=-Infinity;
+          for (const p of outer) {
+            const x = p[0]; const z = p[1];
+            if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+            xmin = Math.min(xmin, x); xmax = Math.max(xmax, x);
+            zmin = Math.min(zmin, z); zmax = Math.max(zmax, z);
+          }
+          if (!Number.isFinite(xmin) || !Number.isFinite(zmin) || !Number.isFinite(xmax) || !Number.isFinite(zmax)) return;
+          const cx = (xmin + xmax) / 2; const cz = (zmin + zmax) / 2;
+          const w = Math.max(1e-3, (xmax - xmin));
+          const h = Math.max(1e-3, (zmax - zmin));
+          const s = Math.max(w, h);
+          const dist = Math.max(10, s * 2.2);
+          controls.target.set(cx, 0, cz);
+          camera.position.set(cx + dist, dist * 0.9, cz + dist);
+          camera.near = Math.max(0.1, Math.min(1, s * 0.01));
+          camera.far = Math.max(camera.far, dist * 10);
+          camera.updateProjectionMatrix();
+          controls.update();
+        } catch (e) { /* noop */ }
+      }
+
+      async function loadURL(url) {
+        clearModel();
+        triWarnNotified = false;
+        log(`Cargando URL: ${url}`);
+        const isGLB = url.toLowerCase().endsWith('.glb') || url.includes('format=glb');
+        const isGLTF = url.toLowerCase().endsWith('.gltf') || url.includes('format=gltf');
+        const uForFmt = new URL(url, window.location.href);
+        const fmtParam = (uForFmt.searchParams.get('format') || '').toLowerCase();
+        const t_start = performance.now();
+        const isVolumeExport = url.includes('/zoning/volume-export');
+        const method = isVolumeExport ? 'POST' : 'GET';
+
+        // Fetch
+        let resp;
+        let t_fetch0 = performance.now();
+        if (isVolumeExport) {
+          const desiredFormat = fmtParam || (isGLB ? 'glb' : isGLTF ? 'gltf' : 'cityjson');
+          // Permitir cuerpo personalizado vía ?body_b64=<base64 JSON UTF-8>
+          let bodyToSend = null;
+          try {
+            const pAll = new URL(url, window.location.href);
+            const b64 = pAll.searchParams.get('body_b64');
+            if (b64) {
+              // Acepta base64 estándar o url-safe (-_)
+              let b64std = b64.replace(/-/g, '+').replace(/_/g, '/');
+              // Añadir padding '=' si falta
+              const mod = b64std.length % 4;
+              if (mod === 2) b64std += '==';
+              else if (mod === 3) b64std += '=';
+              else if (mod !== 0) b64std += '==='; // fallback defensivo
+              const jsonStr = atob(b64std);
+              const obj = JSON.parse(jsonStr);
+              if (typeof obj === 'object' && obj) bodyToSend = obj;
+            }
+          } catch (e) {
+            log('body_b64 inválido: ' + e);
+          }
+          if (!bodyToSend) {
+            bodyToSend = {
+              geometry: { type: 'Polygon', coordinates: [ [ [0,0],[2,0],[2,2],[0,2],[0,0] ] ] },
+              altura_maxima_m: 3,
+              retranqueo_min_m: 0
+            };
+          }
+          // If there is a persisted street axis and the request has none, inject it
+          try {
+            if (!bodyToSend.street_axis) {
+              const s = localStorage.getItem('viewer_street_axis');
+              if (s) {
+                const eje = JSON.parse(s);
+                if (eje && (eje.type === 'LineString' || eje.type === 'MultiLineString')) {
+                  bodyToSend.street_axis = eje;
+                  log('Eje de calle (persistido) inyectado en la petición.');
+                }
+              }
+            }
+          } catch {}
+          // Asegurar formato coherente
+          bodyToSend.format = desiredFormat;
+          // Inyectar diagnostics_verbosity=full si el toggle está activo y no viene especificado
+          try {
+            const on = (localStorage.getItem('viewer_diag_full') ?? '0') === '1';
+            if (on && !('diagnostics_verbosity' in bodyToSend)) {
+              bodyToSend.diagnostics_verbosity = 'full';
+            }
+          } catch {}
+          // Robustez: asegurar altura_maxima_m > 0
+          try {
+            const v = bodyToSend.altura_maxima_m;
+            if (!(typeof v === 'number' && isFinite(v) && v > 0)) {
+              const prev = v;
+              bodyToSend.altura_maxima_m = 8;
+              log(`altura_maxima_m inválida (${prev}). Usando 8 m por defecto.`);
+            }
+          } catch {}
+          log(`POST ${url}`);
+          updateContextOverlays(bodyToSend);
+          lastRequestBody = bodyToSend;
+          lastExportUrl = url;
+          renderDebugPanel();
+          resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyToSend)
+          });
+        } else {
+          log(`GET ${url}`);
+          resp = await fetch(url);
+        }
+        const t_fetch1 = performance.now();
+        log(`HTTP ${resp.status} ${resp.statusText}`);
+        if (!resp.ok) {
+          const txt = await resp.text().catch(()=>'<no-body>');
+          log(`Error de respuesta: ${txt}`);
+          lastResponseInfo = { status: resp.status, ok: resp.ok, type: (resp.headers.get('content-type')||''), error: txt };
+          renderDebugPanel();
+          alert(`Error HTTP ${resp.status}. Revisa el panel de log.`);
+          return;
+        }
+
+        // Body
+        let arrayBuffer;
+        const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+        const isCityJSON = fmtParam === 'cityjson' || ctype.includes('cityjson');
+        const t_body0 = performance.now();
+        if (ctype.includes('application/json')) {
+          const obj = await resp.json();
+          if (obj && obj.glb_b64) {
+            try {
+              lastResponseInfo = {
+                status: resp.status,
+                ok: resp.ok,
+                type: ctype,
+                diagnostics: obj.diagnostics || null,
+                properties: obj.properties || (obj.diagnostics && obj.diagnostics.properties) || null
+              };
+              renderDebugPanel();
+            } catch {}
+            // Hook diagnostics/properties to refine axis badge (used/ignored)
+            try {
+              const props = (obj && obj.properties) || (obj && obj.diagnostics && obj.diagnostics.properties) || null;
+              const used = props && typeof props.street_axis_used === 'boolean' ? props.street_axis_used : null;
+              const reason = props && (props.street_axis_ignored_reason || props.axis_ignored_reason);
+              const ab = document.getElementById('axis-badge');
+              if (ab && lastBodySent && lastBodySent.street_axis) {
+                if (used === false && reason) {
+                  ab.style.display = 'inline-block';
+                  ab.textContent = 'axis: ignored';
+                  ab.title = 'Eje de calle ignorado por backend: ' + reason;
+                  ab.style.backgroundColor = '#616161'; // grey
+                  ab.style.color = '#fff';
+                  try { ab.title += `\n${summarizeAxis(lastBodySent.street_axis, lastBodyCRS)}`; } catch {}
+                } else if (used === true) {
+                  ab.style.display = 'inline-block';
+                  ab.textContent = 'axis: used';
+                  ab.title = 'Eje de calle utilizado por backend para determinar frente/retranqueos';
+                  ab.style.backgroundColor = '#2e7d32'; // green
+                  ab.style.color = '#fff';
+                  try { ab.title += `\n${summarizeAxis(lastBodySent.street_axis, lastBodyCRS)}`; } catch {}
+                }
+              }
+              // Update front badge with detected side and source
+              const fb = document.getElementById('front-badge');
+              if (fb && props) {
+                const side = props.front_detected_side || props.front_side_used || null;
+                const source = props.front_direction_source || null;
+                if (side || source) {
+                  const src = (source || '').toString();
+                  fb.style.display = 'inline-block';
+                  fb.textContent = 'front: ' + (side || '—') + (src ? ` (${src})` : '');
+                  // color by source
+                  if (src === 'street_axis') { fb.style.backgroundColor = '#1565c0'; fb.style.color = '#fff'; fb.title = 'Frente determinado por eje de calle'; }
+                  else if (src === 'plan_default') { fb.style.backgroundColor = '#6a1b9a'; fb.style.color = '#fff'; fb.title = 'Frente por defecto del plan'; }
+                  else if (src === 'request') { fb.style.backgroundColor = '#2e7d32'; fb.style.color = '#fff'; fb.title = 'Frente aportado en petición'; }
+                  else { fb.style.backgroundColor = '#424242'; fb.style.color = '#fff'; fb.title = 'Fuente de frente no especificada'; }
+                }
+              }
+            } catch {}
+            const bin = atob(obj.glb_b64);
+            const bytesArr = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytesArr[i] = bin.charCodeAt(i);
+            arrayBuffer = bytesArr.buffer;
+            log(`Recibido GLB base64 (${bin.length} chars)`);
+          } else {
+            // Mostrar parte del JSON para diagnóstico y, si existen, los diagnostics de backend
+            const preview = JSON.stringify(obj).slice(0, 300);
+            log('Respuesta JSON sin glb_b64: ' + preview + (preview.length>=300?'...':''));
+            const diag = obj && obj.diagnostics;
+            try { lastResponseInfo = { status: resp.status, ok: resp.ok, type: ctype, diagnostics: diag || null, properties: obj && (obj.properties || (diag && diag.properties)) || null }; renderDebugPanel(); } catch {}
+            try {
+              const props = (obj && obj.properties) || (diag && diag.properties) || null;
+              // Axis
+              const used = props && typeof props.street_axis_used === 'boolean' ? props.street_axis_used : null;
+              const reason = props && (props.street_axis_ignored_reason || props.axis_ignored_reason);
+              const ab = document.getElementById('axis-badge');
+              if (ab && lastBodySent && lastBodySent.street_axis) {
+                if (used === false && reason) {
+                  ab.style.display = 'inline-block';
+                  ab.textContent = 'axis: ignored';
+                  ab.title = 'Eje de calle ignorado por backend: ' + reason;
+                  ab.style.backgroundColor = '#616161';
+                  ab.style.color = '#fff';
+                  try { ab.title += `\n${summarizeAxis(lastBodySent.street_axis, lastBodyCRS)}`; } catch {}
+                } else if (used === true) {
+                  ab.style.display = 'inline-block';
+                  ab.textContent = 'axis: used';
+                  ab.title = 'Eje de calle utilizado por backend para determinar frente/retranqueos';
+                  ab.style.backgroundColor = '#2e7d32';
+                  ab.style.color = '#fff';
+                  try { ab.title += `\n${summarizeAxis(lastBodySent.street_axis, lastBodyCRS)}`; } catch {}
+                }
+              }
+              // Front
+              const fb = document.getElementById('front-badge');
+              if (fb && props) {
+                const side = props.front_detected_side || props.front_side_used || null;
+                const source = props.front_direction_source || null;
+                if (side || source) {
+                  const src = (source || '').toString();
+                  fb.style.display = 'inline-block';
+                  fb.textContent = 'front: ' + (side || '—') + (src ? ` (${src})` : '');
+                  if (src === 'street_axis') { fb.style.backgroundColor = '#1565c0'; fb.style.color = '#fff'; fb.title = 'Frente determinado por eje de calle'; }
+                  else if (src === 'plan_default') { fb.style.backgroundColor = '#6a1b9a'; fb.style.color = '#fff'; fb.title = 'Frente por defecto del plan'; }
+                  else if (src === 'request') { fb.style.backgroundColor = '#2e7d32'; fb.style.color = '#fff'; fb.title = 'Frente aportado en petición'; }
+                  else { fb.style.backgroundColor = '#424242'; fb.style.color = '#fff'; fb.title = 'Fuente de frente no especificada'; }
+                }
+              }
+            } catch {}
+            if (diag && (diag.reason || diag.hint)) {
+              const msg = `Sin volumen renderizable. Motivo: ${diag.reason || '—'}\n${diag.hint ? 'Sugerencia: ' + diag.hint : ''}`;
+              alert(msg);
+            } else {
+              alert('La API devolvió JSON sin glb_b64. Revisa el panel de log para ver el inicio de la respuesta.');
+            }
+            return;
+          }
+        } else {
+          arrayBuffer = await resp.arrayBuffer();
+          log(`Recibido binario (${arrayBuffer.byteLength} bytes)`);
+        }
+        const t_body1 = performance.now();
+        const bytes = arrayBuffer ? arrayBuffer.byteLength : undefined;
+
+        // CityJSON -> descarga
+        if (isCityJSON) {
+          const isGzip = ctype.includes('gzip');
+          const filename = isGzip ? 'model.city.json.gz' : 'model.city.json';
+          const blob = new Blob([arrayBuffer], { type: isGzip ? 'application/gzip' : 'application/json' });
+          const href = URL.createObjectURL(blob);
+          log(`CityJSON recibido (${isGzip ? 'gzip' : 'json'}). Abriendo/descargando ${filename}...`);
+          const a = document.createElement('a');
+          a.href = href; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(href), 2000);
+          alert('CityJSON descargado. Este visor no lo renderiza, solo GLB/GLTF.');
+          const t_end = performance.now();
+          renderMetrics({ url, method, status: resp.status, ok: resp.ok, t_fetch: (t_fetch1 - t_fetch0), t_body: (t_body1 - t_body0), t_loader: null, t_total: (t_end - t_start), bytes, type: 'cityjson' });
+          return;
+        }
+
+        // GLB/GLTF -> cargar en Three.js
+        const blob = new Blob([arrayBuffer], { type: isGLB ? 'model/gltf-binary' : 'model/gltf+json' });
+        const objectURL = URL.createObjectURL(blob);
+        try {
+          const t_loader0 = performance.now();
+          const gltf = await loader.loadAsync(objectURL);
+          const t_loader1 = performance.now();
+          gltf.scene.traverse(obj => {
+            if (obj.isMesh) {
+              obj.material.metalness = 0.1;
+              obj.material.roughness = 0.8;
+            }
+          });
+          modelGroup.add(gltf.scene);
+          log('Modelo cargado en Three.js');
+          // Auto-frame
+          const box = new THREE.Box3().setFromObject(gltf.scene);
+          const sizeVec = box.getSize(new THREE.Vector3());
+          const size = sizeVec.length();
+          const center = box.getCenter(new THREE.Vector3());
+          lastModelBox = { box, center: center.clone(), sizeVec: sizeVec.clone(), sizeLen: size };
+          controls.target.copy(center);
+          // Posicionar cámara a una distancia razonable respecto al tamaño del modelo
+          const dist = Math.max(5, size * 0.9);
+          camera.position.set(center.x + dist, center.y + dist * 0.9, center.z + dist);
+          camera.near = Math.max(0.01, size / 1000);
+          camera.far = Math.max(camera.far, size * 10);
+          camera.updateProjectionMatrix();
+          controls.update();
+          // Reposicionar y escalar rejilla para que sea visible cerca del modelo
+          try {
+            const span = Math.max(5, Math.max(sizeVec.x, sizeVec.z));
+            const base = 100; // tamaño base del GridHelper
+            const s = Math.max(0.1, span / base);
+            grid.position.set(center.x, Math.min(center.y, box.min.y) - 0.001, center.z);
+            grid.scale.set(s, 1, s);
+            grid.visible = true;
+            const gridBtn = document.getElementById('toggle-grid');
+            if (gridBtn) gridBtn.textContent = 'Rejilla: ' + (grid.visible ? 'on' : 'off');
+            log(`Rejilla ajustada: pos=(${grid.position.x.toFixed(2)},${grid.position.y.toFixed(2)},${grid.position.z.toFixed(2)}) escala=${s.toFixed(2)}`);
+          } catch {}
+          // Si no hay body/geometry (demos GLB/GLTF), crear una parcela sintética basada en el bounding box
+          try {
+            if (!lastBodySent || !lastBodySent.geometry) {
+              const poly = [
+                [box.min.x, box.min.z],
+                [box.max.x, box.min.z],
+                [box.max.x, box.max.z],
+                [box.min.x, box.max.z],
+                [box.min.x, box.min.z]
+              ];
+              lastBodySent = { geometry: { type: 'Polygon', coordinates: [poly] }, crs: (lastBodyCRS || 'LOCAL') };
+              log('Parcela sintética creada a partir del bounding box del modelo.');
+              if (mapVisible && mapInstance) { autoAnchorIfNeeded(); ensureMapLayers(lastBodySent); }
+            }
+          } catch {}
+          const t_end = performance.now();
+          renderMetrics({ url, method, status: resp.status, ok: resp.ok, t_fetch: (t_fetch1 - t_fetch0), t_body: (t_body1 - t_body0), t_loader: (t_loader1 - t_loader0), t_total: (t_end - t_start), bytes, type: isGLB ? 'glb' : 'gltf' });
+        } catch (e) {
+          log('Error cargando GLTF/GLB: ' + e);
+          alert('Fallo cargando GLTF/GLB. Ver log.');
+          const t_end = performance.now();
+          renderMetrics({ url, method, status: resp.status, ok: false, t_fetch: (t_fetch1 - t_fetch0), t_body: (t_body1 - t_body0), t_loader: null, t_total: (t_end - t_start), bytes, type: isGLB ? 'glb' : 'gltf' });
+        } finally {
+          URL.revokeObjectURL(objectURL);
+        }
+      }
+
+      // UI handlers
+      document.getElementById('load').addEventListener('click', () => {
+        const url = document.getElementById('url').value.trim();
+        if (url) loadURL(url).catch(err => alert('Error cargando modelo: ' + err));
+      });
+
+      // Use dynamic origin so the viewer can be served from any port/host
+      const base = window.location.origin;
+      document.getElementById('demo-glb').addEventListener('click', () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[2,0],[2,2],[0,2],[0,0] ] ] },
+          altura_maxima_m: 6,
+          retranqueo_min_m: 0
+        };
+        const url = makeVolumeUrl(body, 'glb');
+        document.getElementById('url').value = url;
+        loadURL(url).catch(err => alert('Error cargando demo GLB: ' + err));
+      });
+      document.getElementById('demo-gltf').addEventListener('click', () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[2,0],[2,2],[0,2],[0,0] ] ] },
+          altura_maxima_m: 6,
+          retranqueo_min_m: 0
+        };
+        const url = makeVolumeUrl(body, 'gltf') + '&download=true';
+        document.getElementById('url').value = url;
+        loadURL(url).catch(err => alert('Error cargando demo GLTF: ' + err));
+      });
+      function b64UrlFromJSON(obj) {
+        const json = JSON.stringify(obj);
+        // UTF-8 safe btoa
+        const b64 = btoa(unescape(encodeURIComponent(json)));
+        return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
+      }
+      function makeVolumeUrl(body, format='glb') {
+        const b64 = b64UrlFromJSON({ ...body });
+        return base + `/zoning/volume-export?format=${format}&body_b64=${b64}`;
+      }
+      // Helper: asegurar mapa visible y centrar
+      function ensureMapOnAndCenter(lon, lat, zoom=15, bearing=0, pitch=0) {
+        try {
+          // Limpiar anclaje previo para no arrastrarlo entre presets/ciudades
+          try { clearAnchorFromStorage(); } catch {}
+          try { mapAnchor = null; } catch {}
+          // Asegurar estilo por defecto si no hay ninguno
+          try {
+            if (!currentMapStyleUrl || typeof currentMapStyleUrl !== 'string' || currentMapStyleUrl.trim() === '') {
+              currentMapStyleUrl = 'https://demotiles.maplibre.org/style.json';
+              const mapStyleInputEl = document.getElementById('map-style-url');
+              if (mapStyleInputEl) mapStyleInputEl.value = currentMapStyleUrl;
+              try { localStorage.setItem('viewer_map_style', currentMapStyleUrl); } catch {}
+            }
+          } catch {}
+          if (!mapVisible) {
+            document.getElementById('toggle-map')?.click();
+          } else {
+            // Si ya está visible, asegurar instancia
+            ensureMap();
+          }
+          if (mapInstance) {
+            mapInstance.jumpTo({ center:[lon,lat], zoom, bearing, pitch });
+            // Reaplicar raster si estaba persistido
+            try {
+              const rp = localStorage.getItem('viewer_raster_preset');
+              if (rp && rp.startsWith('raster:')) applyRasterPreset(rp);
+            } catch {}
+          }
+        } catch {}
+      }
+      // Preset: Vigo Centro (usa CSV y frente por defecto)
+      document.getElementById('preset-vigo').addEventListener('click', async () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[2,0],[2,2],[0,2],[0,0] ] ] },
+          municipio: 'Vigo',
+          // Forzamos parámetros explícitos para aislar problemas de derivación
+          front_direction: 'north',
+          altura_maxima_m: 15,
+          retranqueo_min_m: 3
+        };
+        const url = makeVolumeUrl(body, 'glb');
+        document.getElementById('url').value = url;
+        try {
+          await loadURL(url);
+          // Centro de Vigo aproximado
+          ensureMapOnAndCenter(-8.72, 42.24, 16, 0, 0);
+          // Con anclaje limpio, recalcular
+          autoAnchorIfNeeded();
+          try { ensureMapLayers(lastBodySent); } catch {}
+          try { fitMapToParcel(); } catch {}
+        } catch (err) {
+          alert('Error cargando preset Vigo: ' + err);
+        }
+      });
+      // Preset: Vigo (Auto) -> delega altura/setbacks/front al backend
+      document.getElementById('preset-vigo-auto').addEventListener('click', async () => {
+        const body = {
+          // Aseguramos que 2*retranqueo (≈6 m) < min(width,height) para no agotar la parcela
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[10,0],[10,10],[0,10],[0,0] ] ] },
+          municipio: 'Vigo',
+          use_plan_front_default: true
+        };
+        // Intentar cargar eje de calle de ejemplo para detección de frente
+        try {
+          const resp = await fetch('/data/sample_street_axis.geojson');
+          if (resp.ok) {
+            const eje = await resp.json();
+            if (eje && (eje.type === 'LineString' || eje.type === 'MultiLineString')) {
+              body.street_axis = eje;
+              log('Eje de calle de ejemplo añadido al cuerpo de la petición.');
+            }
+          }
+        } catch {}
+        // Si no se pudo cargar, crear un eje sintético en LOCAL justo al sur de la parcela
+        if (!body.street_axis) {
+          body.street_axis = { type: 'LineString', coordinates: [[0, -5], [10, -5]] };
+          log('Eje sintético (LOCAL) añadido al sur de la parcela para forzar detección de frente.');
+        }
+        const url = makeVolumeUrl(body, 'glb');
+        document.getElementById('url').value = url;
+        try {
+          await loadURL(url);
+          ensureMapOnAndCenter(-8.72, 42.24, 16, 0, 0);
+          autoAnchorIfNeeded();
+          try { ensureMapLayers(lastBodySent); } catch {}
+          try { fitMapToParcel(); } catch {}
+        } catch (err) {
+          alert('Error cargando preset Vigo (Auto): ' + err);
+        }
+      });
+      // Preset: Boiro RZ-2 (dirección norte)
+      document.getElementById('preset-boiro').addEventListener('click', async () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[2,0],[2,2],[0,2],[0,0] ] ] },
+          municipio: 'Boiro',
+          subzona: 'RZ-2',
+          front_direction: 'north',
+          altura_maxima_m: 8
+        };
+        const url = makeVolumeUrl(body, 'glb');
+        document.getElementById('url').value = url;
+        try {
+          await loadURL(url);
+          // Centro de Boiro aproximado
+          ensureMapOnAndCenter(-8.90, 42.65, 16, 0, 0);
+          // Con anclaje limpio, recalcular
+          autoAnchorIfNeeded();
+          ensureMapLayers(lastBodySent);
+          try { fitMapToParcel(); } catch {}
+        } catch (err) {
+          alert('Error cargando preset Boiro: ' + err);
+        }
+      });
+      // Preset: eje usado (eje pegado a la parcela)
+      document.getElementById('preset-axis-used').addEventListener('click', async () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[10,0],[10,10],[0,10],[0,0] ] ] },
+          municipio: 'Vigo',
+          use_plan_front_default: true,
+          altura_maxima_m: 8,
+          diagnostics_verbosity: 'full',
+          street_axis: { type: 'LineString', coordinates: [[0,-0.5],[10,-0.5]] }
+        };
+        const url = makeVolumeUrl(body, 'glb');
+        document.getElementById('url').value = url;
+        try {
+          await loadURL(url);
+          ensureMapOnAndCenter(-8.72, 42.24, 16, 0, 0);
+          autoAnchorIfNeeded();
+          try { ensureMapLayers(lastBodySent); } catch {}
+          try { fitMapToParcel(); } catch {}
+        } catch (err) { alert('Error en preset eje usado: ' + err); }
+      });
+      // Preset: eje ignorado (eje lejos de la parcela)
+      document.getElementById('preset-axis-ignored').addEventListener('click', async () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[10,0],[10,10],[0,10],[0,0] ] ] },
+          municipio: 'Vigo',
+          use_plan_front_default: true,
+          altura_maxima_m: 8,
+          diagnostics_verbosity: 'full',
+          street_axis: { type: 'LineString', coordinates: [[1000,1000],[1010,1010]] }
+        };
+        const url = makeVolumeUrl(body, 'glb');
+        document.getElementById('url').value = url;
+        try {
+          await loadURL(url);
+          ensureMapOnAndCenter(-8.72, 42.24, 16, 0, 0);
+          autoAnchorIfNeeded();
+          try { ensureMapLayers(lastBodySent); } catch {}
+          try { fitMapToParcel(); } catch {}
+        } catch (err) { alert('Error en preset eje ignorado: ' + err); }
+      });
+      document.getElementById('demo-cityjson-gzip').addEventListener('click', () => {
+        const url = base + '/zoning/volume-export?format=cityjson&download=true&gzip=true';
+        document.getElementById('url').value = url;
+        loadURL(url).catch(err => alert('Error cargando CityJSON gzip: ' + err));
+      });
+
+      // Botón: CityJSON con agujeros (Polygon con hole)
+      document.getElementById('demo-cityjson-holes').addEventListener('click', async () => {
+        const body = {
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [ [0,0],[3,0],[3,3],[0,3],[0,0] ],
+              [ [1,1],[2,1],[2,2],[1,2],[1,1] ]
+            ]
+          },
+          altura_maxima_m: 5,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'polygon_holes.city.json.gz');
+      });
+
+      // Botón: CityJSON MultiPolygon (dos cuadrados separados)
+      document.getElementById('demo-cityjson-mpoly').addEventListener('click', async () => {
+        const body = {
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: [
+              [ [ [0,0],[1.5,0],[1.5,1.5],[0,1.5],[0,0] ] ] ,
+              [ [ [2,0],[3.5,0],[3.5,1.5],[2,1.5],[2,0] ] ]
+            ]
+          },
+          altura_maxima_m: 6,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'multipolygon.city.json.gz');
+      });
+
+      // Botón: CityJSON sin gzip (Polygon simple)
+      document.getElementById('demo-cityjson-plain').addEventListener('click', async () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[2,0],[2,2],[0,2],[0,0] ] ] },
+          altura_maxima_m: 4,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'model.city.json', false);
+      });
+
+      // Botón: CityJSON MultiPolygon con agujeros en cada polígono
+      document.getElementById('demo-cityjson-mpoly-holes').addEventListener('click', async () => {
+        const body = {
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: [
+              [
+                [ [0,0],[3,0],[3,3],[0,3],[0,0] ],
+                [ [1,1],[2,1],[2,2],[1,2],[1,1] ]
+              ],
+              [
+                [ [4,0],[7,0],[7,3],[4,3],[4,0] ],
+                [ [5,1],[6,1],[6,2],[5,2],[5,1] ]
+              ]
+            ]
+          },
+          altura_maxima_m: 7,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'multipolygon_holes.city.json.gz');
+      });
+
+      // Compartir: genera URL reproducible del escenario actual y la copia al portapapeles
+      (function attachShare(){
+        try {
+          const btn = document.getElementById('share-scenario');
+          if (!btn) return;
+          btn.addEventListener('click', async () => {
+            try {
+              if (!lastBodySent) { alert('No hay escenario cargado todavía.'); return; }
+              // URL del export a partir del body actual
+              const exportUrl = makeVolumeUrl(lastBodySent, 'glb');
+              // URL del propio visor (misma ruta) con parámetros de preferencias y auto-carga
+              const viewerBase = window.location.origin + window.location.pathname;
+              const libPref = localStorage.getItem('viewer_lib_source') || 'auto';
+              const tri = parseInt(localStorage.getItem('viewer_tri_warn') || '1000000', 10);
+              const markers = (localStorage.getItem('viewer_markers') || '0') === '1' ? '&markers=1' : '';
+              const viewerUrl = `${viewerBase}?lib=${encodeURIComponent(libPref)}&triWarn=${tri}&url=${encodeURIComponent(exportUrl)}${markers}`;
+              // Copiar al portapapeles con fallback
+              let copied = false;
+              try {
+                await navigator.clipboard.writeText(viewerUrl);
+                copied = true;
+              } catch {}
+              if (!copied) {
+                const ta = document.createElement('textarea');
+                ta.value = viewerUrl;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.focus(); ta.select();
+                try { document.execCommand('copy'); copied = true; } catch {}
+                document.body.removeChild(ta);
+              }
+              if (copied) {
+                showToast('URL de escenario copiada al portapapeles');
+              } else {
+                alert('No se pudo copiar automáticamente. URL:\n' + viewerUrl);
+              }
+              log('Compartir URL: ' + viewerUrl);
+            } catch (e) {
+              alert('No se pudo generar la URL de compartir: ' + e);
+            }
+          });
+        } catch {}
+      })();
+
+      // Map handlers are defined earlier (mapBtn/applyMapStyleBtn). Not duplicating here.
+
+      // Toggle parcela/eje on map layers (simple)
+      let parcelaVisible = (localStorage.getItem('viewer_parcela_visible') ?? '1') !== '0';
+      let ejeVisible = (localStorage.getItem('viewer_eje_visible') ?? '1') !== '0';
+      // Street axis persistence helpers and upload handler
+      function normalizeStreetAxisFromGeoJSON(gj) {
+        try {
+          if (!gj) return null;
+          if (gj.type === 'LineString' || gj.type === 'MultiLineString') return gj;
+          if (gj.type === 'Feature' && gj.geometry) {
+            const g = gj.geometry;
+            if (g.type === 'LineString' || g.type === 'MultiLineString') return { type: g.type, coordinates: g.coordinates };
+          }
+          if (gj.type === 'FeatureCollection' && Array.isArray(gj.features)) {
+            for (const f of gj.features) {
+              const g = f && f.geometry;
+              if (g && (g.type === 'LineString' || g.type === 'MultiLineString')) return { type: g.type, coordinates: g.coordinates };
+            }
+          }
+        } catch {}
+        return null;
+      }
+      function saveStreetAxisToStorage(geom) {
+        try { localStorage.setItem('viewer_street_axis', JSON.stringify(geom)); } catch {}
+      }
+      function clearStreetAxisFromStorage() {
+        try { localStorage.removeItem('viewer_street_axis'); } catch {}
+      }
+      (function attachUploadEje(){
+        const btn = document.getElementById('upload-eje');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+          try {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.geojson,.json,application/geo+json,application/json';
+            input.onchange = async () => {
+              const file = input.files && input.files[0];
+              if (!file) return;
+              const text = await file.text();
+              let gj;
+              try { gj = JSON.parse(text); } catch (e) { alert('Archivo JSON inválido.'); return; }
+              const axis = normalizeStreetAxisFromGeoJSON(gj);
+              if (!axis) { alert('GeoJSON debe contener LineString o MultiLineString.'); return; }
+              // Confirm overwrite if an axis is already persisted
+              try {
+                const existing = localStorage.getItem('viewer_street_axis');
+                if (existing) {
+                  const ok = window.confirm('Ya existe un eje guardado. ¿Quieres reemplazarlo?');
+                  if (!ok) { showToast('Carga cancelada. Se mantiene el eje existente.'); return; }
+                }
+              } catch {}
+              saveStreetAxisToStorage(axis);
+              showToast('Eje de calle guardado en este navegador. Se aplicará automáticamente.');
+              // Aplicar a overlays si hay body actual
+              try {
+                if (!lastBodySent) lastBodySent = {};
+                lastBodySent.street_axis = axis;
+                if (mapVisible && mapInstance) { autoAnchorIfNeeded(); ensureMapLayers(lastBodySent); }
+                const ab = document.getElementById('axis-badge');
+                if (ab) {
+                  ab.style.display = 'inline-block';
+                  ab.textContent = 'axis: persisted';
+                  ab.title = 'Eje de calle restaurado desde este navegador (localStorage)';
+                  ab.style.backgroundColor = '#1565c0';
+                  ab.style.color = '#fff';
+                  try { ab.title += `\n${summarizeAxis(axis, lastBodyCRS)}`; } catch {}
+                }
+              } catch {}
+            };
+            input.click();
+          } catch (e) { alert('No se pudo cargar el eje: ' + e); }
+        });
+      })();
+      // Optional: clear persisted street axis if a button with id 'clear-eje' exists
+      (function attachClearEje(){
+        const btn = document.getElementById('clear-eje');
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          try {
+            clearStreetAxisFromStorage();
+            showToast('Eje de calle borrado de este navegador.');
+            if (lastBodySent && lastBodySent.street_axis) delete lastBodySent.street_axis;
+            if (mapVisible && mapInstance) ensureMapLayers(lastBodySent || {});
+            const ab = document.getElementById('axis-badge');
+            if (ab) ab.style.display = 'none';
+          } catch (e) {
+            alert('No se pudo borrar el eje: ' + e);
+          }
+        });
+      })();
+      // Toggle Three.js grid helper visibility
+      (function(){
+        try {
+          const gridBtn = document.getElementById('toggle-grid');
+          if (gridBtn) {
+            // Sync initial label with current grid state
+            gridBtn.textContent = 'Rejilla: ' + (grid.visible ? 'on' : 'off');
+            gridBtn.addEventListener('click', () => {
+              try {
+                grid.visible = !grid.visible;
+                gridBtn.textContent = 'Rejilla: ' + (grid.visible ? 'on' : 'off');
+              } catch {}
+            });
+          }
+        } catch {}
+      })();
+      // Centrar vista 3D y mapa
+      document.getElementById('center-view').addEventListener('click', () => {
+        try {
+          if (lastModelBox?.center && lastModelBox?.sizeLen) {
+            const center = lastModelBox.center;
+            const size = lastModelBox.sizeLen;
+            controls.target.copy(center);
+            const dist = Math.max(5, size * 0.9);
+            camera.position.set(center.x + dist, center.y + dist * 0.9, center.z + dist);
+            camera.near = Math.max(0.01, size / 1000);
+            camera.far = Math.max(camera.far, size * 10);
+            camera.updateProjectionMatrix();
+            controls.update();
+          }
+          if (mapVisible && mapInstance) {
+            autoAnchorIfNeeded();
+            ensureMapLayers(lastBodySent);
+            fitMapToParcel();
+          }
+          log('Vista centrada.');
+        } catch (e) { log('Error centrando vista: ' + e); }
+      });
+
+      // Atajos de teclado: M (mapa), G (rejilla), P (parcela), E (eje), C (centrar)
+      window.addEventListener('keydown', (ev) => {
+        try {
+          const k = ev.key.toLowerCase();
+          if (k === 'm') document.getElementById('toggle-map')?.click();
+          else if (k === 'g') document.getElementById('toggle-grid')?.click();
+          else if (k === 'p') document.getElementById('toggle-parcela')?.click();
+          else if (k === 'e') document.getElementById('toggle-eje')?.click();
+          else if (k === 'c') document.getElementById('center-view')?.click();
+        } catch {}
+      });
+      document.getElementById('toggle-parcela').addEventListener('click', () => {
+        if (!mapVisible || !mapInstance) { log('Mapa oculto: activarlo para ver la parcela.'); return; }
+        try {
+          const lyrId = 'parcel-line';
+          // Asegurar anclaje y capas
+          autoAnchorIfNeeded();
+          ensureMapLayers(lastBodySent);
+          const hasLayer = !!mapInstance.getLayer(lyrId);
+          if (!hasLayer) { log('No existe capa parcel-line tras ensureMapLayers'); return; }
+          const styleLoaded = (typeof mapInstance.isStyleLoaded === 'function') ? mapInstance.isStyleLoaded() : true;
+          if (!styleLoaded) log('Aviso: estilo del mapa aún no cargado completamente.');
+          const curr = mapInstance.getLayoutProperty(lyrId, 'visibility') || 'visible';
+          const next = (curr === 'none') ? 'visible' : 'none';
+          mapInstance.setLayoutProperty(lyrId, 'visibility', next);
+          // Redundancia: alternar opacidad para forzar visibilidad en estilos conflictivos
+          mapInstance.setPaintProperty(lyrId, 'line-opacity', next === 'visible' ? 1 : 0);
+          parcelaVisible = (next === 'visible');
+          try { localStorage.setItem('viewer_parcela_visible', parcelaVisible ? '1' : '0'); } catch {}
+          const rb = mapInstance.getLayoutProperty(lyrId, 'visibility');
+          const rbOp = mapInstance.getPaintProperty(lyrId, 'line-opacity');
+          log(`Parcela -> solicitado: ${next} (opacity=${next==='visible'?1:0}), leído: ${rb} (opacity=${rbOp})`);
+        } catch (e) { log('Error al alternar parcela: ' + e); }
+      });
+      document.getElementById('toggle-eje').addEventListener('click', () => {
+        if (!mapVisible || !mapInstance) { log('Mapa oculto: activarlo para ver el eje.'); return; }
+        try {
+          const lyrId = 'street-line';
+          autoAnchorIfNeeded();
+          ensureMapLayers(lastBodySent);
+          const hasLayer = !!mapInstance.getLayer(lyrId);
+          if (!hasLayer) { log('No existe capa street-line tras ensureMapLayers'); return; }
+          const styleLoaded = (typeof mapInstance.isStyleLoaded === 'function') ? mapInstance.isStyleLoaded() : true;
+          if (!styleLoaded) log('Aviso: estilo del mapa aún no cargado completamente.');
+          const curr = mapInstance.getLayoutProperty(lyrId, 'visibility') || 'visible';
+          const next = (curr === 'none') ? 'visible' : 'none';
+          mapInstance.setLayoutProperty(lyrId, 'visibility', next);
+          mapInstance.setPaintProperty(lyrId, 'line-opacity', next === 'visible' ? 1 : 0);
+          ejeVisible = (next === 'visible');
+          try { localStorage.setItem('viewer_eje_visible', ejeVisible ? '1' : '0'); } catch {}
+          const rb = mapInstance.getLayoutProperty(lyrId, 'visibility');
+          const rbOp = mapInstance.getPaintProperty(lyrId, 'line-opacity');
+          log(`Eje -> solicitado: ${next} (opacity=${next==='visible'?1:0}), leído: ${rb} (opacity=${rbOp})`);
+        } catch (e) { log('Error al alternar eje: ' + e); }
+      });
+
+      // Re-anchor sync using current parcel center
+      document.getElementById('reanchor-sync').addEventListener('click', () => {
+        if (!mapVisible || !mapInstance) { log('Mapa oculto: activa el mapa para reanclar.'); return; }
+        if (!lastBodySent) { log('No hay geometría para reanclar.'); return; }
+        ensureMapLayers(lastBodySent);
+        log('Anclaje recalculado desde la geometría actual.');
+      });
+
+      // Let user click on map to set anchor
+      document.getElementById('anchor-from-click').addEventListener('click', () => {
+        if (!mapVisible || !mapInstance) { log('Mapa oculto: activa el mapa para anclar con clic.'); return; }
+        awaitingAnchorClick = true;
+        log('Haz clic en el mapa para establecer el anclaje.');
+      });
+      document.getElementById('save-anchor').addEventListener('click', () => {
+        if (!mapAnchor) { log('No hay anclaje actual.'); return; }
+        saveAnchorToStorage();
+      });
+      document.getElementById('clear-anchor').addEventListener('click', () => {
+        clearAnchorFromStorage();
+        mapAnchor = null;
+        try { applyModelGeodeticOrigin(); } catch {}
+        log('Anclaje en memoria reiniciado.');
+      });
+
+      // Fine offsets apply/reset
+      const fineX = document.getElementById('fine-off-x');
+      const fineZ = document.getElementById('fine-off-z');
+      function applyFineOffsetsToAnchor() {
+        try {
+          if (!mapAnchor) return;
+          const x = parseFloat(fineX.value);
+          const z = parseFloat(fineZ.value);
+          mapAnchor.x0_adj = Number.isFinite(x) ? (mapAnchor.x0 + x) : mapAnchor.x0;
+          mapAnchor.z0_adj = Number.isFinite(z) ? (mapAnchor.z0 + z) : mapAnchor.z0;
+          applyModelGeodeticOrigin();
+        } catch {}
+      }
+      document.getElementById('fine-off-apply').addEventListener('click', () => {
+        applyFineOffsetsToAnchor();
+        log('Offsets finos aplicados.');
+      });
+      document.getElementById('fine-off-reset').addEventListener('click', () => {
+        if (mapAnchor) { delete mapAnchor.x0_adj; delete mapAnchor.z0_adj; }
+        fineX.value = '';
+        fineZ.value = '';
+        applyModelGeodeticOrigin();
+        log('Offsets finos reseteados.');
+      });
+
+      async function downloadCityJSON(customBody, filename, gzip=true) {
+        const url = base + `/zoning/volume-export?format=cityjson&download=true${gzip ? '&gzip=true' : ''}`;
+        log('POST ' + url + ' (custom CityJSON)');
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(customBody)
+        });
+        log(`HTTP ${resp.status} ${resp.statusText}`);
+        if (!resp.ok) {
+          const txt = await resp.text().catch(()=>'<no-body>');
+          log('Error CityJSON custom: ' + txt);
+          alert('Error CityJSON custom. Revisa el log.');
+          return;
+        }
+        const buf = await resp.arrayBuffer();
+        const blob = new Blob([buf], { type: gzip ? 'application/gzip' : 'application/json' });
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = href; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(href), 2000);
+        alert('CityJSON descargado: ' + filename);
+      }
+
+      // Botón: CityJSON con agujeros (Polygon con hole)
+      document.getElementById('demo-cityjson-holes').addEventListener('click', async () => {
+        const body = {
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [ [0,0],[3,0],[3,3],[0,3],[0,0] ],
+              [ [1,1],[2,1],[2,2],[1,2],[1,1] ]
+            ]
+          },
+          altura_maxima_m: 5,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'polygon_holes.city.json.gz');
+      });
+
+      // Botón: CityJSON MultiPolygon (dos cuadrados separados)
+      document.getElementById('demo-cityjson-mpoly').addEventListener('click', async () => {
+        const body = {
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: [
+              [ [ [0,0],[1.5,0],[1.5,1.5],[0,1.5],[0,0] ] ] ,
+              [ [ [2,0],[3.5,0],[3.5,1.5],[2,1.5],[2,0] ] ]
+            ]
+          },
+          altura_maxima_m: 6,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'multipolygon.city.json.gz');
+      });
+
+      // Botón: CityJSON sin gzip (Polygon simple)
+      document.getElementById('demo-cityjson-plain').addEventListener('click', async () => {
+        const body = {
+          geometry: { type: 'Polygon', coordinates: [ [ [0,0],[2,0],[2,2],[0,2],[0,0] ] ] },
+          altura_maxima_m: 4,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'model.city.json', false);
+      });
+
+      // Botón: CityJSON MultiPolygon con agujeros en cada polígono
+      document.getElementById('demo-cityjson-mpoly-holes').addEventListener('click', async () => {
+        const body = {
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: [
+              [
+                [ [0,0],[3,0],[3,3],[0,3],[0,0] ],
+                [ [1,1],[2,1],[2,2],[1,2],[1,1] ]
+              ],
+              [
+                [ [4,0],[7,0],[7,3],[4,3],[4,0] ],
+                [ [5,1],[6,1],[6,2],[5,2],[5,1] ]
+              ]
+            ]
+          },
+          altura_maxima_m: 7,
+          retranqueo_min_m: 0,
+          format: 'cityjson'
+        };
+        await downloadCityJSON(body, 'multipolygon_holes.city.json.gz');
+      });
+
+      // Auto-carga desde ?url=
+      const params = new URLSearchParams(window.location.search);
+      const autourl = params.get('url');
+      if (autourl) {
+        document.getElementById('url').value = autourl;
+        // Mostrar puerto del backend en el panel debug para diagnóstico rápido
+        try {
+          const u = new URL(autourl);
+          const backendPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+          const backendHost = u.hostname;
+          const proto = u.protocol.replace(':','');
+          let msg = `[info] Backend: ${proto}://${backendHost}:${backendPort}`;
+          // Si el script añadió autop=1, avisa que el puerto fue auto-seleccionado
+          if ((params.get('autop') || '') === '1') {
+            msg += ' (auto-seleccionado por conflicto)';
+            try { toastWarn('Puerto alternativo en uso', 'El script eligió un puerto libre por conflicto.'); } catch {}
+            // Añadir badge discreto en la toolbar
+            try {
+              const tb = document.getElementById('toolbar');
+              const hidden = (localStorage.getItem('viewer_autop_badge_hidden') === '1');
+              if (tb && !document.getElementById('autop-badge') && !hidden) {
+                const b = document.createElement('span');
+                b.id = 'autop-badge';
+                b.textContent = 'Auto-port';
+                b.title = 'Se ha utilizado un puerto alternativo por conflicto';
+                b.setAttribute('role','status');
+                b.setAttribute('aria-label','Puerto alternativo en uso');
+                b.style.cssText = 'margin-left:8px;padding:2px 6px;border-radius:10px;background:#f59e0b;color:#111;font-size:12px;font-weight:600;cursor:pointer;';
+                b.addEventListener('click', () => {
+                  localStorage.setItem('viewer_autop_badge_hidden','1');
+                  b.remove();
+                });
+                tb.appendChild(b);
+              }
+            } catch {}
+          }
+          if (debugDiv) {
+            const prev = debugDiv.textContent || '';
+            debugDiv.textContent = prev ? (prev + '\n' + msg) : msg;
+          }
+        } catch {}
+        loadURL(autourl).catch(err => console.error(err));
+      }
+
+      // Mostrar estado breve en toolbar
+      const libStatus = document.getElementById('lib-status');
+      const nice = (s) => s.startsWith('http') ? (new URL(s)).host : (s === '/viewer/lib' ? 'Local (/viewer/lib)' : s);
+      libStatus.textContent = `Origen: ${nice(librarySource)}  |  DRACO: ${currentDracoPath || '—'}`;
+    }
+
+    main().catch(e => {
+      log('Error inicializando visor: ' + e);
+      alert('No se pudieron cargar las dependencias del visor. Revisa el panel de log.');
+    });
+  </script>
+</body>
+</html>

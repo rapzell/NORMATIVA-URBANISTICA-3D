@@ -1,0 +1,5 @@
+municipio,subzona,altura_maxima_m,retranqueo_min_m,setback_front_m,setback_side_m,setback_back_m,front_direction_default,ocupacion_max,edificabilidad_max_m2_m2,source,source_refs,precedence,notes
+Vigo,O3_grado_alto,26,0,0,3,3,,0.8,2.5,VIGO Tomo III,p.14-p.178,municipal_over_autonomic,extraído regex (aprox)
+Vigo,O7_grado1,15,0,,3,3,,0.5,1.0,VIGO Tomo III,p.16-p.16,municipal_over_autonomic,extraído regex (aprox)
+Boiro,Residencial_general,10,0,,,,,0.5,,Texto PXOM Boiro.pdf cap. 10.2.5,,,General residencial ~3 plantas
+Boiro,Residencial_baja,7,0,5,3,2,,0.5,0.8,Texto PXOM Boiro.pdf p.119-120,,,Baja densidad

@@ -1,0 +1,109 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Zoning Volume Export",
+    "tags": ["zoning", "export", "api"],
+    "timezone": "browser",
+    "schemaVersion": 36,
+    "version": 1,
+    "refresh": "30s",
+    "templating": {
+      "list": [
+        {
+          "name": "format",
+          "type": "query",
+          "label": "Format",
+          "hide": 0,
+          "datasource": null,
+          "query": "label_values(api_volume_export_requests_total, format)",
+          "refresh": 2,
+          "includeAll": true,
+          "multi": true
+        },
+        {
+          "name": "status",
+          "type": "query",
+          "label": "HTTP Status",
+          "hide": 0,
+          "datasource": null,
+          "query": "label_values(api_volume_export_requests_total, status)",
+          "refresh": 2,
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    },
+    "panels": [
+      {
+        "type": "timeseries",
+        "title": "Requests per second by format/status",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "sum by (format,status) (rate(api_volume_export_requests_total{format=~\"$format\",status=~\"$status\"}[5m]))",
+            "legendFormat": "{{format}} {{status}}"
+          }
+        ]
+      },
+      {
+        "type": "timeseries",
+        "title": "Error rate (%) by format",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "100 * (sum by (format) (rate(api_volume_export_requests_total{status!=\"200\",format=~\"$format\"}[5m])) / sum by (format) (rate(api_volume_export_requests_total{format=~\"$format\"}[5m])))",
+            "legendFormat": "{{format}}"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "percent"}}
+      },
+      {
+        "type": "timeseries",
+        "title": "p95 payload size (bytes) by format",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le,format) (rate(api_volume_export_size_bytes_bucket{format=~\"$format\",status=\"200\"}[5m])))",
+            "legendFormat": "{{format}}"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "bytes"}}
+      },
+      {
+        "type": "stat",
+        "title": "Current error rate (total)",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "100 * sum(rate(api_volume_export_requests_total{status!=\"200\"}[5m])) / sum(rate(api_volume_export_requests_total[5m]))",
+            "legendFormat": "error%"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "percent"}}
+      },
+      {
+        "type": "stat",
+        "title": "CityJSON p95 size",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 16},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le) (rate(api_volume_export_size_bytes_bucket{format=\"cityjson\",status=\"200\"}[5m])))"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "bytes"}}
+      },
+      {
+        "type": "stat",
+        "title": "GLTF p95 size",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 16},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le) (rate(api_volume_export_size_bytes_bucket{format=\"gltf\",status=\"200\"}[5m])))"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "bytes"}}
+      }
+    ]
+  },
+  "overwrite": true
+}
