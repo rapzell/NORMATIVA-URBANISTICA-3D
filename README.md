@@ -1,5 +1,6 @@
 # NORMATIVA GALICIA 3D
 [![Smoke](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml)
+[![Tests](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml)
 
 ## Troubleshooting
 
