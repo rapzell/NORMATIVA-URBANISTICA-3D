@@ -87,6 +87,34 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_viewer_demo.ps1 -Format ${{ matrix.format }} -Lib ${{ matrix.lib }} -Municipio Vigo -UsePlanFrontDefault -Altura 8 -Port 8010 -Smoke -Echo -LogDir "$env:LOGDIR" -StartupTimeoutSec 300 -RetryCount 5 -RetryDelaySec 4 -RetryBackoff exponential
           if (Test-Path (Join-Path $env:LOGDIR 'smoke_summary.json')) { Get-Content (Join-Path $env:LOGDIR 'smoke_summary.json') | Write-Host }
 
+      - name: Write smoke summary to Job Summary
+        if: always()
+        shell: pwsh
+        env:
+          LOGDIR: ${{ env.LOGDIR }}
+        run: |
+          $sumPath = Join-Path "${{ runner.temp }}" "viewer-logs-${{ matrix.format }}-${{ matrix.lib }}\smoke_summary.json"
+          if (Test-Path $sumPath) {
+            $j = Get-Content $sumPath | ConvertFrom-Json
+            $exit = $j.exitCode
+            $duration = $j.durationSec
+            $fmt = '${{ matrix.format }}'
+            $lib = '${{ matrix.lib }}'
+            $getOk = $j.getViewer.success
+            $postOk = $j.postExport.success
+            $getAttempts = $j.getViewer.attempts
+            $postAttempts = $j.postExport.attempts
+            $md = @()
+            $md += "# Smoke Summary ($fmt / $lib)"
+            $md += "- exitCode: $exit"
+            $md += "- durationSec: $duration"
+            $md += "- GET /viewer/: success=$getOk attempts=$getAttempts"
+            $md += "- POST /zoning/volume-export: success=$postOk attempts=$postAttempts"
+            $md -join "`n" | Out-File -FilePath "$env:GITHUB_STEP_SUMMARY" -Encoding utf8 -Append
+          } else {
+            "No smoke_summary.json found to summarize." | Out-File -FilePath "$env:GITHUB_STEP_SUMMARY" -Encoding utf8 -Append
+          }
+
       - name: Upload viewer logs
         if: always()
         uses: actions/upload-artifact@v4
