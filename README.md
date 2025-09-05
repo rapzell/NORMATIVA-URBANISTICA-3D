@@ -1,3 +1,24 @@
+### Tests de regresión
+
+Ejecutar toda la batería:
+
+```powershell
+pytest -q
+```
+
+Tests añadidos recientemente:
+
+- `tests/test_volume_regression.py`: valida `POST /zoning/volume` y estructura mínima del `Feature` devuelto.
+- `tests/test_assess_regression.py`: caso adicional para `POST /zoning/assess` (viability, reasons, params_effective).
+- `tests/test_siose_proxy.py`: smoke de `GET /proxy/siose` con BBOX reducido (hace skip si el servicio no responde).
+
+- `GET /proxy/siose`: proxy hacia el WFS SIOSE (IDEE) con caché en memoria por BBOX. Parámetros:
+  - `bbox`: `minx,miny,maxx,maxy[,CRS]` (si no incluye CRS se añade `EPSG:4326`).
+  - `typeNames`: por defecto `elu:LandCoverUnit`.
+  - `srsName`: por defecto `EPSG:4326`.
+  - `version`: por defecto `2.0.0`.
+  - `max_age`: segundos de caché (por defecto 15).
+
 # NORMATIVA GALICIA 3D
 [![Smoke](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml)
 [![Tests](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml)
@@ -131,6 +152,44 @@ Notas:
 
 - Los botones del visor generan CityJSON consistentes con `POST /zoning/volume-export` para casos: polígono simple, con agujeros, multipolígono y multipolígono con agujeros.
 - Usa los archivos descargados para QA, auditoría y análisis sin depender del visor GLTF/GLB.
+
+### Modo demo silencioso (recomendado)
+
+Para evitar ruido en consola durante presentaciones (errores intermitentes de servicios externos como SIOSE/WMS), el proyecto incluye banderas que desactivan estas integraciones y silencian logs.
+
+Flags del script `scripts/run_viewer_demo.ps1`:
+
+- `-NoSiose`: inyecta `&siose=0` en la URL del visor (no carga SIOSE por defecto).
+- `-SioseSilent`: inyecta `&siose_silent=1` (silencia logs de SIOSE si se activa manualmente y falla).
+- `-NoSiotuga`: inyecta `&siotuga=0` (desactiva la autodetección de WMS SIOTUGA, no llama a `/proxy/wmscap`).
+- `-SiotugaSilent`: inyecta `&siotuga_silent=1` (silencia logs si la autodetección se activa manualmente y falla).
+- `-ForceRestart`: si ya hay API en el puerto elegido, intenta finalizarla antes de arrancar una nueva (útil tras cambios de backend/front).
+
+Ejemplo recomendado (8000):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_viewer_demo.ps1 `
+  -Fast -Port 8000 -Echo -NoSiose -SioseSilent -NoSiotuga -SiotugaSilent -ForceRestart
+```
+
+Si prefieres 8010:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_viewer_demo.ps1 `
+  -Fast -Port 8010 -Echo -NoSiose -SioseSilent -NoSiotuga -SiotugaSilent
+```
+
+Parámetros de URL del visor (equivalentes a los flags):
+
+- `siose=0&siose_silent=1`
+- `siotuga=0&siotuga_silent=1`
+
+Backend: proxies amortiguados para evitar errores visibles
+
+- `GET /proxy/siose`: ante errores `4xx` del WFS externo, devuelve `200 OK` con `{"type":"FeatureCollection","features":[]}` y cachea por `max_age`.
+- `GET /proxy/wmscap`: ante errores `4xx` del WMS externo, devuelve `200 OK` con un XML mínimo `<WMS_Capabilities version="1.3.0"></WMS_Capabilities>`.
+
+Así, incluso si se activan SIOSE o SIOTUGA, la demo no queda “ensuciada” por errores externos intermitentes.
 
 ## Three.js Viewer integrado (visualización y descargas)
 

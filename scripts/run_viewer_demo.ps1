@@ -49,6 +49,20 @@ Param(
   , [ValidateRange(0, 10)] [int]$RetryCount = 2
   , [ValidateRange(1, 60)] [int]$RetryDelaySec = 2
   , [ValidateSet('fixed','exponential')] [string]$RetryBackoff = 'fixed'
+  , [ValidateSet('mock','csv','')]
+  [string]$PlanProvider = ''
+  , [string]$PlanCSVPath = ''
+  , [switch]$Seed
+  # Visor: control SIOSE por flags para una demo silenciosa
+  , [switch]$NoSiose
+  , [switch]$SioseSilent
+  # Forzar reinicio de la API si ya hay una instancia en el puerto
+  , [switch]$ForceRestart
+  # Visor: control SIOTUGA (autodetección WMS) por flags
+  , [switch]$NoSiotuga
+  , [switch]$SiotugaSilent
+  # Modo demo compacto (activa flags silenciosos y arranque rápido)
+  , [switch]$Demo
 )
 
 # Set working directory to repo root (script relative)
@@ -62,6 +76,7 @@ if (-not (Test-Path $venvPython)) {
   # Fallback: usar Python del sistema si no hay venv
   $sysPy = $null
   try { $sysPy = (Get-Command python -ErrorAction SilentlyContinue).Source } catch { $sysPy = $null }
+
   if ($sysPy) {
     Write-Warning "[warn] No se encontró venv. Usando Python del sistema: $sysPy"
     $venvPython = $sysPy
@@ -151,6 +166,15 @@ function Test-ApiUp {
 $chosenPort = $Port
 $autoPortUsed = $false
 $serverRunning = $false
+
+# Si se pide -Demo, activar combinaciones por defecto
+if ($Demo.IsPresent) {
+  if (-not $Fast.IsPresent) { $Fast = $true }
+  if (-not $NoSiose.IsPresent) { $NoSiose = $true }
+  if (-not $SioseSilent.IsPresent) { $SioseSilent = $true }
+  if (-not $NoSiotuga.IsPresent) { $NoSiotuga = $true }
+  if (-not $SiotugaSilent.IsPresent) { $SiotugaSilent = $true }
+}
 if (Test-ApiUp -p $chosenPort) {
   $serverRunning = $true
 } else {
@@ -177,6 +201,25 @@ if (Test-ApiUp -p $chosenPort) {
 $Port = $chosenPort
 $base = ("http://127.0.0.1:{0}" -f $Port)
 $pingUrl = "$base/openapi.json"
+
+# Si hay servidor corriendo y se pide -ForceRestart, terminar proceso en puerto elegido
+if ($serverRunning -and $ForceRestart.IsPresent) {
+  try {
+    Write-Warning ("[force] Forzando reinicio de API en puerto {0}" -f $chosenPort)
+    $procId = $null
+    try {
+      $conn = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $chosenPort -ErrorAction SilentlyContinue | Where-Object { $_.State -eq 'Listen' }
+      if (-not $conn) { $conn = Get-NetTCPConnection -LocalPort $chosenPort -ErrorAction SilentlyContinue | Where-Object { $_.State -eq 'Listen' } }
+      if ($conn) { $procId = ($conn | Select-Object -First 1).OwningProcess }
+    } catch {}
+    if ($procId) {
+      try { Stop-Process -Id $procId -Force -ErrorAction Stop; Write-Host ("[force] Proceso {0} detenido" -f $procId) -ForegroundColor DarkYellow } catch { Write-Warning ("[force] No se pudo terminar proceso {0}: {1}" -f $procId, $_) }
+    } else {
+      Write-Warning "[force] No se encontró proceso escuchando en el puerto; se intentará arrancar igualmente"
+    }
+  } catch { Write-Warning ("[force] Error al forzar reinicio: {0}" -f $_) }
+  $serverRunning = $false
+}
 
 if (-not $serverRunning) {
   Write-Host ("Iniciando API en http://localhost:{0} ..." -f $Port)
@@ -226,6 +269,46 @@ if (-not $serverRunning) {
   Write-Warning 'La API aún no respondió. Puede estar descargando modelos. Abriré el visor igualmente; refresca cuando el backend esté listo.'
 }
 
+# Si se proporcionan proveedor y/o CSV de plan, configurarlos y validarlos
+try {
+  if ($PlanProvider) {
+    $env:PLAN_PROVIDER = $PlanProvider
+    Write-Host ("[info] PLAN_PROVIDER={0}" -f $env:PLAN_PROVIDER) -ForegroundColor DarkGray
+  }
+  if ($PlanCSVPath) {
+    try {
+      $resolved = Resolve-Path -LiteralPath $PlanCSVPath -ErrorAction SilentlyContinue
+    } catch { $resolved = $null }
+    if ($resolved) { $PlanCSVPath = $resolved.Path }
+    $env:PLAN_CSV_PATH = $PlanCSVPath
+    Write-Host ("[info] PLAN_CSV_PATH={0}" -f $env:PLAN_CSV_PATH) -ForegroundColor DarkGray
+    # Validar CSV vía API
+    try {
+      $valUrl = "$base/zoning/validate-plan-csv"
+      $payload = @{ path = $env:PLAN_CSV_PATH } | ConvertTo-Json -Compress
+      $resp = Invoke-WebRequest -Uri $valUrl -UseBasicParsing -TimeoutSec 10 -Method POST -Body $payload -ContentType 'application/json'
+      $obj = $null
+      try { $obj = $resp.Content | ConvertFrom-Json } catch {}
+      if ($obj) {
+        if ($obj.valid -eq $true) {
+          Write-Host ("[plan] CSV válido (errors={0}, warnings={1})" -f $obj.summary.errors, $obj.summary.warnings) -ForegroundColor Green
+        } else {
+          Write-Warning ("[plan] CSV con errores (errors={0}, warnings={1})" -f $obj.summary.errors, $obj.summary.warnings)
+        }
+      } else { Write-Warning "[plan] No se pudo parsear respuesta de validación" }
+    } catch { Write-Warning ("[plan] Validación CSV falló: {0}" -f $_) }
+    # Recargar plan si provider=csv
+    if (($env:PLAN_PROVIDER -eq 'csv') -and $env:PLAN_CSV_PATH) {
+      try {
+        $relUrl = "$base/admin/reload-plan"
+        $payload2 = @{ path = $env:PLAN_CSV_PATH } | ConvertTo-Json -Compress
+        $resp2 = Invoke-WebRequest -Uri $relUrl -UseBasicParsing -TimeoutSec 15 -Method POST -Body $payload2 -ContentType 'application/json'
+        Write-Host ("[plan] Recarga aplicada: {0}" -f $resp2.Content)
+      } catch { Write-Warning ("[plan] Recarga CSV falló: {0}" -f $_) }
+    }
+  }
+} catch { Write-Warning ("[plan] Configuración de plan falló: {0}" -f $_) }
+
 # Construir cuerpo JSON para /zoning/volume-export
 $fmt = $Format.ToLower()
 if ($fmt -notin @('glb','gltf','cityjson')) { $fmt = 'glb' }
@@ -273,6 +356,11 @@ if (-not $PSBoundParameters.ContainsKey('Altura')) {
 } elseif ($Altura -le 0) {
   Write-Warning "Altura (m) debe ser > 0. Se recibió $Altura; usando 8 m por defecto."
   $Altura = 8
+}
+# Si el usuario no aportó preset ni rutas de geometría/eje, usar por defecto la geometría de ejemplo en Galicia
+if (-not $Preset -and -not $GeometryPath -and -not $StreetAxisPath) {
+  $GeometryPath = 'datos\sample_parcela.geojson'
+  if (-not $Municipio) { $Municipio = 'Vigo' }
 }
 if (-not $Municipio -and -not $Subzona) { $Municipio = 'Vigo' }
 if (-not $UsePlanFrontDefault.IsPresent -and -not $FrontDirection) { $UsePlanFrontDefault = $true }
@@ -419,6 +507,15 @@ if ($Echo.IsPresent) {
 $viewerHttp = "$base/viewer/"
 # Pass lib selection first so the viewer sets preference before dependency load
 $viewerWithQuery = "$viewerHttp`?lib=$Lib&triWarn=$TriWarn&url=$([System.Uri]::EscapeDataString($exportUrl))"
+# If DEM provider keys are available in env, pass them through so the viewer picks them up without UI
+try {
+  if ($env:MAPTILER_KEY) {
+    $viewerWithQuery += ('&maptilerKey=' + [System.Uri]::EscapeDataString($env:MAPTILER_KEY))
+  }
+  if ($env:NEXTZEN_KEY) {
+    $viewerWithQuery += ('&nextzenKey=' + [System.Uri]::EscapeDataString($env:NEXTZEN_KEY))
+  }
+} catch {}
 if ($autoPortUsed) { $viewerWithQuery += '&autop=1' }
 if ($DiagFull.IsPresent) { $viewerWithQuery += '&diag=full' }
 if ($Markers.IsPresent) { $viewerWithQuery += '&markers=1' }
@@ -427,6 +524,13 @@ if ($PanelsVisible.IsPresent) { $viewerWithQuery += '&panels=1' }
 if ($PanelsPos) { $viewerWithQuery += ('&panpos=' + $PanelsPos) }
 if ($Compact.IsPresent) { $viewerWithQuery += '&compact=1' }
 if ($Present.IsPresent) { $viewerWithQuery += '&present=1' }
+if ($Seed.IsPresent) { $viewerWithQuery += '&seed=1' }
+# Inyectar flags de SIOSE si se solicitan; -Fast implica silencioso por defecto
+if ($NoSiose.IsPresent) { $viewerWithQuery += '&siose=0' }
+if ($SioseSilent.IsPresent -or $Fast.IsPresent) { $viewerWithQuery += '&siose_silent=1' }
+# Inyectar flags de SIOTUGA (autodetección WMS) si se solicitan
+if ($NoSiotuga.IsPresent) { $viewerWithQuery += '&siotuga=0' }
+if ($SiotugaSilent.IsPresent -or $Fast.IsPresent) { $viewerWithQuery += '&siotuga_silent=1' }
 
 if ($Smoke.IsPresent) {
   $script:smokeSummary = @{

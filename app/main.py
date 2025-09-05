@@ -1,9 +1,186 @@
 from __future__ import annotations
-
 import os
 from typing import Optional
 import mimetypes
 import logging
+from logging.handlers import RotatingFileHandler
+from fastapi import FastAPI, HTTPException, Response, Body
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+from pydantic import BaseModel
+from collections import OrderedDict
+import time
+from urllib.parse import urlencode
+from urllib.request import urlopen, Request
+import json as _json
+
+API_VERSION = "0.2.0"
+
+# Ensure correct MIME types for static assets (JS/WASM) on all platforms
+try:
+    mimetypes.add_type('text/javascript', '.js')
+except Exception:
+    pass
+try:
+    mimetypes.add_type('application/wasm', '.wasm')
+except Exception:
+    pass
+
+app = FastAPI(title="Asistente Normativa Galicia API", version=API_VERSION)
+
+# Servir visor Three.js como estático para evitar CORS (same-origin)
+try:
+    app.mount(
+        "/viewer",
+        StaticFiles(directory="web/examples/threejs-viewer", html=True),
+        name="viewer",
+    )
+except Exception:
+    # Si el directorio no existe en despliegues sin assets, ignora
+    pass
+
+# Servir datos de ejemplo (GeoJSON/CSV) para el visor
+try:
+    app.mount(
+        "/data",
+        StaticFiles(directory="datos", html=False),
+        name="data",
+    )
+except Exception:
+    pass
+
+# Lazy globals for retrieval resources
+_RESOURCES = {
+    'loaded': False,
+    'chunks': None,
+    'index': None,
+    'bi_encoder': None,
+    'cross_encoder': None,
+    'llm': None,
+}
+
+# Basic logging configuration (idempotent)
+if not logging.getLogger().handlers:
+    level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s %(levelname)s %(name)s: %(message)s'
+    )
+    # Optional rotating file handler
+    log_file = os.getenv('LOG_FILE')
+    if log_file:
+        try:
+            max_bytes = int(os.getenv('LOG_MAX_BYTES', str(5 * 1024 * 1024)))
+        except Exception:
+            max_bytes = 5 * 1024 * 1024
+        try:
+            backup_count = int(os.getenv('LOG_BACKUP_COUNT', '3'))
+        except Exception:
+            backup_count = 3
+        # Prevent duplicate file handler for same path
+        root_logger = logging.getLogger()
+        exists = any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', None) == log_file for h in root_logger.handlers)
+        if not exists:
+            fh = RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count, encoding='utf-8')
+            fh.setLevel(level)
+            fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+            root_logger.addHandler(fh)
+
+# Volume logger level can be overridden by VOLUME_DEBUG
+_vol_debug = str(os.getenv('VOLUME_DEBUG', '0')).lower() in ('1', 'true', 'yes')
+if _vol_debug:
+    logging.getLogger('volume').setLevel(logging.DEBUG)
+
+# Diagnostics verbosity for responses: 'full' | 'min' | 'none'
+_diag_verbosity = os.getenv('DIAGNOSTICS_VERBOSITY', 'full').strip().lower()
+if _diag_verbosity not in ('full', 'min', 'none'):
+    _diag_verbosity = 'full'
+
+def _resolve_diag_verbosity(override: Optional[str]) -> str:
+    verb = (override or '').strip().lower() if isinstance(override, str) else None
+    if verb not in ('full', 'min', 'none'):
+        verb = _diag_verbosity
+    return verb  # guaranteed valid
+
+def _filter_volume_diagnostics(feature: dict, verbosity_override: Optional[str] = None) -> dict:
+    if not feature or not isinstance(feature, dict):
+        return feature
+    verb = _resolve_diag_verbosity(verbosity_override)
+    if verb == 'full':
+        return feature
+    props = feature.get('properties') or {}
+    if not isinstance(props, dict):
+        return feature
+    diag_all = [
+        'front_detected_side',
+        'front_direction_source',
+        'street_axis_used',
+        'street_axis_min_distance_m',
+        'street_axis_side_distances',
+        'front_selection_rationale',
+        'street_axis_ignored_reason',
+        'polygon_type',
+        'directional_applicability',
+        'directional_not_applied_reason',
+    ]
+
+class ApplyPlanCSVTextRequest(BaseModel):
+    csv_text: str
+
+
+@app.post("/admin/apply-plan-csv-text")
+async def apply_plan_csv_text(req: ApplyPlanCSVTextRequest):
+    """Valida y aplica un CSV de plan municipal recibido como texto.
+    - Escribe el CSV a datos/plan_uploaded.csv
+    - Valida con CSVPlanProvider
+    - Fija PLAN_PROVIDER=csv y PLAN_CSV_PATH
+    - Limpia caché de validación
+    """
+    import os as _os
+    import io as _io
+    import csv as _csv
+    if not req.csv_text or not isinstance(req.csv_text, str):
+        raise HTTPException(status_code=400, detail="csv_text requerido")
+    # Validación básica de cabeceras
+    try:
+        f = _io.StringIO(req.csv_text)
+        reader = _csv.DictReader(f)
+        headers = set(reader.fieldnames or [])
+        if 'municipio' not in headers:
+            raise ValueError("CSV faltan columnas requeridas: municipio")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"CSV inválido: {e}")
+    # Guardar en datos/plan_uploaded.csv
+    target_dir = 'datos'
+    try:
+        _os.makedirs(target_dir, exist_ok=True)
+    except Exception:
+        pass
+    target_path = _os.path.join(target_dir, 'plan_uploaded.csv')
+    try:
+        with open(target_path, 'w', encoding='utf-8', newline='') as f2:
+            f2.write(req.csv_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo escribir CSV: {e}")
+    # Validar creando provider
+    try:
+        from src.planes.csv_provider import CSVPlanProvider
+        prov = CSVPlanProvider(target_path)
+        rows = len(prov.rows)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"CSV no válido: {e}")
+    # Aplicar
+    try:
+        _os.environ['PLAN_PROVIDER'] = 'csv'
+        _os.environ['PLAN_CSV_PATH'] = target_path
+        try:
+            _validate_cache.clear()
+        except Exception:
+            pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo aplicar configuración: {e}")
+    return {"ok": True, "provider": "csv", "applied_path": target_path, "rows": rows}
 from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, HTTPException, Header, Response, Body
 from fastapi.staticfiles import StaticFiles
@@ -372,6 +549,64 @@ async def admin_reload_plan(
         pass
     return {"ok": True, "provider": provider, "applied_path": path, "rows": rows_count}
 
+# Endpoint para aplicar CSV de plan municipal recibido como texto (reubicado tras imports/app)
+class ApplyPlanCSVTextRequest(BaseModel):
+    csv_text: str
+
+
+@app.post("/admin/apply-plan-csv-text")
+async def apply_plan_csv_text(req: ApplyPlanCSVTextRequest):
+    """Valida y aplica un CSV de plan municipal recibido como texto.
+    - Escribe el CSV a datos/plan_uploaded.csv
+    - Valida con CSVPlanProvider
+    - Fija PLAN_PROVIDER=csv y PLAN_CSV_PATH
+    - Limpia caché de validación
+    """
+    import os as _os
+    import io as _io
+    import csv as _csv
+    if not req.csv_text or not isinstance(req.csv_text, str):
+        raise HTTPException(status_code=400, detail="csv_text requerido")
+    # Validación básica de cabeceras
+    try:
+        f = _io.StringIO(req.csv_text)
+        reader = _csv.DictReader(f)
+        headers = set(reader.fieldnames or [])
+        if 'municipio' not in headers:
+            raise ValueError("CSV faltan columnas requeridas: municipio")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"CSV inválido: {e}")
+    # Guardar en datos/plan_uploaded.csv
+    target_dir = 'datos'
+    try:
+        _os.makedirs(target_dir, exist_ok=True)
+    except Exception:
+        pass
+    target_path = _os.path.join(target_dir, 'plan_uploaded.csv')
+    try:
+        with open(target_path, 'w', encoding='utf-8', newline='') as f2:
+            f2.write(req.csv_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo escribir CSV: {e}")
+    # Validar creando provider
+    try:
+        from src.planes.csv_provider import CSVPlanProvider
+        prov = CSVPlanProvider(target_path)
+        rows = len(prov.rows)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"CSV no válido: {e}")
+    # Aplicar
+    try:
+        _os.environ['PLAN_PROVIDER'] = 'csv'
+        _os.environ['PLAN_CSV_PATH'] = target_path
+        try:
+            _validate_cache.clear()
+        except Exception:
+            pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo aplicar configuración: {e}")
+    return {"ok": True, "provider": "csv", "applied_path": target_path, "rows": rows}
+
 @app.get("/metrics")
 async def metrics_endpoint():
     # Serve metrics only if enabled
@@ -400,6 +635,283 @@ async def metrics_endpoint():
 @app.get("/version")
 async def version():
     return {"version": API_VERSION}
+
+@app.get("/health", operation_id="health_check")
+async def health():
+    try:
+        now = int(time.time())
+    except Exception:
+        now = 0
+    return {"ok": True, "status": "ok", "version": API_VERSION, "time": now}
+
+
+# --- Proxy SIOSE (WFS IDEE) con caché en memoria por BBOX ---
+SIOSE_WFS_URL = "https://servicios.idee.es/wfs-inspire/ocupacion-suelo"
+_SIOSE_CACHE = {}
+
+def _siose_cache_get(key, max_age: int):
+    try:
+        ts, data = _SIOSE_CACHE.get(key) or (0.0, None)
+        if data is None:
+            return None
+        import time as _t
+        if (_t.time() - ts) <= max_age:
+            return data
+    except Exception:
+        pass
+    return None
+
+def _siose_cache_set(key, data):
+    try:
+        import time as _t
+        _SIOSE_CACHE[key] = (_t.time(), data)
+    except Exception:
+        pass
+
+@app.get("/proxy/siose")
+async def proxy_siose(bbox: str, typeNames: str = "elu:LandCoverUnit", srsName: str = "EPSG:4326", version: str = "2.0.0", max_age: int = 15):
+    try:
+        bb = bbox.strip()
+        if bb.count(',') == 3 and srsName:
+            bb = f"{bb},{srsName}"
+        cache_key = (bb, typeNames, srsName, version)
+        cached = _siose_cache_get(cache_key, max_age=max_age)
+        if cached is not None:
+            return cached
+        params = {
+            "service": "WFS",
+            "request": "GetFeature",
+            "version": version,
+            "typeNames": typeNames,
+            "srsName": srsName,
+            "bbox": bb,
+            "outputFormat": "application/json",
+        }
+        from urllib.parse import urlencode as _urlencode
+        from urllib.request import urlopen as _urlopen, Request as _Request
+        from urllib.error import HTTPError as _HTTPError, URLError as _URLError
+        url = f"{SIOSE_WFS_URL}?{_urlencode(params)}"
+        req = _Request(url, headers={"User-Agent": "NormativaGalicia/1.0"})
+        try:
+            with _urlopen(req, timeout=15) as resp:
+                if resp.status != 200:
+                    # En teoría no llegamos aquí en 4xx (lanzan HTTPError), pero lo dejamos por robustez
+                    if 400 <= int(getattr(resp, 'status', 0)) < 500:
+                        empty = {"type": "FeatureCollection", "features": []}
+                        _siose_cache_set(cache_key, empty)
+                        return empty
+                    raise HTTPException(status_code=resp.status, detail=f"SIOSE status {resp.status}")
+                raw = resp.read()
+                try:
+                    import json as _json
+                    data = _json.loads(raw.decode("utf-8", "ignore"))
+                except Exception:
+                    return Response(content=raw, media_type=resp.headers.get('Content-Type', 'application/json'))
+        except _HTTPError as e:
+            # Amortiguar 4xx: devolver colección vacía y 200
+            try:
+                code = int(getattr(e, 'code', 0))
+            except Exception:
+                code = 0
+            if 400 <= code < 500:
+                empty = {"type": "FeatureCollection", "features": []}
+                _siose_cache_set(cache_key, empty)
+                return empty
+            # Para 5xx u otros, propagar como 502
+            raise HTTPException(status_code=502, detail=f"Proxy SIOSE upstream error: {code}")
+        except _URLError as e:
+            raise HTTPException(status_code=502, detail=f"Proxy SIOSE network error: {e}")
+        _siose_cache_set(cache_key, data)
+        return data
+    except HTTPException as he:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Proxy SIOSE error: {e}")
+
+
+# --- Proxy genérico para WMS GetCapabilities (evitar CORS) ---
+@app.get("/proxy/wmscap")
+async def proxy_wms_cap(url: str):
+    try:
+        from urllib.request import urlopen as _urlopen, Request as _Request
+        from urllib.error import HTTPError as _HTTPError, URLError as _URLError
+        req = _Request(url, headers={"User-Agent": "NormativaGalicia/1.0"})
+        try:
+            with _urlopen(req, timeout=15) as resp:
+                if resp.status != 200:
+                    # En teoría 4xx lanza HTTPError, pero por robustez
+                    if 400 <= int(getattr(resp, 'status', 0)) < 500:
+                        empty_xml = b"<WMS_Capabilities version=\"1.3.0\"></WMS_Capabilities>"
+                        return Response(content=empty_xml, media_type='application/xml')
+                    raise HTTPException(status_code=resp.status, detail=f"WMS status {resp.status}")
+                raw = resp.read()
+                ctype = resp.headers.get('Content-Type', 'application/xml')
+                return Response(content=raw, media_type=ctype)
+        except _HTTPError as e:
+            # Amortiguar 4xx devolviendo XML mínimo (200 OK)
+            code = int(getattr(e, 'code', 0) or 0)
+            if 400 <= code < 500:
+                empty_xml = b"<WMS_Capabilities version=\"1.3.0\"></WMS_Capabilities>"
+                return Response(content=empty_xml, media_type='application/xml')
+            raise HTTPException(status_code=502, detail=f"Proxy WMS upstream error: {code}")
+        except _URLError as e:
+            raise HTTPException(status_code=502, detail=f"Proxy WMS network error: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Proxy WMS error: {e}")
+
+# --- Proxy genérico para WMS GetFeatureInfo (evitar CORS) ---
+@app.get("/proxy/wmsinfo")
+async def proxy_wms_info(base: str, layers: str, bbox: str, width: int = 256, height: int = 256, x: int = 128, y: int = 128, version: str = "1.1.1", srs: str = "EPSG:3857", info_format: str = "application/json"):
+    """Reenvía una petición WMS GetFeatureInfo.
+    Parámetros claves (WMS 1.1.1): base (URL del WMS sin parámetros), layers, bbox (EPSG:3857), width/height, x/y, srs, version, info_format.
+    """
+    try:
+        from urllib.parse import urlencode as _urlencode
+        from urllib.request import urlopen as _urlopen, Request as _Request
+        sep = '&' if ('?' in base) else '?'
+        params = {
+            'service': 'WMS',
+            'request': 'GetFeatureInfo',
+            'version': version,
+            'layers': layers,
+            'query_layers': layers,
+            'bbox': bbox,
+            'srs': srs,
+            'width': str(int(width)),
+            'height': str(int(height)),
+            'x': str(int(x)),
+            'y': str(int(y)),
+            'info_format': info_format,
+        }
+        url = f"{base}{sep}{_urlencode(params)}"
+        req = _Request(url, headers={"User-Agent": "NormativaGalicia/1.0"})
+        with _urlopen(req, timeout=15) as resp:
+            raw = resp.read()
+            ctype = resp.headers.get('Content-Type', info_format or 'application/octet-stream')
+            return Response(content=raw, media_type=ctype)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Proxy WMS GetFeatureInfo error: {e}")
+
+# ================================
+#  IA NORMATIVA – EXTRACCIÓN FASE 1 (mock reglas)
+# ================================
+class ExtractRequest(BaseModel):
+    text: str
+    municipio: Optional[str] = None
+    fuente: Optional[str] = None  # url o referencia
+
+
+class ExtractResponse(BaseModel):
+    uso_suelo: Optional[str] = None
+    altura_maxima_m: Optional[float] = None
+    retranqueo_min_m: Optional[float] = None
+    referencias: list[str] = []
+
+
+def _parse_float_like(s: str) -> Optional[float]:
+    try:
+        s2 = s.replace(',', '.')
+        return float(s2)
+    except Exception:
+        return None
+
+
+@app.post("/normativa/extract", response_model=ExtractResponse)
+async def normativa_extract(req: ExtractRequest):
+    """Extracción heurística básica de parámetros normativos desde texto.
+    Esta es una fase 1 (mock de reglas) para iterar rápidamente en UI y validación.
+    """
+    if not req.text or not isinstance(req.text, str):
+        raise HTTPException(status_code=400, detail="Campo 'text' requerido")
+    txt = req.text.lower()
+
+    # Heurísticas de uso del suelo
+    uso = None
+    if any(k in txt for k in ("residencial", "vivienda", "resid.")):
+        uso = "residencial"
+    elif any(k in txt for k in ("industrial",)):
+        uso = "industrial"
+    elif any(k in txt for k in ("terciario", "comercial")):
+        uso = "terciario"
+
+    # Altura máxima (m)
+    import re
+    altura = None
+    # patrones explícitos en metros
+    m1 = re.search(r"altura\s*(?:m[aá]xima|max)\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", txt)
+    if not m1:
+        m1 = re.search(r"\bh\s*\.?\s*m[aá]x\.?\s*(\d+(?:[\.,]\d+)?)\s*m\b", txt)
+    if m1:
+        altura = _parse_float_like(m1.group(1))
+    # heurística por número de plantas si no hay metros
+    if altura is None:
+        # ejemplos: PB+3, B+2, "planta baja + 3", "3 plantas", "hasta 4 alturas"
+        per_floor = None
+        try:
+            per_floor = float(os.getenv('PLAN_FLOOR_HEIGHT_M', '3.0'))
+        except Exception:
+            per_floor = 3.0
+        pisos = None
+        # PB+N / B+N
+        m_pbn = re.search(r"\b(?:pb|b)\s*\+\s*(\d{1,2})\b", txt)
+        if m_pbn:
+            pisos = 1 + int(m_pbn.group(1))  # PB cuenta como 1 altura constructiva
+        # N plantas / N alturas
+        if pisos is None:
+            m_np = re.search(r"\b(\d{1,2})\s*(?:plantas|alturas)\b", txt)
+            if m_np:
+                pisos = int(m_np.group(1))
+        # "planta baja + N"
+        if pisos is None:
+            m_pb = re.search(r"planta\s*baja\s*\+\s*(\d{1,2})", txt)
+            if m_pb:
+                pisos = 1 + int(m_pb.group(1))
+        if pisos is not None and pisos > 0 and per_floor:
+            altura = round(pisos * per_floor, 2)
+
+    # Retranqueo mínimo (m)
+    retranq = None
+    r1 = re.search(r"retranqueo\s*(?:m[ií]nimo|min)\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", txt)
+    if not r1:
+        r1 = re.search(r"\bsetback\b\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", txt)
+    if r1:
+        retranq = _parse_float_like(r1.group(1))
+    # direccionales (frente/laterales/fondo), escoger el mínimo conservador si hay varios
+    dir_vals = []
+    try:
+        for pat in [
+            (r"(?:frente|a\s+vial|alineaci[oó]n\s+de\s+fachada)[^\d]*(\d+(?:[\.,]\d+)?)\s*m", 'front'),
+            (r"(?:lateral(?:es)?|costados)[^\d]*(\d+(?:[\.,]\d+)?)\s*m", 'side'),
+            (r"(?:fondo|posterior)[^\d]*(\d+(?:[\.,]\d+)?)\s*m", 'back'),
+        ]:
+            m = re.search(pat[0], txt)
+            if m:
+                v = _parse_float_like(m.group(1))
+                if v is not None:
+                    dir_vals.append(v)
+        if dir_vals and retranq is None:
+            retranq = min(dir_vals)
+    except Exception:
+        pass
+
+    # Referencias rudimentarias (artículos)
+    refs: list[str] = []
+    for m in re.finditer(r"art[\.\s]*\d+[\.\d]*", txt):
+        try:
+            refs.append(m.group(0))
+        except Exception:
+            pass
+    if req.fuente:
+        refs.append(str(req.fuente))
+
+    return ExtractResponse(
+        uso_suelo=uso,
+        altura_maxima_m=altura,
+        retranqueo_min_m=retranq,
+        referencias=refs,
+    )
 
 
 class QARequest(BaseModel):
@@ -436,6 +948,16 @@ async def qa(req: QARequest):
 
 @app.post("/zoning/analyze")
 async def zoning_analyze(inp: ZoneInput):
+    try:
+        res = analizar_zonificacion(inp)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Alias semántico: /normativa/consulta (misma lógica que /zoning/analyze)
+@app.post("/normativa/consulta")
+async def normativa_consulta(inp: ZoneInput):
     try:
         res = analizar_zonificacion(inp)
         return res
@@ -508,6 +1030,321 @@ async def endpoint_geometry_checks(req: GeometryChecksRequest):
         return geometry_checks(req.geometry)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)
+class VolumeRequest(BaseModel):
+    geometry: dict
+    altura_maxima_m: float | None = None
+    retranqueo_min_m: float | None = None
+    municipio: str | None = None
+    subzona: str | None = None
+    setback_front_m: float | None = None
+    setback_side_m: float | None = None
+    setback_back_m: float | None = None
+    front_direction: str | None = None  # 'north'|'east'|'south'|'west'
+    street_axis: dict | None = None  # GeoJSON LineString/MultiLineString para detección automática de frente
+    use_plan_front_default: bool | None = None  # Opt-in para usar front_direction_default del plan
+    diagnostics_verbosity: Optional[str] = None  # 'full'|'min'|'none' (override por petición)
+
+try:
+    # Resolver ForwardRefs por uso de `from __future__ import annotations`
+    VolumeRequest.model_rebuild()
+except Exception:
+    pass
+
+
+class AssessResponse(BaseModel):
+    viability: str  # 'apto'|'condicionado'|'no_apto'
+    reasons: list[str]
+    params_effective: dict
+    feature: dict | None = None
+    geometry_summary: dict | None = None
+
+try:
+    AssessResponse.model_rebuild()
+except Exception:
+    pass
+
+
+@app.post("/zoning/assess", response_model=AssessResponse)
+async def zoning_assess(req: VolumeRequest = Body(...)):
+    """Evalúa la viabilidad normativa de una parcela con parámetros de plan.
+    Devuelve una etiqueta de viabilidad y razones, junto a los parámetros efectivos aplicados.
+    """
+    # Resolver parámetros como en /zoning/volume
+    altura = req.altura_maxima_m
+    retranqueo = req.retranqueo_min_m or 0.0
+    reasons: list[str] = []
+    effective_front_direction = req.front_direction
+    front_dir_source = None
+    setback_front = req.setback_front_m
+    setback_side = req.setback_side_m
+    setback_back = req.setback_back_m
+
+    try:
+        if altura is None:
+            if req.municipio:
+                from src.rules_engine import get_plan_params_dynamic
+                plan = get_plan_params_dynamic(req.municipio, req.subzona)
+                if plan.altura_maxima_m is None:
+                    raise ValueError("El plan municipal no devuelve altura máxima")
+                altura = plan.altura_maxima_m
+                if req.retranqueo_min_m is None and plan.retranqueo_min_m is not None:
+                    retranqueo = plan.retranqueo_min_m
+                # Determinar dirección de frente efectiva
+                pfd = getattr(plan, 'front_direction_default', None)
+                pf = getattr(plan, 'setback_front_m', None)
+                ps = getattr(plan, 'setback_side_m', None)
+                pb = getattr(plan, 'setback_back_m', None)
+                has_plan_dir_setbacks = (pf is not None) or (ps is not None) or (pb is not None)
+                if (
+                    effective_front_direction is None
+                    and req.street_axis is None
+                    and bool(req.use_plan_front_default)
+                    and pfd
+                    and has_plan_dir_setbacks
+                ):
+                    effective_front_direction = pfd
+                    front_dir_source = 'plan_default'
+                    reasons.append("front_direction por defecto del plan aplicado")
+                # Rellenar retranqueos direccionales si hay contexto direccional
+                if effective_front_direction is not None or req.street_axis is not None:
+                    setback_front = req.setback_front_m if req.setback_front_m is not None else pf
+                    setback_side = req.setback_side_m if req.setback_side_m is not None else ps
+                    setback_back = req.setback_back_m if req.setback_back_m is not None else pb
+            else:
+                raise HTTPException(status_code=400, detail="altura_maxima_m requerida si no se especifica municipio")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudieron obtener parámetros municipales: {e}")
+
+    # Construir parámetros y calcular envolvente (en seco)
+    try:
+        params = VolumeParams(
+            altura_maxima_m=float(altura),
+            retranqueo_min_m=float(retranqueo or 0.0),
+            setback_front_m=setback_front,
+            setback_side_m=setback_side,
+            setback_back_m=setback_back,
+            front_direction=effective_front_direction,
+        )
+        feat = compute_building_envelope(req.geometry, params, street_axis=req.street_axis, front_direction_source=front_dir_source)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error en evaluación volumétrica: {e}")
+
+    # Resumen geométrico opcional
+    geometry_summary = None
+    try:
+        _gs = geometry_checks(req.geometry)
+        # Normalizar a dict para la respuesta
+        try:
+            geometry_summary = _gs.model_dump()  # Pydantic v2
+        except Exception:
+            try:
+                # Compatibilidad u otros tipos
+                geometry_summary = dict(_gs) if isinstance(_gs, dict) else (
+                    _gs.__dict__ if hasattr(_gs, '__dict__') else None
+                )
+            except Exception:
+                geometry_summary = None
+    except Exception:
+        geometry_summary = None
+
+    # Determinar viabilidad
+    if feat is None:
+        reasons.append("La envolvente edificable no existe (retranqueos agotan la parcela)")
+        return AssessResponse(
+            viability='no_apto',
+            reasons=reasons,
+            params_effective={
+                'altura_maxima_m': altura,
+                'retranqueo_min_m': retranqueo,
+                'setback_front_m': setback_front,
+                'setback_side_m': setback_side,
+                'setback_back_m': setback_back,
+                'front_direction': effective_front_direction,
+                'front_direction_source': front_dir_source or ('request' if effective_front_direction else 'none'),
+            },
+            feature=None,
+            geometry_summary=geometry_summary,
+        )
+
+    props = feat.get('properties') or {}
+    # Heurísticas de condición
+    condicionado = False
+    if props.get('directional_not_applied_reason'):
+        condicionado = True
+        reasons.append(f"No se aplicó retranqueo direccional: {props.get('directional_not_applied_reason')}")
+    if props.get('street_axis_ignored_reason'):
+        condicionado = True
+        reasons.append(f"Eje de calle ignorado: {props.get('street_axis_ignored_reason')}")
+    if (front_dir_source == 'plan_default') and not req.front_direction and not req.street_axis:
+        condicionado = True
+        reasons.append("Dirección de frente por defecto del plan (sin eje de calle ni petición explícita)")
+
+    viability = 'condicionado' if condicionado else 'apto'
+    return AssessResponse(
+        viability=viability,
+        reasons=reasons,
+        params_effective={
+            'altura_maxima_m': altura,
+            'retranqueo_min_m': retranqueo,
+            'setback_front_m': setback_front,
+            'setback_side_m': setback_side,
+            'setback_back_m': setback_back,
+            'front_direction': effective_front_direction,
+            'front_direction_source': props.get('front_direction_source') or front_dir_source or ('request' if effective_front_direction else 'none'),
+        },
+        feature=feat,
+        geometry_summary=geometry_summary,
+    )
+
+
+@app.get("/zoning/assess-report")
+async def zoning_assess_report_get(body_b64: Optional[str] = None, logo: Optional[str] = None, title: Optional[str] = None, client: Optional[str] = None, project: Optional[str] = None, snap: Optional[str] = None):
+    """GET que recibe `body_b64` (JSON VolumeRequest url-safe base64) y devuelve un informe HTML de viabilidad."""
+    if not body_b64 or not isinstance(body_b64, str):
+        raise HTTPException(status_code=400, detail="Parámetro 'body_b64' requerido en la query")
+    try:
+        import base64 as _b64, json as _json
+        s = body_b64.replace('-', '+').replace('_', '/')
+        pad = '=' * ((4 - (len(s) % 4)) % 4)
+        raw = _b64.b64decode(s + pad)
+        body = _json.loads(raw.decode('utf-8'))
+        if not isinstance(body, dict):
+            raise ValueError('El cuerpo decodificado no es un objeto JSON')
+        req = VolumeRequest(**body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"body_b64 inválido: {e}")
+
+    # Ejecutar evaluación reutilizando el endpoint
+    res = await zoning_assess(req)  # AssessResponse
+    html = _render_assess_report_html(body, res, logo=logo, title=title, client=client, project=project, snapshot_data_url=snap)
+    return Response(content=html, media_type='text/html; charset=utf-8')
+
+
+class AssessReportRequest(BaseModel):
+    body: VolumeRequest
+    logo: Optional[str] = None
+    title: Optional[str] = None
+    client: Optional[str] = None
+    project: Optional[str] = None
+    snapshot_data_url: Optional[str] = None
+
+
+@app.post("/zoning/assess-report")
+async def zoning_assess_report_post(req: AssessReportRequest):
+    """POST que recibe JSON con VolumeRequest y metadatos opcionales, y devuelve el HTML del informe."""
+    res = await zoning_assess(req.body)  # AssessResponse
+    # Convertir VolumeRequest a dict limpio
+    try:
+        body = req.body.model_dump()
+    except Exception:
+        body = req.body.dict() if hasattr(req.body, 'dict') else dict(req.body)
+    html = _render_assess_report_html(body, res, logo=req.logo, title=req.title, client=req.client, project=req.project, snapshot_data_url=req.snapshot_data_url)
+    return Response(content=html, media_type='text/html; charset=utf-8')
+
+
+def _render_assess_report_html(body: dict, res: "AssessResponse", *, logo: Optional[str] = None, title: Optional[str] = None, client: Optional[str] = None, project: Optional[str] = None, snapshot_data_url: Optional[str] = None) -> str:
+    import html as _html
+    def esc(x: str) -> str:
+        try:
+            return _html.escape(x if isinstance(x, str) else str(x))
+        except Exception:
+            return str(x)
+    v = (res.viability or '').upper()
+    color = {'APTO':'#2e7d32','CONDICIONADO':'#f57f17','NO APTO':'#c62828'}.get(v, '#37474f')
+    reasons = ''.join(f"<li>{esc(r)}</li>" for r in (res.reasons or []))
+    pe = res.params_effective or {}
+    rows = ''
+    for k in ['altura_maxima_m','retranqueo_min_m','setback_front_m','setback_side_m','setback_back_m','front_direction','front_direction_source']:
+        rows += f"<tr><td>{esc(k)}</td><td>{esc(pe.get(k))}</td></tr>"
+    area_txt = ''
+    try:
+        a = (res.geometry_summary or {}).get('area') or (res.geometry_summary or {}).get('area_m2')
+        if a is not None:
+            area_txt = f"<div class=muted>Área de parcela: {esc(round(float(a), 2))} m²</div>"
+    except Exception:
+        pass
+    muni = (body.get('municipio') or '').strip() if isinstance(body, dict) else ''
+    subz = (body.get('subzona') or '').strip() if isinstance(body, dict) else ''
+    loc_txt = ''
+    if muni or subz:
+        loc_txt = f"<div class=muted>Municipio: {esc(muni) or '—'}{(' · Subzona: ' + esc(subz)) if subz else ''}</div>"
+    import datetime as _dt
+    gen_date = _dt.datetime.now().strftime('%Y-%m-%d %H:%M')
+    ttl = esc(title) if title else 'Informe de Viabilidad'
+    cl = esc(client) if client else ''
+    pj = esc(project) if project else ''
+    logo_html = f"<img src='{esc(logo)}' alt='logo' style='height:40px'/>" if logo else ''
+    client_proj = ''
+    if cl or pj:
+        client_proj = f"<div class=muted>{('Cliente: ' + cl) if cl else ''}{(' · Proyecto: ' + pj) if pj else ''}</div>"
+    snap_html = ''
+    if snapshot_data_url:
+        try:
+            snap_html = f"<div style='margin-top:10px'><img alt='snapshot' src='{esc(snapshot_data_url)}' style='max-width:100%;border:1px solid #333;border-radius:6px'/></div>"
+        except Exception:
+            snap_html = ''
+    html = f"""
+<!doctype html>
+<html lang=es>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{ttl}</title>
+  <style>
+    body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;background:#111;color:#eaeaea;margin:20px;}}
+    .card{{background:#1c1c1c;border:1px solid #333;border-radius:10px;padding:18px;max-width:900px;}}
+    h1{{margin:0 0 10px 0;font-size:22px;}}
+    .badge{{display:inline-block;padding:4px 10px;border-radius:20px;border:1px solid {color};color:{color};font-weight:600;}}
+    table{{width:100%;border-collapse:collapse;margin-top:12px;}}
+    td,th{{border-bottom:1px solid #333;padding:6px 8px;text-align:left;font-size:14px;}}
+    ul{{margin:6px 0 0 20px;}}
+    .muted{{opacity:0.8;font-size:13px;}}
+    .toolbar{{position:sticky;top:0;display:flex;gap:8px;margin-bottom:12px}}
+    .toolbar button{{padding:6px 10px;border:1px solid #555;background:#222;color:#eee;border-radius:6px;cursor:pointer}}
+    .toolbar button:hover{{background:#2a2a2a}}
+    @media print{{
+      body{{background:#fff;color:#000;margin:0;}}
+      .card{{border:none;border-radius:0;}}
+      .toolbar{{display:none}}
+      a[href]::after{{content:"";}}
+      @page{{margin:12mm}}
+    }}
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button onclick="window.print()">Descargar PDF</button>
+    <button onclick="window.close()">Cerrar</button>
+  </div>
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:12px;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:12px">{logo_html}<h1 style="margin:0">{ttl}</h1></div>
+      <div class="muted">Generado: {esc(gen_date)}</div>
+    </div>
+    <div class="badge">{v}</div>
+    {loc_txt}
+    {client_proj}
+    {area_txt}
+    {snap_html}
+    <h3>Parámetros efectivos</h3>
+    <table>
+      <tbody>
+        {rows}
+      </tbody>
+    </table>
+    <h3>Motivos</h3>
+    <ul>{reasons or '<li>—</li>'}</ul>
+    <p class="muted">Generado por Asistente Normativa Galicia</p>
+  </div>
+</body>
+</html>
+"""
+    return html
 
 
 @app.get("/zoning/volume-export")
@@ -671,20 +1508,6 @@ async def validate_plan_csv(req: ValidatePlanCSVRequest):
         _validate_cache_set(req.path, response)
     return response
 
-
-class VolumeRequest(BaseModel):
-    geometry: dict
-    altura_maxima_m: float | None = None
-    retranqueo_min_m: float | None = None
-    municipio: str | None = None
-    subzona: str | None = None
-    setback_front_m: float | None = None
-    setback_side_m: float | None = None
-    setback_back_m: float | None = None
-    front_direction: str | None = None  # 'north'|'east'|'south'|'west'
-    street_axis: dict | None = None  # GeoJSON LineString/MultiLineString para detección automática de frente
-    use_plan_front_default: bool | None = None  # Opt-in para usar front_direction_default del plan
-    diagnostics_verbosity: Optional[str] = None  # 'full'|'min'|'none' (override por petición)
 
 
 @app.post("/zoning/volume")
