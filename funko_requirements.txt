@@ -1,0 +1,4 @@
+opencv-python>=4.9
+pyzbar>=0.1.9
+requests>=2.31.0
+Pillow>=10.0.0

@@ -1,3 +1,39 @@
+# Ingesta de normativa y anotaciones (Residencial)
+
+Esta sección documenta el flujo de preparación de datos para Residencial en Galicia.
+
+## Ingesta de PDFs → texto por páginas (JSONL)
+
+Utilidad: `scripts/ingesta_normativa.py` (requiere `pdfplumber`).
+
+Ejemplo de uso (PowerShell):
+
+```powershell
+.\n+venv\Scripts\python.exe -u scripts\ingesta_normativa.py `
+  --municipio Vigo `
+  --pdf datos\normativa\Vigo\Normativa_Urbanistica_VIGO.pdf `
+  --out-jsonl datos\normativa\Vigo\texto_paginas.jsonl `
+  --manifest datos\normativa\manifest.jsonl
+```
+
+Salida:
+- `texto_paginas.jsonl`: una línea por página con `{municipio, fuente, page_number, text, ...}`.
+- `manifest.jsonl` (opcional): registro de PDFs con metadatos (`file_md5`, páginas, timestamp).
+
+Nota: el árbol `datos/` puede estar gitignorado. Guarda ahí tus PDFs/JSONL locales.
+
+## Anotaciones residenciales (JSONL)
+
+Consulta el esquema en `documentacion/annotaciones_residencial_schema.md`.
+
+Sugerencia de ubicación local (gitignorada): `datos/anotaciones/residencial.jsonl`.
+
+Campos clave: `altura_maxima_m`, `retranqueo_min_m`, `setback_front/side/back_m`, `ocupacion_max`, `edificabilidad_max_m2_m2`, `front_direction_default`, `source_refs`.
+
+Integración futura:
+- El extractor (heurístico + LLM) tomará `texto_paginas.jsonl` y propondrá anotaciones con verificación de rangos y citas (`source_refs`).
+- Las anotaciones se incorporarán al proveedor de planes para alimentar los endpoints `/zoning/*` y el visor 3D.
+
 ### Tests de regresión
 
 Ejecutar toda la batería:
@@ -22,6 +58,63 @@ Tests añadidos recientemente:
 # NORMATIVA GALICIA 3D
 [![Smoke](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml)
 [![Tests](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml)
+
+## Guía rápida
+
+### Arranque rápido del backend
+
+```powershell
+scripts\launch_server.cmd
+```
+
+- Si `datos\plan_uploaded.csv` no existe, el script usa automáticamente `datos\planes_ejemplo_residencial.csv`.
+- API en `http://127.0.0.1:8002` (por defecto en este repo).
+
+### Abrir el visor 3D
+
+Navega a:
+
+```
+http://127.0.0.1:8002/viewer/
+```
+
+- Edificios 3D auto‑ON por defecto.
+- Normativa (beta) usa `POST /zoning/analyze`.
+- Si no hay parcela activa, se usa el viewport.
+
+### Generar un informe (HTML) desde script
+
+El script `scripts/gen_report.ps1` crea un informe auto‑contenido a partir de una geometría GeoJSON (en metros) y parámetros básicos.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gen_report.ps1 `
+  -Municipio "Vigo" -Subzona "RZ-2" -Altura 12 -Retanqueo 3 `
+  -GeometryPath datos\sample_parcela.geojson `
+  -OutPath reports\informe_vigo_rz2.html `
+  -Title "Informe Vigo RZ-2" -Client AC8 -Project "Vigo QA Local" `
+  -BaseUrl http://127.0.0.1:8002
+```
+
+Notas:
+- La geometría debe ser un `Geometry` GeoJSON (no `Feature`) y en metros. Si envías lon/lat, incluye `crs: "EPSG:4326"` en el body (los endpoints `/zoning/*` lo aceptan; el script asume metros).
+- Cambia `-Municipio`/`-Subzona` a tu caso (p. ej. `"A Coruna"`, `"NR-1"`).
+
+### Presets de Municipio/Subzona en el visor
+
+En la consola del navegador, puedes fijar Municipio/Subzona persistentes:
+
+```js
+localStorage.setItem('viewer_zone_municipio','Vigo');
+localStorage.setItem('viewer_zone_subzona','RZ-2');
+location.reload();
+```
+
+Para silenciar edificios 3D:
+
+```js
+localStorage.setItem('viewer_buildings_master','off');
+location.reload();
+```
 
 ## Troubleshooting
 

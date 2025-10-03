@@ -1,0 +1,3 @@
+municipio,subzona,uso_suelo,altura_maxima_m,retranqueo_min_m,ocupacion_max,edificabilidad_max_m2_m2,source
+Vigo,U6.1,residencial,12,3,0.35,1.2,https://www.vigo.org/
+Boiro,RZ-2,residencial,10,3,0.30,0.9,https://www.boiro.gal/

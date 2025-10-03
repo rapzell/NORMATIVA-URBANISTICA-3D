@@ -49,3 +49,12 @@ datos/
 !datos/sample_parcela.geojson
 !datos/sample_street_axis.geojson
 !datos/planes_ejemplo_residencial.csv
+ 
+# Auto: excluir artefactos demo y pesados
+exports/
+reports/
+.logs/
+*.zip
+web/examples/threejs-viewer/index_broken.html
+web/examples/threejs-viewer/index_recovery.html
+

@@ -1,0 +1,5 @@
+municipio,subzona,altura_maxima_m,retranqueo_min_m,setback_front_m,setback_side_m,setback_back_m,front_direction_default,ocupacion_max,edificabilidad_max_m2_m2,parcela_min_m2,frente_min_m,fuente,articulo,url,notas
+Vigo,R-1,12,3,3,3,3,east,0.6,1.2,120,6,PGOM Vigo 2008,Art. XX,https://ejemplo.vigo.es/ordenanza,Régimen orientativo (sustituir por valores oficiales)
+Vigo,R-2,16,4,4,3,4,west,0.7,1.8,150,8,PGOM Vigo 2008,Art. YY,https://ejemplo.vigo.es/ordenanza,Alturas sujetas a frente de calle y perfil viario
+A Coruña,UC-1,15,3,3,3,3,south,0.6,1.5,130,7,PGOM A Coruña,Art. AA,https://ejemplo.coruna.gal/ordenanza,Ejemplo de subzona urbana consolidada
+Santiago,NR-TRAD,9,3,2,2,3,north,0.4,0.8,90,5,PGOM Santiago,Art. BB,https://ejemplo.santiago.gal/ordenanza,Núcleo tradicional (valores meramente ilustrativos)

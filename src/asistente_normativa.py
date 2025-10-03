@@ -21,18 +21,38 @@ import argparse
 # --- 1. Cargar Modelos y Datos ---
 
 def cargar_recursos():
-    """Carga los datos, índices y modelos necesarios para el asistente."""
+    """Carga los datos, índices y modelos necesarios para el asistente.
+    Siempre intenta devolver (chunks, index, bi_encoder, cross_encoder, llm),
+    aunque llm pueda ser None si el modelo local no está disponible.
+    """
     print("Cargando modelos y datos. Esto puede tardar un momento...")
-    
+
+    # 1) Cargar chunks e índice con nombres actuales y fallback legacy
+    chunks = None
+    index = None
+    errors = []
+    # Nombres preferentes
     try:
-        # Usamos los archivos generados por los scripts de procesamiento
         with open('datos/normativa_chunks.json', 'r', encoding='utf-8') as f:
             chunks = json.load(f)
         index = faiss.read_index('datos/normativa.index')
-    except FileNotFoundError:
-        print("Error: No se encontraron los archivos 'fragmentos_limpios.json' o 'faiss_index.bin'.")
-        print("Asegúrate de haber ejecutado 'crear_indice.py' primero.")
-        return None
+    except Exception as e:
+        errors.append(str(e))
+    # Fallback legacy
+    if chunks is None or index is None:
+        try:
+            with open('datos/fragmentos_limpios.json', 'r', encoding='utf-8') as f:
+                chunks = json.load(f)
+            index = faiss.read_index('datos/faiss_index.bin')
+        except Exception as e:
+            errors.append(str(e))
+    if chunks is None or index is None:
+        print("Error: No se encontraron archivos de chunks/índice válidos.")
+        for er in errors:
+            print(" - ", er)
+        print("Asegúrate de haber ejecutado 'crear_indice.py' y de que los ficheros estén en 'datos/'.")
+        # Devolver estructura mínima para que /qa pueda seguir en modo básico
+        return [], None, None, None, None
 
     print("Cargando modelos de embedding y re-ranking...")
     bi_encoder = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
@@ -102,10 +122,10 @@ def cargar_recursos():
         )
     except Exception as e:
         print(f"Error al cargar el modelo GGUF local: {e}")
-        print("Es posible que la descarga del modelo esté fallando, que no haya espacio suficiente o que el archivo esté corrupto.")
-        return None
-    
-    print("\nRecursos cargados con éxito. ¡Listo para responder!")
+        print("Continuaré en modo extractivo sin LLM (las respuestas serán más sobrias, basadas en los textos).")
+        llm = None
+
+    print("\nRecursos cargados con éxito (LLM=" + ("OK" if llm is not None else "None") + ")")
     return chunks, index, bi_encoder, cross_encoder, llm
 
 # --- 2. Lógica de Búsqueda (Retrieval) ---
@@ -378,7 +398,10 @@ def buscar_fragmentos(pregunta, chunks, index, bi_encoder, cross_encoder, top_k_
 # --- 3. Lógica de Generación (Generation) ---
 
 def generar_respuesta(pregunta, chunks_relevantes, llm):
-    """Genera una respuesta utilizando el modelo GGUF con ctransformers."""
+    """Genera una respuesta utilizando el modelo GGUF con ctransformers cuando está disponible.
+    En ausencia de LLM, devuelve una respuesta extractiva a partir de los chunks recuperados,
+    priorizando Ley 2/2016 y citando fuentes.
+    """
     # Especial: responder comparativas y "infraestructuras en rústico" incluso sin chunks
     try:
         import unicodedata as _uni0
@@ -419,7 +442,11 @@ def generar_respuesta(pregunta, chunks_relevantes, llm):
     except Exception:
         pass
     if not chunks_relevantes:
-        return "No se encontraron fragmentos relevantes para tu consulta."
+        # Sin contexto: devolver orientación mínima para guiar al usuario
+        return (
+            "No se encontraron fragmentos relevantes para tu consulta. "
+            "Intenta especificar el municipio y, si procede, la subzona, o menciona el artículo de la Ley (p. ej., Artículo 13, 17, 27, 31, 32)."
+        )
 
     # Reordenar para priorizar la Ley 2/2016 frente al Decreto 143/2016
     def _prioridad_fuente(ch):
@@ -528,11 +555,29 @@ def generar_respuesta(pregunta, chunks_relevantes, llm):
         has_ley = any(((ch.get('metadata') or {}).get('tipo_fuente', '').lower() == 'ley') for ch in chunks_relevantes)
     except Exception:
         has_ley = False
-    if not has_ley:
+    if not has_ley and llm is None:
+        # Modo extractivo sin LLM: devolver resumen breve de lo mejor que tengamos, citando fuentes
+        try:
+            tops = chunks_relevantes[:2]
+            resumen = []
+            for ch in tops:
+                txt = (ch.get('contenido') or '').strip()
+                src = ((ch.get('metadata') or {}).get('fuente') or '').strip()
+                if txt:
+                    # Tomar ~2 frases
+                    import re as _re
+                    sents = _re.split(r"(?<=[\.!?])\s+", txt)
+                    s = " ".join(sents[:2]).strip()
+                    if s:
+                        resumen.append(s + (f" (Fuente: {src})" if src else ""))
+            if resumen:
+                return "\n\n".join(resumen)
+        except Exception:
+            pass
+        # Guardrail si no pudimos construir resumen
         return (
-            "El contexto recuperado no incluye fragmentos de la Ley 2/2016. "
-            "Para evitar imprecisiones, no generaré una respuesta basada únicamente en el Reglamento. "
-            "Reformula la consulta o incrementa el contexto para recuperar la Ley correspondiente (p. ej., Artículos 1, 13, 17, 27, 31)."
+            "No hay fragmentos de la Ley 2/2016 en el contexto recuperado. "
+            "Por favor, indica más detalle (municipio/subzona o artículo) para afinar la respuesta."
         )
 
     # Modo extractivo de alta precisión si hay Ley+artículo

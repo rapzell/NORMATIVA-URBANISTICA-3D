@@ -25,7 +25,7 @@ Param(
   [string]$Diagnostics = ''
   , [switch]$Strict
   , [switch]$Gzip
-  , [ValidateSet('vigo_centro','boiro_rz2','axis_used','axis_ignored','')]
+  , [ValidateSet('vigo_centro','vigo_u7','vigo_u10','boiro_rz2','axis_used','axis_ignored','')]
   [string]$Preset = ''
   , [ValidateSet('EPSG:25829','EPSG:4326','WGS84','')]
   [string]$Crs = ''
@@ -202,6 +202,20 @@ $Port = $chosenPort
 $base = ("http://127.0.0.1:{0}" -f $Port)
 $pingUrl = "$base/openapi.json"
 
+# Pre-configurar provider/CSV en el entorno ANTES de arrancar la API, para que el backend lo lea en startup
+try {
+  if ($PlanProvider) {
+    $env:PLAN_PROVIDER = $PlanProvider
+    Write-Host ("[info] (pre) PLAN_PROVIDER={0}" -f $env:PLAN_PROVIDER) -ForegroundColor DarkGray
+  }
+  if ($PlanCSVPath) {
+    try { $resolvedPre = Resolve-Path -LiteralPath $PlanCSVPath -ErrorAction SilentlyContinue } catch { $resolvedPre = $null }
+    if ($resolvedPre) { $PlanCSVPath = $resolvedPre.Path }
+    $env:PLAN_CSV_PATH = $PlanCSVPath
+    Write-Host ("[info] (pre) PLAN_CSV_PATH={0}" -f $env:PLAN_CSV_PATH) -ForegroundColor DarkGray
+  }
+} catch { Write-Warning ("[plan] Preconfiguración de plan falló: {0}" -f $_) }
+
 # Si hay servidor corriendo y se pide -ForceRestart, terminar proceso en puerto elegido
 if ($serverRunning -and $ForceRestart.IsPresent) {
   try {
@@ -286,7 +300,7 @@ try {
     try {
       $valUrl = "$base/zoning/validate-plan-csv"
       $payload = @{ path = $env:PLAN_CSV_PATH } | ConvertTo-Json -Compress
-      $resp = Invoke-WebRequest -Uri $valUrl -UseBasicParsing -TimeoutSec 10 -Method POST -Body $payload -ContentType 'application/json'
+      $resp = Invoke-WebRequest -Uri $valUrl -UseBasicParsing -TimeoutSec 10 -Method POST -Body $payload -ContentType 'application/json; charset=UTF-8'
       $obj = $null
       try { $obj = $resp.Content | ConvertFrom-Json } catch {}
       if ($obj) {
@@ -302,7 +316,7 @@ try {
       try {
         $relUrl = "$base/admin/reload-plan"
         $payload2 = @{ path = $env:PLAN_CSV_PATH } | ConvertTo-Json -Compress
-        $resp2 = Invoke-WebRequest -Uri $relUrl -UseBasicParsing -TimeoutSec 15 -Method POST -Body $payload2 -ContentType 'application/json'
+        $resp2 = Invoke-WebRequest -Uri $relUrl -UseBasicParsing -TimeoutSec 15 -Method POST -Body $payload2 -ContentType 'application/json; charset=UTF-8'
         Write-Host ("[plan] Recarga aplicada: {0}" -f $resp2.Content)
       } catch { Write-Warning ("[plan] Recarga CSV falló: {0}" -f $_) }
     }
@@ -318,6 +332,18 @@ if ($Preset) {
   switch ($Preset) {
     'vigo_centro' {
       if (-not $Municipio) { $Municipio = 'Vigo' }
+      if (-not $UsePlanFrontDefault.IsPresent -and -not $FrontDirection) { $UsePlanFrontDefault = $true }
+      if (-not $GeometryPath) { $GeometryPath = 'datos\sample_parcela.geojson' }
+    }
+    'vigo_u7' {
+      if (-not $Municipio) { $Municipio = 'Vigo' }
+      if (-not $Subzona)   { $Subzona   = 'U7' }
+      if (-not $UsePlanFrontDefault.IsPresent -and -not $FrontDirection) { $UsePlanFrontDefault = $true }
+      if (-not $GeometryPath) { $GeometryPath = 'datos\sample_parcela.geojson' }
+    }
+    'vigo_u10' {
+      if (-not $Municipio) { $Municipio = 'Vigo' }
+      if (-not $Subzona)   { $Subzona   = 'U10' }
       if (-not $UsePlanFrontDefault.IsPresent -and -not $FrontDirection) { $UsePlanFrontDefault = $true }
       if (-not $GeometryPath) { $GeometryPath = 'datos\sample_parcela.geojson' }
     }
@@ -348,11 +374,16 @@ if ($Preset) {
   }
 }
 
-# Defaults de seguridad si no hay preset u opciones mínimas
-# Nota: en PowerShell, [double]$Altura sin valor suele inicializarse como 0 (no $null).
-# Por lo tanto, detectamos ausencia con $PSBoundParameters y forzamos un valor válido (>0).
+# Defaults de seguridad de Altura
+# Evitar forzar Altura cuando se proporcionan Municipio/Subzona (queremos que la API derive del plan)
 if (-not $PSBoundParameters.ContainsKey('Altura')) {
-  $Altura = 8
+  if (-not $Municipio -and -not $Subzona) {
+    $Altura = 8
+  } else {
+    # No establecer Altura por defecto para no sobreescribir parámetros del plan
+    # Dejar $Altura en 0 (no se incluirá en el body si no fue pasado explícitamente)
+    $Altura = 0
+  }
 } elseif ($Altura -le 0) {
   Write-Warning "Altura (m) debe ser > 0. Se recibió $Altura; usando 8 m por defecto."
   $Altura = 8
@@ -451,8 +482,8 @@ if ($fmt -in @('glb','gltf')) {
 }
 
 $body = [ordered]@{ geometry = $geometry }
-# Incluir Altura si fue pasada como parámetro o si fue establecida por preset/defecto
-if ($PSBoundParameters.ContainsKey('Altura') -or ($null -ne $Altura))      { $body.altura_maxima_m   = [double]$Altura }
+# Incluir Altura si fue pasada como parámetro explícito o si es > 0 (evitar enviar 0 por defecto que sobreescriba el plan)
+if ($PSBoundParameters.ContainsKey('Altura') -or ([double]$Altura -gt 0))  { $body.altura_maxima_m   = [double]$Altura }
 if ($PSBoundParameters.ContainsKey('Retanqueo'))   { $body.retranqueo_min_m  = [double]$Retanqueo }
 if ($PSBoundParameters.ContainsKey('SetbackFront')){ $body.setback_front_m   = [double]$SetbackFront }
 if ($PSBoundParameters.ContainsKey('SetbackSide')) { $body.setback_side_m    = [double]$SetbackSide }
@@ -587,7 +618,7 @@ if ($Smoke.IsPresent) {
   for ($attempt = 0; $attempt -le $maxRetries; $attempt++) {
     $isLast = ($attempt -eq $maxRetries)
     try {
-      $resp2 = Invoke-WebRequest -Uri $postUrl -UseBasicParsing -TimeoutSec 60 -Method POST -Body $jsonBody -ContentType 'application/json'
+      $resp2 = Invoke-WebRequest -Uri $postUrl -UseBasicParsing -TimeoutSec 60 -Method POST -Body $jsonBody -ContentType 'application/json; charset=UTF-8'
       if ($resp2.StatusCode -ge 200 -and $resp2.StatusCode -lt 300) {
         Write-Host "[smoke] POST export OK ($($resp2.StatusCode))" -ForegroundColor Green
         $script:smokeSummary.postExport = @{ attempts = $attempt + 1; lastStatus = [int]$resp2.StatusCode; success = $true }

@@ -16,7 +16,7 @@ class VolumeParams(BaseModel):
     front_direction: Optional[str] = None  # 'north'|'east'|'south'|'west'
 
 
-def compute_building_envelope(geometry: dict, params: VolumeParams, street_axis: Optional[dict] = None, front_direction_source: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def compute_building_envelope(geometry: dict, params: VolumeParams, street_axis: Optional[dict] = None, front_direction_source: Optional[str] = None, crs: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Calcula una envolvente edificable simple: aplica retranqueo (buffer negativo) a la geometría
     de parcela y devuelve un GeoJSON Polygon/MultiPolygon con propiedad de altura (no extrusión 3D real).
@@ -33,6 +33,50 @@ def compute_building_envelope(geometry: dict, params: VolumeParams, street_axis:
     logger = logging.getLogger('volume')
     if parcel.is_empty:
         raise ValueError("Geometría de parcela vacía")
+    # Saneo inicial para evitar geometrías patológicas
+    try:
+        parcel = parcel.buffer(0)
+    except Exception:
+        pass
+
+    # Conversión lon/lat -> espacio métrico local sólo si el CRS lo indica explícitamente
+    def _crs_is_lonlat(c: Optional[str]) -> bool:
+        if not c:
+            return False
+        s = str(c).strip().lower()
+        return ('epsg:4326' in s) or (s == '4326') or ('wgs84' in s) or ('lonlat' in s)
+
+    def _deg_to_m_scales(lat_deg: float) -> tuple[float, float]:
+        import math
+        # Aproximación local
+        mx = 111320.0 * math.cos(math.radians(lat_deg))
+        my = 110574.0
+        # Evitar escalas degeneradas
+        mx = max(mx, 50000.0)
+        return mx, my
+
+    used_metric_transform = False
+    cx = cy = None
+    sx = sy = 1.0
+    if isinstance(parcel, Polygon) and _crs_is_lonlat(crs):
+        try:
+            c = parcel.centroid
+            cx, cy = c.x, c.y
+            sx, sy = _deg_to_m_scales(cy)
+            # Trasladar a origen y escalar a metros (nos quedamos en marco métrico centrado)
+            parcel = affinity.translate(parcel, xoff=-cx, yoff=-cy)
+            parcel = affinity.scale(parcel, xfact=sx, yfact=sy, origin=(0.0, 0.0))
+            if street_axis is not None:
+                try:
+                    street = shape(street_axis)
+                    street = affinity.translate(street, xoff=-cx, yoff=-cy)
+                    street = affinity.scale(street, xfact=sx, yfact=sy, origin=(0.0, 0.0))
+                    street_axis = mapping(street)
+                except Exception:
+                    street_axis = None
+            used_metric_transform = True
+        except Exception:
+            used_metric_transform = False
 
     # Try directional for axis-aligned rectangles when front_direction provided
     applied_mode = "conservative_max_uniform"
@@ -290,6 +334,21 @@ def compute_building_envelope(geometry: dict, params: VolumeParams, street_axis:
         if debug:
             logger.debug("[volume] buildable geometry exhausted -> None")
         return None
+
+    # Simplificación ligera para evitar geometrías excesivas
+    try:
+        buildable = buildable.simplify(0.001, preserve_topology=True)
+    except Exception:
+        pass
+
+    # Si trabajamos en espacio métrico sintético, volver a lon/lat antes de devolver
+    if used_metric_transform and (cx is not None):
+        try:
+            # Inversa: escalar de vuelta a grados y trasladar al centro original
+            buildable = affinity.scale(buildable, xfact=(1.0 / sx), yfact=(1.0 / sy), origin=(0.0, 0.0))
+            buildable = affinity.translate(buildable, xoff=cx, yoff=cy)
+        except Exception:
+            pass
 
     gj = mapping(buildable)
     # Ajustar fuente de dirección de frente para reflejar uso real del eje de calle

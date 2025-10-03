@@ -1348,8 +1348,13 @@
               const q = String(inpEl.value||'').trim(); if (!q) return;
               appendMsg('user', q.replace(/</g,'&lt;'));
               inpEl.value = '';
-              const ctxOn = (()=>{ try { return (localStorage.getItem('ai_ctx_on')||'on')!=='off'; } catch { return true; } })();
-              const pref = ctxOn ? buildContextPrefix() : '';
+              const ctxOn = (()=>{ try { return (localStorage.getItem('ai_ctx_on')||'off')!=='off'; } catch { return false; } })();
+              // Solo añadir contexto si hay señales de que el usuario quiere parámetros locales (menciona muni/subzona o métricas)
+              const hasMuni = /\b(Vigo|A\s*Coru(?:n|ñ)a|Boiro)\b/i.test(q);
+              const hasSubz = /\b((?:U\s*\d+(?:\.\d+)?)|(?:NR\s*-?\s*\d+))\b/i.test(q);
+              const hasParam = /\b(altura|maxim|retranqueo|setback|ocupaci[oó]n|edificabilidad|m2\/m2|m2\s*\/\s*m2)\b/i.test(q);
+              const useCtx = ctxOn && (hasMuni || hasSubz || hasParam);
+              const pref = useCtx ? buildContextPrefix() : '';
               // Si el usuario envía un comando /..., ejecutarlo localmente
               if (q.startsWith('/')) {
                 const parts = q.slice(1).split(/\s+/); const c = (parts.shift()||'').toLowerCase(); const rest = parts.join(' ');
@@ -1441,8 +1446,8 @@
             qVia?.addEventListener('click', ()=>performCommand('viabilidad'));
             qInf?.addEventListener('click', ()=>performCommand('informe'));
             inpEl.addEventListener('keydown', (ev)=>{ if ((ev.ctrlKey||ev.metaKey) && ev.key==='Enter') doSend(); });
-            // Estado del toggle de contexto
-            try { ctxTg.checked = (localStorage.getItem('ai_ctx_on')||'on')!=='off'; } catch{}
+            // Estado del toggle de contexto: por defecto OFF en demo para evitar contaminar preguntas generales
+            try { ctxTg.checked = (localStorage.getItem('ai_ctx_on')||'off')!=='off'; } catch{}
             ctxTg?.addEventListener('change', ()=>{ try { localStorage.setItem('ai_ctx_on', ctxTg.checked ? 'on' : 'off'); } catch{} });
             closeBtn.addEventListener('click', ()=>{ dlg.style.display='none'; });
             let minimized = false;
@@ -1527,6 +1532,21 @@
           } catch {}
           if (tries > 50) { clearInterval(t); }
         }, 100);
+      })();
+
+      // Activar edificios 3D por defecto al cargar (tras parche de debounce)
+      (function autoEnableBuildingsOnLoad(){
+        let tries = 0;
+        const t = setInterval(()=>{
+          tries++;
+          try {
+            if (typeof window.enableBuildings === 'function') {
+              window.enableBuildings();
+              clearInterval(t);
+            }
+          } catch {}
+          if (tries > 40) { clearInterval(t); }
+        }, 250);
       })();
 
       // Auto-refresh de normativa al detectar cambio en municipio/subzona persistidos
@@ -2540,6 +2560,15 @@
 
       // Edificios 3D (MVP Overpass + throttle + cache)
       (function ensureBuildings3D(){
+          // Master switch: desactivado por defecto para evitar saturar servicios externos
+          try {
+            const v = localStorage.getItem('viewer_buildings_master');
+            if (v === null) { localStorage.setItem('viewer_buildings_master','on'); }
+            if ((localStorage.getItem('viewer_buildings_master')||'off') !== 'on') {
+              console.log('[buildings] desactivado (viewer_buildings_master!=on)');
+              return; // no inicializar módulo si el master está en OFF
+            }
+          } catch {}
           console.log('[buildings] módulo inicializado');
           // Estado y handlers locales para evitar dependencias con variables definidas más abajo
           let buildingsEnabled = false; // OFF hasta que enableBuildings() complete correctamente
@@ -2948,7 +2977,28 @@
           };
           
           
+          // Mirrors Overpass por defecto (si no están definidos en otro sitio)
+          try {
+            if (!(Array.isArray(window.mirrors) && window.mirrors.length>0)) {
+              window.mirrors = [
+                'https://overpass-api.de/api/interpreter',
+                'https://overpass.kumi.systems/api/interpreter',
+                'https://overpass-api.nextzen.org/api/interpreter'
+              ];
+            }
+            if (typeof window.mirrorIdx !== 'number' || window.mirrorIdx<0 || window.mirrorIdx>=window.mirrors.length) {
+              window.mirrorIdx = 0;
+            }
+          } catch {}
+
           const fetchOverpass = async (bbox, z, isPrefetch = false, extSignal = null, opts = null) => {
+            // Mapear mirrors globales a variables locales y asegurar valores por defecto
+            const mirrors = (Array.isArray(window.mirrors) && window.mirrors.length>0) ? window.mirrors : [
+              'https://overpass-api.de/api/interpreter',
+              'https://overpass.kumi.systems/api/interpreter',
+              'https://overpass-api.nextzen.org/api/interpreter'
+            ];
+            let mirrorIdx = (typeof window.mirrorIdx === 'number' && window.mirrorIdx>=0 && window.mirrorIdx<mirrors.length) ? window.mirrorIdx : 0;
             // LOD: por debajo de z<14 solo ways con "building"; a z>=14 incluir "building:part"; relaciones a z>=15
             const zz = (z || 0);
             const areaKm2 = (typeof window.__bld_pf_bbox_area_km2==='number') ? window.__bld_pf_bbox_area_km2 : null;
@@ -3028,6 +3078,7 @@
                 }
                 const json = await resp.json();
                 mirrorIdx = (mirrorIdx + attempt) % mirrors.length; // fijar mirror exitoso
+                try { window.mirrorIdx = mirrorIdx; } catch {}
                 if (!isPrefetch) {
                   consecutiveFailures = 0;
                   // Reducir degradación progresivamente con éxitos
@@ -3689,15 +3740,27 @@
           function enableBuildings() {
             try {
               const m = ensureMap();
+              // Si ya está habilitado, solo asegurar capa/fuente y actualizar una vez
+              if (buildingsEnabled) {
+                try { ensureBuildingSourceAndLayer(m); } catch{}
+                try { buildingsUpdateDebounced(); } catch{}
+                try { updateBuildingsForViewport(true); } catch{}
+                showToast?.('Edificios 3D: ON');
+                console.log('[buildings] enabled (fast)');
+                return;
+              }
               // Esperar a que el estilo esté cargado
               const styleReady = (typeof m.isStyleLoaded === 'function') ? m.isStyleLoaded() : true;
               if (!styleReady) {
                 try { console.log('[buildings] enable: style not ready, reintentando…'); } catch{}
                 const tryEnable = () => { try { console.log('[buildings] enable: tryEnable fired'); enableBuildings(); } catch(e) { console.warn('enableBuildings deferred error', e); } };
-                // Registrar listeners CADA vez (once evita duplicados efectivos)
-                try { m.once('load', tryEnable); } catch{}
-                try { m.once('styledata', tryEnable); } catch{}
-                try { m.once('idle', tryEnable); } catch{}
+                // Registrar listeners solo una vez
+                if (!window.__bld_style_listeners) {
+                  window.__bld_style_listeners = true;
+                  try { m.once('load', tryEnable); } catch{}
+                  try { m.once('styledata', tryEnable); } catch{}
+                  try { m.once('idle', tryEnable); } catch{}
+                }
                 // Reintento por tiempo hasta que el estilo quede listo
                 setTimeout(() => {
                   try {
@@ -3779,6 +3842,7 @@
               buildingsUpdateDebounced();
               showToast?.('Edificios 3D: ON');
               console.log('[buildings] enabled');
+              
             } catch {}
           }
           function disableBuildings() {
@@ -4483,7 +4547,8 @@
                 async function consultarNormativa(){
                   try {
                     const payload = buildZoneInput();
-                    const res = await fetch('/normativa/consulta', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+                    // Backend válido: POST /zoning/analyze
+                    const res = await fetch('/zoning/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
                     if (!res.ok) throw new Error('HTTP '+res.status);
                     const data = await res.json();
                     // Persistir parámetros útiles
@@ -4510,8 +4575,7 @@
                       const actions = normPanel.querySelector('#normativa-actions');
                       actions.innerHTML = '';
                       // Controles de zona y diagnóstico
-                      const diagWrap = document.createElement('div');
-                      diagWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;opacity:0.95';
+                      const diagWrap = document.createElement('div'); diagWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;opacity:0.95';
                       const zoneSel = document.createElement('select'); zoneSel.title='Zona detectada/manual';
                       ;['urbano_consolidado','rustico'].forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; zoneSel.appendChild(o); });
                       try { zoneSel.value = (localStorage.getItem('viewer_zone_guess')||'urbano_consolidado'); } catch { zoneSel.value='urbano_consolidado'; }
@@ -4519,6 +4583,11 @@
                       const lockChk = document.createElement('input'); lockChk.type='checkbox';
                       try { lockChk.checked = (localStorage.getItem('viewer_zone_lock')||'off')==='on'; } catch{}
                       lockLbl.appendChild(lockChk); lockLbl.appendChild(document.createTextNode('Bloquear zona'));
+                      // Municipio/Subzona inputs (persisten en localStorage)
+                      const muniInp = document.createElement('input'); muniInp.type='text'; muniInp.placeholder='Municipio'; muniInp.size=12; muniInp.style.cssText='padding:2px 4px;background:#2c2c2c;border:1px solid #555;color:#eee;border-radius:4px;';
+                      try { muniInp.value = localStorage.getItem('viewer_zone_municipio')||''; } catch { muniInp.value=''; }
+                      const subzInp = document.createElement('input'); subzInp.type='text'; subzInp.placeholder='Subzona'; subzInp.size=10; subzInp.style.cssText='padding:2px 4px;background:#2c2c2c;border:1px solid #555;color:#eee;border-radius:4px;';
+                      try { subzInp.value = localStorage.getItem('viewer_zone_subzona')||''; } catch { subzInp.value=''; }
                       const sensLbl = document.createElement('label'); sensLbl.style.cssText='display:flex;align-items:center;gap:6px;'; sensLbl.textContent='Sensibilidad rural:';
                       const sens = document.createElement('input'); sens.type='range'; sens.min='0.5'; sens.max='2'; sens.step='0.1';
                       try { sens.value = String(Number(localStorage.getItem('viewer_rural_sensitivity')||'1')||1); } catch { sens.value='1'; }
@@ -4529,11 +4598,14 @@
                         const th = Number(window.__last_density_threshold||0).toFixed(1);
                         diag.textContent = `dens=${dens}/km² · umbral=${th}`;
                       } catch { diag.textContent=''; }
-                      diagWrap.appendChild(zoneSel); diagWrap.appendChild(lockLbl); sensLbl.appendChild(sens); diagWrap.appendChild(sensLbl); diagWrap.appendChild(diag);
+                      diagWrap.appendChild(zoneSel); diagWrap.appendChild(lockLbl); diagWrap.appendChild(muniInp); diagWrap.appendChild(subzInp); sensLbl.appendChild(sens); diagWrap.appendChild(sensLbl); diagWrap.appendChild(diag);
                       actions.appendChild(diagWrap);
                       // Eventos
                       zoneSel.addEventListener('change', ()=>{ try { localStorage.setItem('viewer_zone_guess', zoneSel.value); } catch{} });
                       lockChk.addEventListener('change', ()=>{ try { localStorage.setItem('viewer_zone_lock', lockChk.checked ? 'on' : 'off'); } catch{} });
+                      const onRefresh = ()=>{ try { consultarNormativa(); } catch{} };
+                      muniInp.addEventListener('change', ()=>{ try { localStorage.setItem('viewer_zone_municipio', muniInp.value||''); } catch{}; onRefresh(); });
+                      subzInp.addEventListener('change', ()=>{ try { localStorage.setItem('viewer_zone_subzona', subzInp.value||''); } catch{}; onRefresh(); });
                       sens.addEventListener('input', ()=>{ try { localStorage.setItem('viewer_rural_sensitivity', sens.value); } catch{} });
                       const refreshOn = (el)=> el.addEventListener('change', ()=>{ try { consultarNormativa(); } catch{} });
                       refreshOn(zoneSel); refreshOn(lockChk); refreshOn(sens);
@@ -4569,7 +4641,7 @@
                         btnAssess.title = 'No hay parcela activa: se usará el rectángulo visible del visor';
                       }
                       actions.appendChild(btnCalc); actions.appendChild(btnExport); actions.appendChild(btnReport); actions.appendChild(btnQuickReport); actions.appendChild(btnReportPrefs); actions.appendChild(btnExtract); actions.appendChild(snapLbl); actions.appendChild(btnAssess); actions.appendChild(badge); actions.appendChild(autoLbl);
-                      // Helper: crear geometría sintética desde el viewport si no hay parcela
+                      // Helper para preparar geometría sintética desde el viewport si no hay parcela
                       const getViewportPolygon = ()=>{
                         try {
                           const m = (window.mapInstance || (typeof ensureMap==='function'?ensureMap():null));
@@ -4586,6 +4658,7 @@
                           return { type:'Polygon', coordinates:[poly] };
                         } catch { return null; }
                       };
+                      
                       const buildVolumeReq = ()=>{
                         const body = (window.lastBodySent || {});
                         const altura = data?.altura_maxima_m ?? parseFloat(localStorage.getItem('viewer_norm_altura_max_m')||'');
@@ -4597,6 +4670,7 @@
                         }
                         return {
                           geometry: geom,
+                          crs: 'EPSG:4326',
                           altura_maxima_m: Number.isFinite(altura)? altura : undefined,
                           retranqueo_min_m: Number.isFinite(retranq)? retranq : undefined,
                           municipio: localStorage.getItem('viewer_zone_municipio') || undefined,
@@ -4772,8 +4846,9 @@
                       } catch{}
                     } catch{}
                     showToast?.('Normativa consultada');
-                  } catch(e) {
-                    showNormPanel(`<span style="color:#ffb4a9">Error consultando normativa: ${e&&e.message?e.message:String(e)}</span>`);
+                  } catch (e) {
+                    try { console.error('[normativa] consulta error', e); } catch{}
+                    try { showNormPanel('Error consultando normativa: '+(e?.message||String(e))+' — ver consola'); } catch{}
                   }
                 }
                 normBtn.addEventListener('click', consultarNormativa);

@@ -1,4 +1,6 @@
 municipio,subzona,altura_maxima_m,retranqueo_min_m,setback_front_m,setback_side_m,setback_back_m,front_direction_default,ocupacion_max,edificabilidad_max_m2_m2
-Vigo,RZ-1,15,3,2.0,1.0,1.5,north,0.40,1.20
 A Coruña,,13.5,3,,,,,0.45,1.10
+Vigo,,15,3,2.0,1.0,1.5,north,0.40,1.20
+Vigo,RZ-2,12,3,2.0,1.0,1.5,north,0.40,1.20
+Vigo,RZ-1,15,3,2.0,1.0,1.5,north,0.40,1.20
 Santiago de Compostela,Residencial General,12,3,1.5,0.8,1.0,east,0.35,0.90

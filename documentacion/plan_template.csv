@@ -1,0 +1,6 @@
+municipio,subzona,altura_maxima_m,retranqueo_min_m,setback_front_m,setback_side_m,setback_back_m,front_direction_default,ocupacion_max,edificabilidad_max_m2_m2
+# Comentarios: deja en blanco las celdas no aplicables. Usa coma decimal con punto. 'subzona' vacío funciona como fila por defecto del municipio.
+# Ejemplos:
+Vigo,,7,3,0,2,3,,0.4,0.7
+Vigo,U3,10.5,3,0,3,3,,0.6,1.0
+A Coruna,NR-1,18,3,0,3,3,,0.8,2.5

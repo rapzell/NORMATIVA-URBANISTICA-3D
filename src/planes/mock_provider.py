@@ -40,6 +40,24 @@ def get_plan_params(municipio: str, subzona: Optional[str] = None) -> PlanParams
                 ocupacion_max=0.35,
                 edificabilidad_max_m2_m2=0.9,
             )
+        if s == 'u7':
+            return PlanParams(
+                municipio=municipio,
+                subzona=subzona,
+                altura_maxima_m=9.0,
+                retranqueo_min_m=3.0,
+                ocupacion_max=0.35,
+                edificabilidad_max_m2_m2=1.0,
+            )
+        if s == 'u10':
+            return PlanParams(
+                municipio=municipio,
+                subzona=subzona,
+                altura_maxima_m=8.0,
+                retranqueo_min_m=3.0,
+                ocupacion_max=0.3,
+                edificabilidad_max_m2_m2=0.9,
+            )
     if m == 'a coruña' or m == 'a coruna' or m == 'coruna':
         return PlanParams(
             municipio=municipio,

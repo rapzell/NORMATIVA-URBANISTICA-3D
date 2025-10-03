@@ -1,0 +1,117 @@
+# Esquema unificado de normativa urbanística (MVP Residencial Galicia)
+# Formato: YAML; versionable; pensado para interoperar con CSV municipal y con reglas del motor.
+
+version: 0.1.0
+scope: Galicia
+focus: residencial
+
+entities:
+  zona_autonomica:
+    type: enum
+    values:
+      - urbano
+      - urbano_consolidado
+      - nucleo_rural
+      - urbanizable
+      - rustico
+    description: Clasificación base según Ley 2/2016 (arts. 13, 17, 27, 31-32).
+
+  parametros_base:
+    fields:
+      altura_maxima_m:
+        type: number
+        nullable: true
+        description: Altura máxima genérica; normalmente depende del planeamiento municipal.
+      retranqueo_min_m:
+        type: number
+        nullable: true
+        description: Retranqueo mínimo general; puede coexistir con setbacks direccionales.
+      ocupacion_max:
+        type: number
+        nullable: true
+        description: Ocupación máxima de parcela (0.0-1.0).
+      edificabilidad_max_m2_m2:
+        type: number
+        nullable: true
+        description: Edificabilidad máxima (m2 techo / m2 suelo).
+      parcela_min_m2:
+        type: number
+        nullable: true
+      frente_min_m:
+        type: number
+        nullable: true
+
+  setbacks_direccionales:
+    fields:
+      setback_front_m:
+        type: number
+        nullable: true
+      setback_side_m:
+        type: number
+        nullable: true
+      setback_back_m:
+        type: number
+        nullable: true
+      front_direction_default:
+        type: string
+        nullable: true
+        enum: [north, east, south, west]
+        description: Dirección de frente por defecto definida por el plan.
+
+  trazabilidad:
+    fields:
+      fuente:
+        type: string
+        description: Origen del dato (Ley, Plan municipal, DOG/BOE, ordenanza, etc.)
+      articulo:
+        type: string
+        nullable: true
+      url:
+        type: string
+        nullable: true
+      notas:
+        type: string
+        nullable: true
+
+csv_municipal:
+  required_columns:
+    - municipio
+  optional_columns:
+    - subzona
+    - altura_maxima_m
+    - retranqueo_min_m
+    - setback_front_m
+    - setback_side_m
+    - setback_back_m
+    - front_direction_default
+    - ocupacion_max
+    - edificabilidad_max_m2_m2
+    - parcela_min_m2
+    - frente_min_m
+    - fuente
+    - articulo
+    - url
+    - notas
+  constraints:
+    municipio: string(non-empty)
+    subzona: string(allow-empty)
+    altura_maxima_m: number(>=0)
+    retranqueo_min_m: number(>=0)
+    setback_front_m: number(>=0)
+    setback_side_m: number(>=0)
+    setback_back_m: number(>=0)
+    ocupacion_max: number(>=0,<=1)
+    edificabilidad_max_m2_m2: number(>=0)
+    parcela_min_m2: number(>=0)
+    frente_min_m: number(>=0)
+
+api_models:
+  ZoneInput:
+    ref: src/rules_engine.py::ZoneInput
+  ZoningResult:
+    ref: src/rules_engine.py::ZoningResult
+
+notes:
+  - Este esquema sirve como guía de normalización y validación.
+  - Los parámetros autonómicos son descriptores; los numéricos se esperan del planeamiento municipal.
+  - Para residenciales, priorizar CSV municipal cuando exista, con trazabilidad clara.
