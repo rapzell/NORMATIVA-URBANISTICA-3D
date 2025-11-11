@@ -59,6 +59,10 @@ Tests añadidos recientemente:
 [![Smoke](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/smoke.yml)
 [![Tests](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml/badge.svg)](https://github.com/rapzell/NORMATIVA-GALICIA-3D/actions/workflows/pytest.yml)
 
+### Resumen y presentación
+
+- Guía ejecutiva: ver `docs/presentacion.html` (visión, objetivos, tecnologías, estado y roadmap).
+
 ## Guía rápida
 
 ### Arranque rápido del backend

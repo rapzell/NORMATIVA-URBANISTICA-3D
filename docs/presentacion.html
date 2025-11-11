@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Normativa Urbanística Galicia 3D — Presentación</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; line-height: 1.5; color: #222; }
+    h1, h2 { margin: 0.6em 0 0.3em; }
+    .muted { color: #666; }
+    .badge { display:inline-block; padding:2px 6px; border-radius:4px; background:#eef; color:#224; font-size:12px; }
+    ul { margin: 0.4em 0 1.1em 1.2em; }
+    .grid { display:grid; gap:24px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .card { border:1px solid #eee; border-radius:8px; padding:16px; background:#fff; }
+    .ok { color:#0a6; }
+    .wip { color:#b80; }
+    .todo { color:#b22; }
+    code { background:#f7f7f7; padding:0 4px; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <h1>Normativa Urbanística Galicia 3D <span class="badge">Fase: desarrollo</span></h1>
+  <p class="muted">Visor 3D con edificios OSM y análisis de normativa. Backend FastAPI, Frontend Three.js + MapLibre.</p>
+
+  <h2>Visión y objetivos</h2>
+  <ul>
+    <li><b>Explorar en 3D</b> el entorno urbano con edificios OSM y relieve.</li>
+    <li><b>Aplicar normativa</b> (altura, retranqueos, ocupación, etc.) para generar volúmenes y validar casos.</li>
+    <li><b>Informes reproducibles</b> con parámetros y geometrías, exportables a GLB y CityJSON.</li>
+    <li><b>IA (en evolución)</b>: extracción de reglas desde PDFs y preguntas/respuestas sobre normativa.</li>
+  </ul>
+
+  <h2>Tecnologías clave</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Frontend</h3>
+      <ul>
+        <li>Three.js (modelos GLB/GLTF)</li>
+        <li>MapLibre GL JS (mapa y extrusiones)</li>
+        <li>Overpass API (OSM) con <i>mirrors</i> y rotación</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Backend</h3>
+      <ul>
+        <li>FastAPI (Python)</li>
+        <li>Proveedor de planes CSV/mock</li>
+        <li>Endpoints <code>/zoning/*</code>, <code>/proxy/*</code>, <code>/metrics</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Operación</h3>
+      <ul>
+        <li>Scripts PowerShell de arranque/smoke</li>
+        <li>CI con smoke y pytest</li>
+        <li>Caché ligera por BBOX y refinado opcional</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Flujo de uso</h2>
+  <ol>
+    <li>Arrancar API y visor: <code>scripts/run_viewer_demo.ps1 -Fast -Port 8010</code>.</li>
+    <li>Abrir <code>http://127.0.0.1:8010/viewer/</code>.</li>
+    <li>Acercar a zoom ≥ 14.5 para ver <b>edificios 3D</b>. Botón: “Refrescar edificios”.</li>
+    <li>Exportar GLB/CityJSON y generar informes desde la UI o script.</li>
+  </ol>
+
+  <h2>Estado actual</h2>
+  <ul>
+    <li class="ok"><b>Visor 3D + edificios OSM</b>: estable, auto-ON, mirrors y panel de estado.</li>
+    <li class="ok"><b>Exportaciones</b>: GLB/GLTF (visor) y CityJSON (descarga) operativas.</li>
+    <li class="ok"><b>Informes demo</b>: HTML autoincluidos en <code>reports/</code>.</li>
+    <li class="wip"><b>Normativa</b>: proveedor CSV/mock funcional; ampliar dataset municipal.</li>
+    <li class="wip"><b>IA</b>: base para extracción/QA; integración avanzada pendiente.</li>
+    <li class="wip"><b>Docs</b>: README amplio; presentación ejecutiva en progreso.</li>
+  </ul>
+
+  <h2>Avance estimado</h2>
+  <ul>
+    <li>Visualización 3D + OSM: <b>90%</b></li>
+    <li>Normativa (parámetros y aplicación): <b>70%</b></li>
+    <li>Informes y exportaciones: <b>85%</b></li>
+    <li>Calidad/CI/operación: <b>80%</b></li>
+    <li>IA (extracción/QA): <b>40%</b></li>
+    <li><b>Total aproximado</b>: <b>75–80%</b></li>
+  </ul>
+
+  <h2>Roadmap próximo</h2>
+  <ul>
+    <li>QA de Overpass en 4–5 ciudades (feats y p50 en panel de estado).</li>
+    <li>Ampliar CSV de planes municipales y pruebas de regresión.</li>
+    <li>Mejorar presentación e incorporar ejemplos guiados.</li>
+    <li>Integración progresiva de IA para extracción desde PDFs municipales.</li>
+  </ul>
+
+  <p class="muted">Repo: NORMATIVA-URBANISTICA-3D — Esta guía refleja un estado en desarrollo; pueden cambiar detalles sin previo aviso.</p>
+</body>
+</html>

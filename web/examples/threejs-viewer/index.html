@@ -95,6 +95,8 @@
     <button id="toggle-compact">Compacto</button>
     <button id="toggle-advanced" title="Mostrar/ocultar controles avanzados">Más…</button>
     <button id="toggle-markers" class="adv" title="Poner números a los controles para reportar">UI markers</button>
+    <button id="bld-refresh" title="Forzar actualización de edificios" style="margin-left:6px">Refrescar edificios</button>
+    <span id="bld-status" class="hint" style="margin-left:6px"></span>
     <div class="toolbar-break"></div>
     <button id="toggle-map" class="adv" title="Mostrar mapa base (experimental)">Mapa: off</button>
     <button id="map-2d" title="Vista 2D (pitch 0)">2D</button>
@@ -2982,8 +2984,7 @@
             if (!(Array.isArray(window.mirrors) && window.mirrors.length>0)) {
               window.mirrors = [
                 'https://overpass-api.de/api/interpreter',
-                'https://overpass.kumi.systems/api/interpreter',
-                'https://overpass-api.nextzen.org/api/interpreter'
+                'https://overpass.kumi.systems/api/interpreter'
               ];
             }
             if (typeof window.mirrorIdx !== 'number' || window.mirrorIdx<0 || window.mirrorIdx>=window.mirrors.length) {
@@ -2995,8 +2996,7 @@
             // Mapear mirrors globales a variables locales y asegurar valores por defecto
             const mirrors = (Array.isArray(window.mirrors) && window.mirrors.length>0) ? window.mirrors : [
               'https://overpass-api.de/api/interpreter',
-              'https://overpass.kumi.systems/api/interpreter',
-              'https://overpass-api.nextzen.org/api/interpreter'
+              'https://overpass.kumi.systems/api/interpreter'
             ];
             let mirrorIdx = (typeof window.mirrorIdx === 'number' && window.mirrorIdx>=0 && window.mirrorIdx<mirrors.length) ? window.mirrorIdx : 0;
             // LOD: por debajo de z<14 solo ways con "building"; a z>=14 incluir "building:part"; relaciones a z>=15
@@ -3569,6 +3569,23 @@
                   latencySamples.push(lastDurationMs); if (latencySamples.length>60) latencySamples.shift();
                   renderMetrics();
                   lastRequests.push({ kind:'fetch', z, features:lastFeatures, ms:lastDurationMs, src:lastMirror, prefetch:false }); if (lastRequests.length>30) lastRequests.shift();
+                  // Actualizar panel bld-status en tiempo real
+                  try {
+                    const st = document.getElementById('bld-status');
+                    if (st) {
+                      const mirrors = (Array.isArray(window.mirrors) && window.mirrors.length>0)? window.mirrors : [];
+                      const midx = (typeof window.mirrorIdx==='number')? window.mirrorIdx : 0;
+                      const ls = (window.latencySamples||typeof latencySamples!=='undefined'&&latencySamples)||[];
+                      let p50 = null;
+                      if (Array.isArray(ls) && ls.length>0) {
+                        const arr = [...ls].sort((a,b)=>a-b);
+                        p50 = arr[Math.floor(arr.length*0.5)]|0;
+                      }
+                      const featsNow = Number(lastFeatures)||0;
+                      try { window.lastOverpassFeatureCount = featsNow; } catch{}
+                      st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} feats:${featsNow}${(p50!=null)?` p50:${p50}ms`:''}`;
+                    }
+                  } catch{}
                 } catch{}
               } catch (e) {
                 // Silenciar abortos intencionados (cambio rápido de viewport)
@@ -3873,6 +3890,32 @@
               } catch(e) { console.warn('buildings buttons hookup after DOMContentLoaded failed', e); }
             }, { once: true });
           }
+          // Botón Refrescar edificios y panel de estado
+          try {
+            const rbtn = document.getElementById('bld-refresh');
+            rbtn?.addEventListener('click', () => { try { updateBuildingsForViewport?.(true); } catch{} });
+            const st = document.getElementById('bld-status');
+            const renderBldStatus = () => {
+              try {
+                if (!st) return;
+                const mirrors = (Array.isArray(window.mirrors) && window.mirrors.length>0)? window.mirrors : [];
+                const midx = (typeof window.mirrorIdx==='number')? window.mirrorIdx : 0;
+                const feats = (typeof window.lastOverpassFeatureCount==='number')? window.lastOverpassFeatureCount : 0;
+                let p50 = null;
+                try {
+                  const ls = (window.latencySamples||typeof latencySamples!=='undefined'&&latencySamples)||[];
+                  if (Array.isArray(ls) && ls.length>0) {
+                    const arr = [...ls].sort((a,b)=>a-b);
+                    p50 = arr[Math.floor(arr.length*0.5)]|0;
+                  }
+                } catch {}
+                st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} feats:${feats}${(p50!=null)?` p50:${p50}ms`:''}`;
+              } catch {}
+            };
+            // Actualizar periódicamente y tras carga
+            renderBldStatus();
+            setInterval(renderBldStatus, 2000);
+          } catch {}
           // Autoactivar SIEMPRE al cargar el estilo del mapa y forzar persistencia
           ensureMap();
           try { localStorage.setItem('viewer_buildings_on','1'); } catch {}
