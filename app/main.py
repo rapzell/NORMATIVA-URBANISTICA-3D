@@ -326,6 +326,12 @@ async def apply_plan_csv_text(req: ApplyPlanCSVTextRequest):
             _validate_cache.clear()
         except Exception:
             pass
+        # Limpiar cache del proveedor de planes para que recargue el nuevo CSV
+        try:
+            from src.plans_service import _PLAN_PROVIDER_CACHE
+            _PLAN_PROVIDER_CACHE.update({"provider": None, "kind": None})
+        except Exception:
+            pass
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo aplicar configuración: {e}")
     return {"ok": True, "provider": "csv", "applied_path": target_path, "rows": rows}
@@ -707,6 +713,12 @@ async def admin_reload_plan(
     # Limpiar caché de validación
     try:
         _validate_cache.clear()
+    except Exception:
+        pass
+    # Limpiar cache del proveedor de planes para que recargue el nuevo CSV
+    try:
+        from src.plans_service import _PLAN_PROVIDER_CACHE
+        _PLAN_PROVIDER_CACHE.update({"provider": None, "kind": None})
     except Exception:
         pass
     return {"ok": True, "provider": provider, "applied_path": path, "rows": rows_count}

@@ -1,7 +1,6 @@
 from typing import Optional
 
-from src.rules_engine import geometry_checks
-from src.plans_service import get_plan_params_dynamic
+from src.rules_engine import geometry_checks, get_plan_params_dynamic
 
 
 def infer_limiting_factor(req_municipio: Optional[str], req_subzona: Optional[str], feature: dict) -> tuple[str, dict]:

@@ -1,4 +1,4 @@
-from src.plans_service import get_plan_params_dynamic
+from src.rules_engine import get_plan_params_dynamic
 from src.volume import VolumeParams, compute_building_envelope
 
 SUPPORTED_VOLUME_EXPORT_FORMATS = ('cityjson', 'gltf', 'glb')
