@@ -74,6 +74,26 @@ scripts\launch_server.cmd
 - Si `datos\plan_uploaded.csv` no existe, el script usa automáticamente `datos\planes_ejemplo_residencial.csv`.
 - API en `http://127.0.0.1:8002` (por defecto en este repo).
 
+### Configuración IA gratuita recomendada
+
+El gateway del asistente admite ahora una cadena configurable de proveedores y mantiene fallback local. Para una configuración gratuita razonable, puedes usar variables de entorno o `.env`:
+
+```dotenv
+MODEL_PROVIDER=openrouter
+MODEL_NAME=meta-llama/llama-3.3-70b-instruct:free
+MODEL_API_KEY=tu_clave
+MODEL_FALLBACK_CHAIN=groq,gemini,local
+MODEL_PROFILE=balanced
+```
+
+Notas:
+
+- `MODEL_PROVIDER` acepta `openrouter`, `groq`, `gemini`, `mistral`, `cerebras`, `huggingface`, `openai`, `ollama` o `local`.
+- `MODEL_FALLBACK_CHAIN` define el orden de respaldo separado por comas.
+- `MODEL_PROFILE` sigue controlando el modelo local GGUF usado como fallback o modo offline.
+- Si todos los proveedores fallan, el sistema conserva el fallback local/heurístico actual.
+- `scripts\launch_server.cmd` ya incluye ejemplos comentados de esta configuración.
+
 ### Abrir el visor 3D
 
 Navega a:
@@ -85,6 +105,37 @@ http://127.0.0.1:8002/viewer/
 - Edificios 3D auto‑ON por defecto.
 - Normativa (beta) usa `POST /zoning/analyze`.
 - Si no hay parcela activa, se usa el viewport.
+
+### Abrir la vista GIS (GeoLibre)
+
+Navega a:
+
+```
+http://127.0.0.1:8002/geolibre/
+```
+
+- Vista GIS paralela con MapLibre GL JS (100% gratuita).
+- Carga subzonas espaciales desde `GET /planeamiento/subzonas`.
+- Haz clic en una subzona para ver sus parámetros normativos.
+- Dibuja parcelas y evalúa viabilidad contra `POST /zoning/assess`.
+- La decisión oficial viene del backend FastAPI.
+
+### Endpoints de planeamiento espacial
+
+- `GET /planeamiento/subzonas?municipio=Vigo` — GeoJSON de subzonas espaciales.
+- `GET /planeamiento/subzonas/municipios` — lista de municipios con subzonas.
+- `GET /planeamiento/subzonas/lookup?lon=-8.72&lat=42.23` — busca subzona por punto.
+
+Dataset piloto: `datos/subzonas_piloto.geojson` (Vigo, A Coruña, Santiago).
+
+### Arquitectura de servicios
+
+Ver `docs/ARQUITECTURA_SERVICIOS.md` para el detalle completo de:
+- servicios de dominio extraídos (`src/*_service.py`);
+- motor geométrico (`src/volume.py`);
+- proveedores de planes (`src/planes/`);
+- gateway IA multi-proveedor (`src/model_gateway.py`);
+- capas de datos y testing.
 
 ### Generar un informe (HTML) desde script
 

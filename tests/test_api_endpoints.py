@@ -46,3 +46,17 @@ def test_volume_with_municipal_params():
     assert abs(props['height_m'] - 12.0) < 1e-6
     assert abs(props['setback_m'] - 3.0) < 1e-6
     assert abs(props['area_m2'] - 16.0) < 1e-6
+
+
+def test_infer_subzone_without_municipality_config():
+    client = TestClient(app)
+    r = client.post('/zoning/infer-subzone', json={
+        "lon": -8.72,
+        "lat": 42.23,
+        "municipio": "Municipio Inexistente",
+    })
+    assert r.status_code == 200
+    j = r.json()
+    assert j['subzona'] is None
+    assert j['source'] == 'wms'
+    assert j['diagnostics']['reason'] == 'no_cfg_for_municipio'

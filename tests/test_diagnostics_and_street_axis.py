@@ -1,8 +1,9 @@
 import os
 from fastapi.testclient import TestClient
 
-# Ensure mock provider and light startup
-os.environ.setdefault('PLAN_PROVIDER', 'mock')
+# Ensure mock provider and light startup (force to avoid leaking dev env)
+os.environ['PLAN_PROVIDER'] = 'mock'
+os.environ.pop('PLAN_CSV_PATH', None)
 os.environ.setdefault('API_LOAD_RESOURCES', '0')
 
 from app.main import app  # noqa: E402

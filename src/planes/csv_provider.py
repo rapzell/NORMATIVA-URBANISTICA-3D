@@ -12,7 +12,7 @@ class CSVPlanProvider:
         self.rows: list[dict] = []
         if not self.path.exists():
             raise FileNotFoundError(f"CSV no encontrado: {self.path}")
-        with open(self.path, 'r', encoding='utf-8') as f:
+        with open(self.path, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             # Validate required headers
             required = {'municipio'}

@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="gl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NORMATIVA GALICIA 3D - Vista GIS (GeoLibre)</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; }
+  #app { display: flex; height: 100vh; }
+  #sidebar {
+    width: 340px; background: #16213e; padding: 16px; overflow-y: auto;
+    border-right: 1px solid #0f3460; flex-shrink: 0;
+  }
+  #sidebar h1 { font-size: 18px; margin-bottom: 4px; color: #e94560; }
+  #sidebar .subtitle { font-size: 12px; color: #888; margin-bottom: 16px; }
+  #map { flex: 1; height: 100%; }
+  .panel { background: #1a1a2e; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .panel h2 { font-size: 14px; margin-bottom: 8px; color: #e94560; }
+  .panel label { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
+  .panel select, .panel input { width: 100%; padding: 6px 8px; background: #0f3460; border: 1px solid #533483; color: #e0e0e0; border-radius: 4px; font-size: 13px; }
+  .panel button { width: 100%; padding: 8px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px; }
+  .panel button:hover { background: #c73650; }
+  .panel button.secondary { background: #533483; }
+  .panel button.secondary:hover { background: #6a4499; }
+  .panel button.danger { background: #e74c3c; }
+  .panel button.danger:hover { background: #c0392b; }
+  .panel button.success { background: #2ecc71; }
+  .panel button.success:hover { background: #27ae60; }
+  #subzone-info { font-size: 12px; line-height: 1.6; }
+  #subzone-info .prop { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid #0f3460; }
+  #subzone-info .prop .key { color: #888; }
+  #subzone-info .prop .val { color: #e0e0e0; font-weight: bold; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+  .badge.apto { background: #2ecc71; color: #fff; }
+  .badge.condicionado { background: #f39c12; color: #fff; }
+  .badge.no_apto { background: #e74c3c; color: #fff; }
+  #assess-result { display: none; }
+  #assess-result .viability { font-size: 16px; margin: 8px 0; }
+  #assess-result .reasons { font-size: 12px; color: #aaa; margin-top: 8px; }
+  #assess-result .reasons li { margin-left: 16px; margin-bottom: 4px; }
+  .loading { color: #e94560; font-size: 12px; }
+  .hint { font-size: 11px; color: #666; margin-top: 4px; }
+  .draw-active { background: #e94560 !important; }
+  .draw-hint { font-size: 12px; color: #f39c12; margin-top: 6px; padding: 6px; background: rgba(243,156,18,0.1); border-radius: 4px; display: none; }
+  .draw-hint.visible { display: block; }
+  .btn-row { display: flex; gap: 6px; }
+  .btn-row button { margin-top: 0; }
+  #draw-panel { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h1>NORMATIVA GALICIA 3D</h1>
+    <div class="subtitle">Vista GIS - GeoLibre (MapLibre GL JS)</div>
+
+    <div class="panel">
+      <h2>Capas</h2>
+      <label>Municipio</label>
+      <select id="municipio-select">
+        <option value="">Todos</option>
+      </select>
+      <button id="btn-load" onclick="loadSubzones()">Cargar subzonas</button>
+      <button class="secondary" id="btn-clear" onclick="clearSubzones()">Limpiar</button>
+    </div>
+
+    <div class="panel">
+      <h2>Subzona seleccionada</h2>
+      <div id="subzone-info">
+        <span class="hint">Haz clic en una subzona del mapa</span>
+      </div>
+    </div>
+
+    <div class="panel" id="assess-panel" style="display:none">
+      <h2>Evaluar parcela</h2>
+      <label>Altura maxima (m)</label>
+      <input type="number" id="assess-altura" step="0.5" placeholder="Ej: 12" />
+      <label>Retranqueo min (m)</label>
+      <input type="number" id="assess-retranqueo" step="0.5" placeholder="Ej: 3" />
+      <button onclick="assessParcel()">Evaluar viabilidad</button>
+      <div id="assess-result"></div>
+    </div>
+
+    <div class="panel" id="draw-panel">
+      <h2>Dibujar parcela</h2>
+      <div class="btn-row">
+        <button id="btn-draw" onclick="toggleDrawMode()">Dibujar parcela</button>
+        <button class="danger" id="btn-draw-cancel" onclick="cancelDraw()" style="display:none">Cancelar</button>
+      </div>
+      <div class="draw-hint" id="draw-hint">
+        Haz clic en el mapa para anadir vertices. Doble clic o clic en "Terminar" para cerrar el poligono.
+      </div>
+      <button class="success" id="btn-draw-finish" onclick="finishDraw()" style="display:none">Terminar poligono</button>
+      <button class="secondary" id="btn-draw-clear" onclick="clearDrawnParcel()" style="display:none">Borrar parcela</button>
+      <div id="draw-assess-result"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Ayuda</h2>
+      <div class="hint">
+        1. Carga subzonas con el boton superior.<br>
+        2. Haz clic en una subzona para ver sus parametros.<br>
+        3. Si la subzona tiene geometria, podras evaluar viabilidad.<br>
+        4. O dibuja una parcela con el boton "Dibujar parcela".<br>
+        5. La decision oficial viene del backend FastAPI.
+      </div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"></script>
+<script>
+const API_BASE = window.location.origin;
+let map = null;
+let subzoneLayer = null;
+let subzoneData = null;
+let selectedFeature = null;
+
+function initMap() {
+  map = new maplibregl.Map({
+    container: 'map',
+    style: {
+      version: 8,
+      sources: {
+        'osm-tiles': {
+          type: 'raster',
+          tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          tileSize: 256,
+          attribution: '&copy; OpenStreetMap contributors'
+        }
+      },
+      layers: [{ id: 'osm', type: 'raster', source: 'osm-tiles' }]
+    },
+    center: [-8.5, 42.8],
+    zoom: 8
+  });
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+  map.on('click', 'subzones-fill', (e) => {
+    if (e.features && e.features.length > 0) {
+      selectSubzone(e.features[0]);
+    }
+  });
+  map.on('mouseenter', 'subzones-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'subzones-fill', () => { map.getCanvas().style.cursor = ''; });
+}
+
+async function loadMunicipios() {
+  try {
+    const resp = await fetch(`${API_BASE}/planeamiento/subzonas/municipios`);
+    const data = await resp.json();
+    const sel = document.getElementById('municipio-select');
+    (data.municipios || []).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    console.error('Error cargando municipios', e);
+  }
+}
+
+async function loadSubzones() {
+  const muni = document.getElementById('municipio-select').value;
+  const url = muni
+    ? `${API_BASE}/planeamiento/subzonas?municipio=${encodeURIComponent(muni)}`
+    : `${API_BASE}/planeamiento/subzonas`;
+  try {
+    document.getElementById('btn-load').textContent = 'Cargando...';
+    const resp = await fetch(url);
+    subzoneData = await resp.json();
+    renderSubzones();
+    document.getElementById('btn-load').textContent = 'Cargar subzonas';
+  } catch (e) {
+    console.error('Error cargando subzonas', e);
+    document.getElementById('btn-load').textContent = 'Cargar subzonas';
+    alert('Error al cargar subzonas');
+  }
+}
+
+function renderSubzones() {
+  if (!subzoneData || !subzoneData.features || subzoneData.features.length === 0) {
+    alert('No hay subzonas para mostrar');
+    return;
+  }
+
+  if (map.getSource('subzones')) {
+    map.getSource('subzones').setData(subzoneData);
+  } else {
+    map.addSource('subzones', { type: 'geojson', data: subzoneData });
+
+    map.addLayer({
+      id: 'subzones-fill',
+      type: 'fill',
+      source: 'subzones',
+      paint: {
+        'fill-color': [
+          'match', ['get', 'subzona'],
+          'R-1', '#2ecc71',
+          'R-2', '#3498db',
+          'UC-1', '#e94560',
+          'NR-TRAD', '#f39c12',
+          '#9b59b6'
+        ],
+        'fill-opacity': 0.3
+      }
+    });
+
+    map.addLayer({
+      id: 'subzones-line',
+      type: 'line',
+      source: 'subzones',
+      paint: {
+        'line-color': '#e94560',
+        'line-width': 2
+      }
+    });
+  }
+
+  // Ajustar vista a las subzonas
+  try {
+    const bbox = turf.bbox(subzoneData);
+    map.fitBounds(bbox, { padding: 40 });
+  } catch (e) {
+    console.warn('No se pudo ajustar bbox', e);
+  }
+}
+
+function clearSubzones() {
+  if (map.getSource('subzones')) {
+    map.removeLayer('subzones-fill');
+    map.removeLayer('subzones-line');
+    map.removeSource('subzones');
+  }
+  subzoneData = null;
+  selectedFeature = null;
+  document.getElementById('subzone-info').innerHTML = '<span class="hint">Haz clic en una subzona del mapa</span>';
+  document.getElementById('assess-panel').style.display = 'none';
+}
+
+function selectSubzone(feature) {
+  selectedFeature = feature;
+  const props = feature.properties || {};
+  const info = document.getElementById('subzone-info');
+  info.innerHTML = '';
+
+  const fields = [
+    ['municipio', 'Municipio'],
+    ['subzona', 'Subzona'],
+    ['altura_maxima_m', 'Altura max (m)'],
+    ['retranqueo_min_m', 'Retranqueo min (m)'],
+    ['setback_front_m', 'Retranq. frente (m)'],
+    ['setback_side_m', 'Retranq. lateral (m)'],
+    ['setback_back_m', 'Retranq. trasero (m)'],
+    ['front_direction_default', 'Frente por defecto'],
+    ['ocupacion_max', 'Ocupacion max'],
+    ['edificabilidad_max_m2_m2', 'Edificabilidad (m2/m2)'],
+    ['parcela_min_m2', 'Parcela min (m2)'],
+    ['frente_min_m', 'Frente min (m)'],
+    ['fuente', 'Fuente'],
+    ['articulo', 'Articulo'],
+    ['version', 'Version']
+  ];
+
+  fields.forEach(([key, label]) => {
+    const val = props[key];
+    if (val !== undefined && val !== null && val !== '') {
+      const div = document.createElement('div');
+      div.className = 'prop';
+      div.innerHTML = `<span class="key">${label}</span><span class="val">${val}</span>`;
+      info.appendChild(div);
+    }
+  });
+
+  // Mostrar panel de evaluacion
+  document.getElementById('assess-panel').style.display = 'block';
+  if (props.altura_maxima_m) {
+    document.getElementById('assess-altura').value = props.altura_maxima_m;
+  }
+  if (props.retranqueo_min_m) {
+    document.getElementById('assess-retranqueo').value = props.retranqueo_min_m;
+  }
+}
+
+async function assessParcel() {
+  if (!selectedFeature) {
+    alert('Selecciona una subzona primero');
+    return;
+  }
+
+  const altura = parseFloat(document.getElementById('assess-altura').value);
+  const retranqueo = parseFloat(document.getElementById('assess-retranqueo').value);
+  const props = selectedFeature.properties || {};
+
+  const body = {
+    geometry: selectedFeature.geometry,
+    altura_maxima_m: isNaN(altura) ? null : altura,
+    retranqueo_min_m: isNaN(retranqueo) ? null : retranqueo,
+    municipio: props.municipio || null,
+    subzona: props.subzona || null,
+    setback_front_m: props.setback_front_m || null,
+    setback_side_m: props.setback_side_m || null,
+    setback_back_m: props.setback_back_m || null,
+    front_direction: props.front_direction_default || null,
+    crs: 'EPSG:4326'
+  };
+
+  const resultDiv = document.getElementById('assess-result');
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<span class="loading">Evaluando...</span>';
+
+  try {
+    const resp = await fetch(`${API_BASE}/zoning/assess`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json();
+
+    let badgeClass = data.viability === 'apto' ? 'apto' :
+                     data.viability === 'condicionado' ? 'condicionado' : 'no_apto';
+    let badgeText = data.viability === 'apto' ? 'APTO' :
+                    data.viability === 'condicionado' ? 'CONDICIONADO' : 'NO APTO';
+
+    let html = `<div class="viability">Viabilidad: <span class="badge ${badgeClass}">${badgeText}</span></div>`;
+    if (data.reasons && data.reasons.length > 0) {
+      html += '<ul class="reasons">';
+      data.reasons.forEach(r => { html += `<li>${r}</li>`; });
+      html += '</ul>';
+    }
+    resultDiv.innerHTML = html;
+  } catch (e) {
+    resultDiv.innerHTML = `<span class="loading">Error: ${e.message}</span>`;
+  }
+}
+
+// Init
+window.addEventListener('load', () => {
+  initMap();
+  loadMunicipios();
+  // Mostrar panel de dibujo siempre (no requiere subzona seleccionada)
+  document.getElementById('draw-panel').style.display = 'block';
+});
+
+// ------------------------------
+// Dibujo de parcelas (Fase 4)
+// ------------------------------
+let drawMode = false;
+let drawPoints = [];
+let drawMarkers = [];
+let drawnParcel = null;
+let drawnResultLayer = null;
+
+function toggleDrawMode() {
+  drawMode = !drawMode;
+  const btn = document.getElementById('btn-draw');
+  const btnCancel = document.getElementById('btn-draw-cancel');
+  const btnFinish = document.getElementById('btn-draw-finish');
+  const hint = document.getElementById('draw-hint');
+
+  if (drawMode) {
+    btn.classList.add('draw-active');
+    btn.textContent = 'Dibujando...';
+    btnCancel.style.display = 'block';
+    btnFinish.style.display = drawPoints.length >= 3 ? 'block' : 'none';
+    hint.classList.add('visible');
+    map.getCanvas().style.cursor = 'crosshair';
+    map.on('click', onDrawClick);
+    map.on('dblclick', onDrawDblClick);
+  } else {
+    btn.classList.remove('draw-active');
+    btn.textContent = 'Dibujar parcela';
+    btnCancel.style.display = 'none';
+    btnFinish.style.display = 'none';
+    hint.classList.remove('visible');
+    map.getCanvas().style.cursor = '';
+    map.off('click', onDrawClick);
+    map.off('dblclick', onDrawDblClick);
+  }
+}
+
+function onDrawClick(e) {
+  if (!drawMode) return;
+  const { lng, lat } = e.lngLat;
+  drawPoints.push([lng, lat]);
+
+  // Anadir marcador visual del vertice
+  const marker = new maplibregl.Marker({ color: '#e94560', scale: 0.6 })
+    .setLngLat([lng, lat])
+    .addTo(map);
+  drawMarkers.push(marker);
+
+  // Mostrar boton terminar si hay >= 3 puntos
+  if (drawPoints.length >= 3) {
+    document.getElementById('btn-draw-finish').style.display = 'block';
+  }
+
+  // Dibujar linea temporal
+  updateDrawPreview();
+}
+
+function onDrawDblClick(e) {
+  e.preventDefault();
+  if (drawPoints.length >= 3) {
+    finishDraw();
+  }
+  return false;
+}
+
+function updateDrawPreview() {
+  if (drawPoints.length < 2) return;
+
+  // Linea temporal entre vertices
+  const lineData = {
+    type: 'Feature',
+    geometry: {
+      type: 'LineString',
+      coordinates: drawPoints
+    }
+  };
+
+  if (map.getSource('draw-preview')) {
+    map.getSource('draw-preview').setData(lineData);
+  } else {
+    map.addSource('draw-preview', { type: 'geojson', data: lineData });
+    map.addLayer({
+      id: 'draw-preview-line',
+      type: 'line',
+      source: 'draw-preview',
+      paint: {
+        'line-color': '#e94560',
+        'line-width': 2,
+        'line-dasharray': [4, 2]
+      }
+    });
+  }
+}
+
+function finishDraw() {
+  if (drawPoints.length < 3) {
+    alert('Necesitas al menos 3 vertices para formar un poligono');
+    return;
+  }
+
+  // Cerrar el poligono (repetir primer punto)
+  const coords = [...drawPoints, drawPoints[0]];
+  drawnParcel = {
+    type: 'Polygon',
+    coordinates: [coords]
+  };
+
+  // Limpiar preview
+  if (map.getSource('draw-preview')) {
+    map.removeLayer('draw-preview-line');
+    map.removeSource('draw-preview');
+  }
+
+  // Limpiar marcadores
+  drawMarkers.forEach(m => m.remove());
+  drawMarkers = [];
+
+  // Anadir capa de parcela dibujada
+  const parcelData = {
+    type: 'Feature',
+    properties: { source: 'drawn' },
+    geometry: drawnParcel
+  };
+
+  if (map.getSource('drawn-parcel')) {
+    map.getSource('drawn-parcel').setData(parcelData);
+  } else {
+    map.addSource('drawn-parcel', { type: 'geojson', data: parcelData });
+    map.addLayer({
+      id: 'drawn-parcel-fill',
+      type: 'fill',
+      source: 'drawn-parcel',
+      paint: {
+        'fill-color': '#2ecc71',
+        'fill-opacity': 0.2
+      }
+    });
+    map.addLayer({
+      id: 'drawn-parcel-line',
+      type: 'line',
+      source: 'drawn-parcel',
+      paint: {
+        'line-color': '#2ecc71',
+        'line-width': 2
+      }
+    });
+  }
+
+  // Salir del modo dibujo
+  drawMode = false;
+  drawPoints = [];
+  toggleDrawModeUI(false);
+  document.getElementById('btn-draw-clear').style.display = 'block';
+
+  // Auto-evaluar la parcela dibujada
+  assessDrawnParcel();
+}
+
+function toggleDrawModeUI(active) {
+  const btn = document.getElementById('btn-draw');
+  const btnCancel = document.getElementById('btn-draw-cancel');
+  const btnFinish = document.getElementById('btn-draw-finish');
+  const hint = document.getElementById('draw-hint');
+
+  if (active) {
+    btn.classList.add('draw-active');
+    btn.textContent = 'Dibujando...';
+    btnCancel.style.display = 'block';
+    hint.classList.add('visible');
+    map.getCanvas().style.cursor = 'crosshair';
+  } else {
+    btn.classList.remove('draw-active');
+    btn.textContent = 'Dibujar parcela';
+    btnCancel.style.display = 'none';
+    btnFinish.style.display = 'none';
+    hint.classList.remove('visible');
+    map.getCanvas().style.cursor = '';
+  }
+}
+
+function cancelDraw() {
+  drawMode = false;
+  drawPoints = [];
+  drawMarkers.forEach(m => m.remove());
+  drawMarkers = [];
+
+  if (map.getSource('draw-preview')) {
+    map.removeLayer('draw-preview-line');
+    map.removeSource('draw-preview');
+  }
+
+  toggleDrawModeUI(false);
+}
+
+function clearDrawnParcel() {
+  if (map.getSource('drawn-parcel')) {
+    map.removeLayer('drawn-parcel-fill');
+    map.removeLayer('drawn-parcel-line');
+    map.removeSource('drawn-parcel');
+  }
+  if (drawnResultLayer && map.getSource('drawn-result')) {
+    map.removeLayer('drawn-result-fill');
+    map.removeLayer('drawn-result-line');
+    map.removeSource('drawn-result');
+  }
+  drawnParcel = null;
+  drawnResultLayer = null;
+  document.getElementById('btn-draw-clear').style.display = 'none';
+  document.getElementById('draw-assess-result').innerHTML = '';
+}
+
+async function assessDrawnParcel() {
+  if (!drawnParcel) {
+    alert('Dibuja una parcela primero');
+    return;
+  }
+
+  // Buscar subzona espacial que contiene el centroide de la parcela
+  let municipio = null;
+  let subzona = null;
+  let planProps = {};
+
+  try {
+    const centroid = turf.centroid({ type: 'Feature', geometry: drawnParcel });
+    const [lon, lat] = centroid.geometry.coordinates;
+    const lookupResp = await fetch(`${API_BASE}/planeamiento/subzonas/lookup?lon=${lon}&lat=${lat}`);
+    const lookupData = await lookupResp.json();
+    if (lookupData.found && lookupData.subzona) {
+      municipio = lookupData.subzona.municipio;
+      subzona = lookupData.subzona.subzona;
+      planProps = lookupData.subzona;
+    }
+  } catch (e) {
+    console.warn('No se pudo buscar subzona para la parcela dibujada', e);
+  }
+
+  const body = {
+    geometry: drawnParcel,
+    altura_maxima_m: planProps.altura_maxima_m || null,
+    retranqueo_min_m: planProps.retranqueo_min_m || null,
+    municipio: municipio,
+    subzona: subzona,
+    setback_front_m: planProps.setback_front_m || null,
+    setback_side_m: planProps.setback_side_m || null,
+    setback_back_m: planProps.setback_back_m || null,
+    front_direction: planProps.front_direction_default || null,
+    crs: 'EPSG:4326'
+  };
+
+  const resultDiv = document.getElementById('draw-assess-result');
+  resultDiv.innerHTML = '<span class="loading">Evaluando parcela dibujada...</span>';
+
+  try {
+    const resp = await fetch(`${API_BASE}/zoning/assess`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json();
+
+    let badgeClass = data.viability === 'apto' ? 'apto' :
+                     data.viability === 'condicionado' ? 'condicionado' : 'no_apto';
+    let badgeText = data.viability === 'apto' ? 'APTO' :
+                    data.viability === 'condicionado' ? 'CONDICIONADO' : 'NO APTO';
+
+    let html = `<div class="viability">Viabilidad: <span class="badge ${badgeClass}">${badgeText}</span></div>`;
+    if (municipio) {
+      html += `<div class="hint">Subzona detectada: ${municipio} / ${subzona || '(sin subzona)'}</div>`;
+    } else {
+      html += `<div class="hint">Sin subzona espacial detectada (evaluacion con parametros por defecto)</div>`;
+    }
+    if (data.reasons && data.reasons.length > 0) {
+      html += '<ul class="reasons">';
+      data.reasons.forEach(r => { html += `<li>${r}</li>`; });
+      html += '</ul>';
+    }
+    resultDiv.innerHTML = html;
+
+    // Si hay feature (envolvente), mostrarla en el mapa
+    if (data.feature && data.feature.geometry) {
+      showEnvelopeOnMap(data.feature);
+    }
+  } catch (e) {
+    resultDiv.innerHTML = `<span class="loading">Error: ${e.message}</span>`;
+  }
+}
+
+function showEnvelopeOnMap(feature) {
+  if (map.getSource('drawn-result')) {
+    map.getSource('drawn-result').setData(feature);
+  } else {
+    map.addSource('drawn-result', { type: 'geojson', data: feature });
+    map.addLayer({
+      id: 'drawn-result-fill',
+      type: 'fill',
+      source: 'drawn-result',
+      paint: {
+        'fill-color': '#e94560',
+        'fill-opacity': 0.4
+      }
+    });
+    map.addLayer({
+      id: 'drawn-result-line',
+      type: 'line',
+      source: 'drawn-result',
+      paint: {
+        'line-color': '#e94560',
+        'line-width': 2
+      }
+    });
+  }
+  drawnResultLayer = true;
+}
+</script>
+</body>
+</html>

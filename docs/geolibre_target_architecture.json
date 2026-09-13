@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Arquitectura objetivo con GeoLibre y operación gratuita",
+    "output": "geolibre_target_architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "main-flow",
+        "label": "Flujo principal",
+        "focus": ["user", "geolibre", "viewer3d", "api", "rules", "volume"],
+        "note": "GeoLibre lidera la experiencia GIS y FastAPI mantiene la decisión normativa oficial."
+      },
+      {
+        "id": "data-layer",
+        "label": "Datos",
+        "focus": ["csv", "api"],
+        "note": "CSV y subzonas espaciales forman la capa de datos normativa y cartográfica."
+      },
+      {
+        "id": "ai-free",
+        "label": "IA gratuita",
+        "focus": ["api", "rag", "llmfree"],
+        "note": "El backend usa RAG y un gateway de proveedores gratuitos con fallback heurístico."
+      }
+    ]
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "Usuario", "sublabel": "Operador / técnico", "pos": [50, 250], "size": [130, 60] },
+    { "id": "geolibre", "type": "frontend", "label": "GeoLibre", "sublabel": "GIS principal", "pos": [250, 150], "size": [150, 64], "tag": "capas + SQL" },
+    { "id": "viewer3d", "type": "frontend", "label": "Visor Three.js", "sublabel": "Módulo 3D", "pos": [250, 360], "size": [150, 64], "tag": "GLTF / GLB" },
+    { "id": "api", "type": "backend", "label": "FastAPI", "sublabel": "Motor normativo oficial", "pos": [500, 250], "size": [170, 64], "tag": "API + reglas" },
+    { "id": "rules", "type": "backend", "label": "Rules service", "sublabel": "Análisis normativo", "pos": [790, 110], "size": [150, 64] },
+    { "id": "volume", "type": "backend", "label": "Volume service", "sublabel": "Envolvente y exportación", "pos": [790, 250], "size": [150, 64] },
+    { "id": "rag", "type": "backend", "label": "QA / RAG service", "sublabel": "Recuperación y síntesis", "pos": [790, 430], "size": [150, 64] },
+    { "id": "csv", "type": "database", "label": "CSV normativo", "sublabel": "Parámetros", "pos": [1040, 110], "size": [150, 64], "tag": "municipio + subzona" },
+    { "id": "llmfree", "type": "external", "label": "LLM gratuitos", "sublabel": "OpenRouter / Groq / Gemini", "pos": [1040, 390], "size": [150, 64], "tag": "fallback cloud" }
+  ],
+  "connections": [
+    { "id": "u-g", "from": "user", "to": "geolibre", "label": "mapa", "variant": "emphasis" },
+    { "id": "u-v", "from": "user", "to": "viewer3d", "label": "3D", "variant": "dashed" },
+    { "id": "g-api", "from": "geolibre", "to": "api", "label": "consulta" },
+    { "id": "v-api", "from": "viewer3d", "to": "api", "label": "volumen" },
+    { "id": "api-rules", "from": "api", "to": "rules", "label": "decisión", "labelDy": -18 },
+    { "id": "api-volume", "from": "api", "to": "volume", "label": "geometría", "labelAt": [688, 328] },
+    { "id": "api-rag", "from": "api", "to": "rag", "label": "QA" },
+    { "id": "rules-csv", "from": "rules", "to": "csv", "label": "parámetros" },
+    { "id": "rag-llm", "from": "rag", "to": "llmfree", "label": "gateway" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Principio rector",
+      "items": [
+        "GeoLibre explora y visualiza; FastAPI decide oficialmente.",
+        "Three.js queda como módulo 3D especializado."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Modelo de datos",
+      "items": [
+        "CSV conserva los parámetros normativos.",
+        "Las subzonas espaciales añaden la capa cartográfica que hoy falta."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Operación gratuita",
+      "items": [
+        "La IA puede migrarse a proveedores OpenAI-compatible gratuitos.",
+        "Si fallan todos, permanece el fallback heurístico del backend."
+      ]
+    }
+  ]
+}

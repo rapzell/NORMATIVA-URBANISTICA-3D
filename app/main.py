@@ -1,91 +1,32 @@
 from __future__ import annotations
 from pydantic import BaseModel
 
-# ------------------------------
-# Proveedor de planes (factory + caché)
-# ------------------------------
-_PLAN_PROVIDER_CACHE = {
-    'provider': None,
-    'kind': None,
-}
-
-def _get_plan_provider():
-    """Devuelve una instancia de proveedor de planes según variables de entorno.
-    Soporta PLAN_PROVIDER=csv (usar PLAN_CSV_PATH) o mock por defecto.
-    Instancia una vez y la reutiliza (caché en memoria).
-    """
-    kind = (os.getenv('PLAN_PROVIDER', '') or '').strip().lower() or 'csv'
-    cached = _PLAN_PROVIDER_CACHE.get('provider')
-    if cached is not None and _PLAN_PROVIDER_CACHE.get('kind') == kind:
-        return cached
-    if kind == 'csv':
-        try:
-            from src.planes.csv_provider import CSVPlanProvider
-            csv_path = os.getenv('PLAN_CSV_PATH') or os.path.join('datos', 'plan_uploaded.csv')
-            prov = CSVPlanProvider(csv_path)
-            _PLAN_PROVIDER_CACHE.update({'provider': prov, 'kind': kind})
-            logging.getLogger(__name__).info("PLAN_PROVIDER=csv usando %s", csv_path)
-            return prov
-        except Exception as e:
-            logging.getLogger(__name__).warning("Fallo iniciando CSVPlanProvider: %s. Cayendo a mock.", e)
-            kind = 'mock'
-    # fallback mock: adaptar al módulo existente (no hay clase MockPlanProvider, solo función get_plan_params)
-    try:
-        from src.planes import mock_provider as _mp
-        class _MockProvider:
-            def get(self, municipio: str, subzona: str | None = None):
-                return _mp.get_plan_params(municipio, subzona)
-        prov = _MockProvider()
-    except Exception:
-        # Último recurso: proveedor vacío
-        class _EmptyProvider:
-            def get(self, municipio: str, subzona: str | None = None):
-                from src.planes.base import PlanParams
-                return PlanParams(municipio=municipio, subzona=subzona)
-        prov = _EmptyProvider()
-    _PLAN_PROVIDER_CACHE.update({'provider': prov, 'kind': 'mock'})
-    logging.getLogger(__name__).info("PLAN_PROVIDER=mock (fallback)")
-    return prov
-
-def get_plan_params_dynamic(municipio: str | None, subzona: str | None):
-    """Obtiene parámetros del plan de manera dinámica usando el proveedor activo."""
-    from src.planes.base import PlanParams
-    muni = (municipio or '').strip()
-    subz = (subzona or None)
-    prov = _get_plan_provider()
-    try:
-        params = prov.get(muni, subz)
-        if not isinstance(params, PlanParams):
-            # Normalizar si el proveedor devolviese dict
-            params = PlanParams(**(params or {}))
-        # Si no hay datos y estamos en Vigo, intentar CSVs municipales conocidos como fallback
-        def _has_core_values(p: PlanParams) -> bool:
-            return (getattr(p, 'altura_maxima_m', None) is not None) or (getattr(p, 'retranqueo_min_m', None) is not None)
-        mlow = muni.lower()
-        if not _has_core_values(params) and ('vigo' in mlow):
-            try:
-                from src.planes.csv_provider import CSVPlanProvider
-                for alt_csv in (
-                    os.path.join('datos', 'planes_Vigo_residencial_clean.csv'),
-                    os.path.join('datos', 'planes_Vigo_residencial.csv'),
-                    os.path.join('datos', 'planes_vigo_boiro.csv'),
-                ):
-                    try:
-                        if os.path.isfile(alt_csv):
-                            altp = CSVPlanProvider(alt_csv).get(muni, subz)
-                            if not isinstance(altp, PlanParams):
-                                altp = PlanParams(**(altp or {}))
-                            if _has_core_values(altp):
-                                logging.getLogger(__name__).info("Proveedor CSV alternativo aplicado: %s", alt_csv)
-                                return altp
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-        return params
-    except Exception as e:
-        logging.getLogger(__name__).warning("get_plan_params_dynamic error: %s", e)
-        return PlanParams(municipio=muni, subzona=subz)
+from src.normativa_extract import extract_normativa_fields
+from src.plans_service import get_plan_params_dynamic, get_plan_provider_kind
+from src.qa_service import build_qa_fallback_response, build_qa_verbose_fallback_response
+from src.zoning_service import (
+    arcgis_feature_query,
+    arcgis_identify_extract,
+    build_wms_getfeatureinfo_url,
+    centroid_lonlat_from_geojson,
+    extract_subzone_from_wms_json,
+    infer_subzone,
+    lonlat_to_mercator,
+    mercator_to_lonlat,
+    wms_config_for_municipio,
+)
+from src.zoning_assess import ZoningAssessmentError, evaluate_zoning_assessment
+from src.volume_service import infer_limiting_factor
+from src.export_service import (
+    build_volume_export_feature,
+    extrude_polygon_to_cityjson as _extrude_polygon_to_cityjson,
+    extrude_polygon_to_gltf as _extrude_polygon_to_gltf,
+    gltf_to_glb_bytes as _gltf_to_glb_bytes,
+    is_exhausted_feature,
+    normalize_volume_export_format,
+)
+from src.report_service import render_assess_report_html as _render_assess_report_html
+from src.subzones_service import get_subzones, list_municipios_with_subzones, find_subzone_for_point
 
 # ------------------------------
 # Endpoint de depuración de planes
@@ -96,65 +37,6 @@ class DebugPlanResponse(BaseModel):
     provider: str
     params: dict
 
-def _arcgis_feature_query(feature_url: str, lon: float, lat: float, *, sr_in: int = 4326, out_fields: str = "*") -> tuple[str | None, dict]:
-    """Consulta un Feature Layer (FeatureServer/MapServer layer) con /query devolviendo una subzona si existe.
-    Devuelve (subzona, diag). No lanza excepción: diag incluirá 'error' si falla.
-    """
-    diag: dict = {"type": "feature_query", "url": feature_url}
-    try:
-        import urllib.parse as _up
-        import urllib.request as _ur
-        import json as _json
-        # ArcGIS /query requiere geometry como JSON y parámetros estándar
-        geom = _json.dumps({"x": lon, "y": lat, "spatialReference": {"wkid": sr_in}})
-        params = {
-            "f": "json",
-            "where": "1=1",
-            "geometry": geom,
-            "geometryType": "esriGeometryPoint",
-            "inSR": str(sr_in),
-            "spatialRel": "esriSpatialRelIntersects",
-            "outFields": out_fields or "*",
-            "returnGeometry": "false",
-        }
-        url = feature_url.rstrip('/') + "/query?" + _up.urlencode(params)
-        diag["query_url"] = url
-        req = _ur.Request(url, headers={"User-Agent": "NormativaGalicia/1.0"})
-        with _ur.urlopen(req, timeout=15) as resp:
-            raw = resp.read()
-        data = _json.loads(raw.decode("utf-8", "ignore")) if raw else {}
-        diag["ok"] = True
-        feats = data.get("features") or []
-        if not feats:
-            return None, diag
-        attrs = feats[0].get("attributes") or {}
-        diag["attrs_keys"] = list(attrs.keys())
-        # Intentar campos comunes para ordenanza/subzona
-        candidates = [
-            "subzona", "ordenanza", "ORDENANZA", "U", "u", "codigo", "Código", "CODIGO", "clase", "Clase",
-        ]
-        val: str | None = None
-        for k in candidates:
-            if k in attrs and isinstance(attrs[k], (str, int, float)):
-                v = str(attrs[k]).strip()
-                if v:
-                    val = v
-                    break
-        if not val:
-            return None, diag
-        # Normalizar: quedarnos con códigos tipo U3, U6.1, NR-1
-        import re as _re
-        m = _re.search(r"\b((?:U\s*\d+(?:\.\d+)?)|(?:NR\s*-?\s*\d+))\b", val, flags=_re.IGNORECASE)
-        if m:
-            return m.group(1).upper().replace(" ", "").replace("NR-", "NR-") , diag
-        # Si no encaja, devolver valor bruto
-        return val, diag
-    except Exception as e:
-        try:
-            diag["error"] = str(e)
-        except Exception:
-            pass
-        return None, diag
 import os
 from typing import Optional
 import mimetypes
@@ -171,6 +53,7 @@ import time
 from urllib.parse import urlencode
 from urllib.request import urlopen, Request
 import json as _json
+import csv
 
 API_VERSION = "0.2.1"
 
@@ -184,7 +67,14 @@ async def lifespan(app: FastAPI):
             if not prov:
                 merged_path = os.path.join('datos', 'plan_merged.csv')
                 uploaded_path = os.path.join('datos', 'plan_uploaded.csv')
-                pick = merged_path if os.path.isfile(merged_path) else (uploaded_path if os.path.isfile(uploaded_path) else None)
+                app_uploaded_path = os.path.join('app', 'data', 'plan_uploaded.csv')
+                pick = None
+                if os.path.isfile(merged_path):
+                    pick = merged_path
+                elif os.path.isfile(uploaded_path):
+                    pick = uploaded_path
+                elif os.path.isfile(app_uploaded_path):
+                    pick = app_uploaded_path
                 if pick:
                     os.environ['PLAN_PROVIDER'] = 'csv'
                     os.environ['PLAN_CSV_PATH'] = pick
@@ -216,6 +106,16 @@ except Exception:
     # Si el directorio no existe en despliegues sin assets, ignora
     pass
 
+# Vista GIS paralela con GeoLibre (MapLibre GL JS)
+try:
+    app.mount(
+        "/geolibre",
+        StaticFiles(directory="web/geolibre", html=True),
+        name="geolibre",
+    )
+except Exception:
+    pass
+
 # Servir carpeta web completa para acceder a otros ejemplos/activos
 try:
     app.mount(
@@ -241,8 +141,7 @@ except Exception:
 def debug_plan(municipio: str | None = None, subzona: str | None = None):
     try:
         # Determinar proveedor actual y obtener params
-        prov = _get_plan_provider()
-        kind = (_PLAN_PROVIDER_CACHE.get('kind') or 'unknown')
+        kind = get_plan_provider_kind()
         p = get_plan_params_dynamic(municipio or '', subzona or None)
         d = {
             'municipio': getattr(p, 'municipio', None),
@@ -271,118 +170,10 @@ class NormExtractRequest(BaseModel):
 
 @app.post("/normativa/extract")
 def normativa_extract(req: NormExtractRequest):
-    """Extrae campos básicos (uso_suelo, altura_maxima_m, retranqueo_min_m) de un texto libre.
-    Heurística con regex pensada para español. No lanza excepción: siempre devuelve dict parcial.
-    """
+    """Extrae campos básicos de un texto libre. No lanza excepción: devuelve dict parcial."""
     try:
-        import re
-        t = (req.text or "").strip()
-        res: dict = {
-            "municipio": (req.municipio or None),
-            "uso_suelo": None,
-            "altura_maxima_m": None,
-            "retranqueo_min_m": None,
-            "setback_front_m": None,
-            "setback_side_m": None,
-            "setback_back_m": None,
-            "ocupacion_max": None,
-            "edificabilidad_max_m2_m2": None,
-            "subzona": None,
-            "referencias": [],
-        }
-        if not t:
-            return res
-        # Uso del suelo (ampliado)
-        if re.search(r"\bresidencial\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "residencial"
-        elif re.search(r"\bindustrial\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "industrial"
-        elif re.search(r"\bcomercial\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "comercial"
-        elif re.search(r"\br[úu]stic[oa]\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "rustico"
-        elif re.search(r"\burbano\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "urbano"
-        elif re.search(r"\burbanizable\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "urbanizable"
-        elif re.search(r"\b(dotacional|equipamientos?)\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "dotacional"
-        elif re.search(r"\bterciari[oa]\b", t, flags=re.IGNORECASE):
-            res["uso_suelo"] = "terciario"
-        # Altura máxima (metros)
-        m = re.search(r"altura\s*m[aá]x\.?\s*(?:permitida|m[ií]nima|\w+)?\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-        if not m:
-            m = re.search(r"\b(?:altura|alzada)\b[^\d]*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-        if m:
-            try:
-                res["altura_maxima_m"] = float(str(m.group(1)).replace(",", "."))
-            except Exception:
-                pass
-        # Retranqueos (metros) — frente/lateral/fondo y genérico
-        def _to_float(s: str) -> float | None:
-            try:
-                return float(s.replace(',', '.'))
-            except Exception:
-                return None
-        # Frente
-        rf = re.search(r"retranqueo\s*(?:m[ií]n(?:imo)?)?\s*(?:al\s*frente|frontal)\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-        if rf:
-            v = _to_float(rf.group(1))
-            if v is not None:
-                res["setback_front_m"] = v
-        # Laterales (permitir expresión sin la palabra 'retranqueo')
-        rl = re.search(r"retranqueo\s*(?:m[ií]n(?:imo)?)?\s*(?:lateral(?:es)?)\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-        if not rl:
-            rl = re.search(r"\blateral(?:es)?\b[^\d]*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-        if rl:
-            v = _to_float(rl.group(1))
-            if v is not None:
-                res["setback_side_m"] = v
-        # Fondo/trasero (permitir expresión sin la palabra 'retranqueo')
-        rb = re.search(r"retranqueo\s*(?:m[ií]n(?:imo)?)?\s*(?:de\s*fondo|posterior|trasero)\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-        if not rb:
-            rb = re.search(r"\b(?:de\s*fondo|posterior|trasero)\b[^\d]*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-        if rb:
-            v = _to_float(rb.group(1))
-            if v is not None:
-                res["setback_back_m"] = v
-        # Genérico (si no hay frente explícito)
-        if res["setback_front_m"] is None and res["retranqueo_min_m"] is None:
-            r = re.search(r"retranqueo\s*(?:m[ií]n(?:imo)?)?\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*m\b", t, flags=re.IGNORECASE)
-            if r:
-                v = _to_float(r.group(1))
-                if v is not None:
-                    res["retranqueo_min_m"] = v
-        # Ocupación máxima: robusto ante codificaciones y con/sin símbolo %
-        occ = re.search(r"ocupaci[^\d%]*\s*(?:m[aá]x\.?|m[aá]xima)?\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*%?\b", t, flags=re.IGNORECASE)
-        if occ:
-            v = _to_float(occ.group(1))
-            if v is not None:
-                # Si el valor parece porcentaje (>= 1.5), normalizar a 0..1
-                res["ocupacion_max"] = v/100.0 if v > 1.0 else v
-        # Edificabilidad (m2/m2) — tolerar espacios y variantes m²
-        edi = re.search(r"edificabilidad\s*(?:m[aá]x\.?|m[aá]xima)?\s*[:=]?\s*(\d+(?:[\.,]\d+)?)\s*(?:m2|m²)?\s*/\s*(?:m2|m²)\b", t, flags=re.IGNORECASE)
-        if not edi:
-            edi = re.search(r"edificabilidad\b[^\d]*(\d+(?:[\.,]\d+)?)\b", t, flags=re.IGNORECASE)
-        if edi:
-            v = _to_float(edi.group(1))
-            if v is not None:
-                res["edificabilidad_max_m2_m2"] = v
-        # Subzona/código básico (U3, U6.1, NR-1, etc.)
-        cz = re.search(r"\b((?:U\s*\d+(?:\.\d+)?)|(?:NR\s*-?\s*\d+))\b", t, flags=re.IGNORECASE)
-        if cz:
-            res["subzona"] = cz.group(1).upper().replace(" ", "").replace("NR-", "NR-")
-        # Referencias (muy básico: Art. X, o URLs)
-        refs: list[str] = []
-        for mref in re.findall(r"\bArt\.?\s*\d+(?:\.\d+)?\b", t, flags=re.IGNORECASE):
-            refs.append(mref)
-        for url in re.findall(r"https?://\S+", t, flags=re.IGNORECASE):
-            refs.append(url.rstrip(').,;'))
-        if refs:
-            res["referencias"] = refs
-        return res
+        return extract_normativa_fields(req.text, req.municipio)
     except Exception as e:
-        # No bloquear por errores de parsing; devolver parcial
         return {
             "municipio": (req.municipio or None),
             "uso_suelo": None,
@@ -546,7 +337,18 @@ from pydantic import BaseModel
 from collections import OrderedDict
 
 # Project imports
-from src.asistente_normativa import cargar_recursos, buscar_fragmentos, generar_respuesta
+try:
+    from src.asistente_normativa import cargar_recursos, buscar_fragmentos, generar_respuesta
+except Exception:
+    def cargar_recursos():
+        raise RuntimeError('rag_unavailable')
+    def buscar_fragmentos(*args, **kwargs):
+        return []
+    def generar_respuesta(pregunta, frags, llm=None):
+        return (
+            "Servicio en modo básico sin RAG. Indica municipio y subzona para una respuesta precisa, "
+            "o usa el botón 'IA diag' en el visor."
+        )
 from src.rules_engine import (
     analizar_zonificacion,
     ZoneInput,
@@ -608,57 +410,6 @@ def _validate_cache_get(path: str) -> Optional[dict]:
 
 
 # ArcGIS REST Identify fallback (usar con moderación)
-def _arcgis_identify_extract(url: str, lon: float, lat: float, sr: int = 4326, tol: int = 12, layers_mode: str = "all") -> tuple[str | None, dict]:
-    diag: dict = {}
-    try:
-        import urllib.parse as _up
-        import urllib.request as _ur
-        # Geometry payload como punto (no pre-quote, urlencode se encarga)
-        geom = _json.dumps({"x": lon, "y": lat, "spatialReference": {"wkid": sr}})
-        # Map extent pequeño alrededor del punto (en grados si sr=4326)
-        pad = 0.001  # ~100 m aprox
-        ext = f"{lon - pad},{lat - pad},{lon + pad},{lat + pad}"
-        params = {
-            "f": "json",
-            "geometry": geom,
-            "geometryType": "esriGeometryPoint",
-            "sr": str(sr),
-            "tolerance": str(tol),
-            "mapExtent": ext,
-            "imageDisplay": "400,400,96",
-            "layers": layers_mode,
-            "returnGeometry": "false",
-        }
-        full = f"{url}?{_up.urlencode(params)}"
-        diag["url"] = full
-        diag["type"] = "identify"
-        req = _ur.Request(full, headers={"User-Agent": "NormativaGalicia/1.0"})
-        with _ur.urlopen(req, timeout=15) as resp:
-            raw = resp.read()
-            data = _json.loads(raw.decode("utf-8", "ignore"))
-        # Normalizar a estructura similar a _extract_subzone... (usar 'results' con 'attributes')
-        if isinstance(data, dict) and ("results" in data or "identifyResults" in data):
-            lst = data.get("results") or data.get("identifyResults") or []
-            diag["results_len"] = len(lst) if isinstance(lst, list) else 0
-            if isinstance(lst, list) and lst:
-                first = lst[0] or {}
-                attrs = first.get("attributes") or first.get("Attributes") or {}
-                if isinstance(attrs, dict):
-                    try:
-                        diag["attrs_keys"] = list(attrs.keys())
-                    except Exception:
-                        pass
-                if isinstance(attrs, dict) and attrs:
-                    # Reutilizar extractor pasando como si fuera props de una feature
-                    fake = {"features": [{"properties": attrs}]}
-                    return _extract_subzone_from_wms_json(fake), diag
-        return None, diag
-    except Exception as e:
-        try:
-            diag["error"] = str(e)
-        except Exception:
-            pass
-        return None, diag
 
 def _validate_cache_set(path: str, result: dict) -> None:
     try:
@@ -971,64 +722,6 @@ async def web_redirect():
     # Ir al ejemplo del visor dentro de /web
     return RedirectResponse(url="/web/examples/threejs-viewer/index.html")
 
-# Endpoint para aplicar CSV de plan municipal recibido como texto (reubicado tras imports/app)
-class ApplyPlanCSVTextRequest(BaseModel):
-    csv_text: str
-
-
-@app.post("/admin/apply-plan-csv-text")
-async def apply_plan_csv_text(req: ApplyPlanCSVTextRequest):
-    """Valida y aplica un CSV de plan municipal recibido como texto.
-    - Escribe el CSV a datos/plan_uploaded.csv
-    - Valida con CSVPlanProvider
-    - Fija PLAN_PROVIDER=csv y PLAN_CSV_PATH
-    - Limpia caché de validación
-    """
-    import os as _os
-    import io as _io
-    import csv as _csv
-    if not req.csv_text or not isinstance(req.csv_text, str):
-        raise HTTPException(status_code=400, detail="csv_text requerido")
-    # Validación básica de cabeceras
-    try:
-        f = _io.StringIO(req.csv_text)
-        reader = _csv.DictReader(f)
-        headers = set(reader.fieldnames or [])
-        if 'municipio' not in headers:
-            raise ValueError("CSV faltan columnas requeridas: municipio")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"CSV inválido: {e}")
-    # Guardar en datos/plan_uploaded.csv
-    target_dir = 'datos'
-    try:
-        _os.makedirs(target_dir, exist_ok=True)
-    except Exception:
-        pass
-    target_path = _os.path.join(target_dir, 'plan_uploaded.csv')
-    try:
-        with open(target_path, 'w', encoding='utf-8', newline='') as f2:
-            f2.write(req.csv_text)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo escribir CSV: {e}")
-    # Validar creando provider
-    try:
-        from src.planes.csv_provider import CSVPlanProvider
-        prov = CSVPlanProvider(target_path)
-        rows = len(prov.rows)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"CSV no válido: {e}")
-    # Aplicar
-    try:
-        _os.environ['PLAN_PROVIDER'] = 'csv'
-        _os.environ['PLAN_CSV_PATH'] = target_path
-        try:
-            _validate_cache.clear()
-        except Exception:
-            pass
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo aplicar configuración: {e}")
-    return {"ok": True, "provider": "csv", "applied_path": target_path, "rows": rows}
-
 @app.get("/metrics")
 async def metrics_endpoint():
     # Serve metrics only if enabled
@@ -1080,7 +773,7 @@ async def zoning_categorize(req: CategorizeRequest):
     }
 
 @app.get("/health", operation_id="health_check")
-async def health():
+async def health_check():
     try:
         now = int(time.time())
     except Exception:
@@ -1394,6 +1087,10 @@ class QARequest(BaseModel):
 class QAResponse(BaseModel):
     respuesta: str
 
+class QAResponseVerbose(BaseModel):
+    respuesta: str
+    diag: dict
+
 
 @app.post("/qa", response_model=QAResponse)
 async def qa(req: QARequest):
@@ -1425,128 +1122,65 @@ async def qa(req: QARequest):
             logging.getLogger(__name__).warning("/qa: fallo generando respuesta (%s), usando fallback básico", e)
             raise RuntimeError(str(e))
     except Exception:
-        # Fallback muy robusto: extraer municipio/subzona + parámetros desde provider CSV y heurística de texto
         try:
-            import re as _re
-            raw = (req.pregunta or '')
-            # No contaminar con el prefijo del visor
-            txt = "\n".join([ln for ln in raw.splitlines() if not ln.strip().startswith('[Contexto visor]')]).strip()
-            # Señales de intención local: sólo si pide parámetros o menciona muni/subzona
-            wants_local = False
-            if _re.search(r"\b(altura|maxim|retranqueo|setback|ocupaci[oó]n|edificabilidad|m2\s*/\s*m2)\b", txt, flags=_re.IGNORECASE):
-                wants_local = True
-            # 1) Extraer municipio y subzona del texto
-            muni = None
-            if wants_local:
-                if _re.search(r"\bVigo\b", txt, flags=_re.IGNORECASE):
-                    muni = "Vigo"
-                elif _re.search(r"\bA\s*Coru(?:n|ñ)a\b", txt, flags=_re.IGNORECASE):
-                    muni = "A Coruna"
-                elif _re.search(r"\bBoiro\b", txt, flags=_re.IGNORECASE):
-                    muni = "Boiro"
-            m_sub = _re.search(r"\b((?:U\s*\d+(?:\.\d+)?)|(?:NR\s*-?\s*\d+))\b", txt, flags=_re.IGNORECASE)
-            subz = m_sub.group(1).upper().replace(" ", "") if (wants_local and m_sub) else None
-            # 2) Obtener parámetros del plan (si hay muni/subz)
-            p = None
-            if wants_local and muni:
-                try:
-                    p = get_plan_params_dynamic(muni, subz)
-                except Exception:
-                    p = None
-            # 3) Heurística de extracción adicional desde el texto
-            basic = normativa_extract(NormExtractRequest(text=txt))
-            # 4) Construir respuesta fusionando provider + heurística
-            def _fmt(n):
-                return None if n is None else (int(n) if isinstance(n, (int,)) or (isinstance(n, float) and n.is_integer()) else float(n))
-            resumen = []
-            if wants_local and muni:
-                resumen.append(f"Municipio: {muni}")
-            if subz:
-                resumen.append(f"Subzona: {subz}")
-            # Provider primero si existe
-            if wants_local and p is not None:
-                am = _fmt(getattr(p, 'altura_maxima_m', None))
-                rm = _fmt(getattr(p, 'retranqueo_min_m', None))
-                sf = _fmt(getattr(p, 'setback_front_m', None))
-                ss = _fmt(getattr(p, 'setback_side_m', None))
-                sb = _fmt(getattr(p, 'setback_back_m', None))
-                oc = getattr(p, 'ocupacion_max', None)
-                ed = _fmt(getattr(p, 'edificabilidad_max_m2_m2', None))
-                if am is not None: resumen.append(f"Altura máxima (m): {am}")
-                if rm is not None: resumen.append(f"Retanqueo mínimo (m): {rm}")
-                if sf is not None: resumen.append(f"Frente (m): {sf}")
-                if ss is not None: resumen.append(f"Laterales (m): {ss}")
-                if sb is not None: resumen.append(f"Fondo (m): {sb}")
-                if oc is not None: resumen.append(f"Ocupación máx.: {oc}")
-                if ed is not None: resumen.append(f"Edificabilidad (m2/m2): {ed}")
-            # Rellenar con heurística si faltan campos
-            if basic.get("uso_suelo") and all("Uso del suelo:" not in x for x in resumen):
-                resumen.append(f"Uso del suelo: {basic['uso_suelo']}")
-            if basic.get("altura_maxima_m") is not None and all("Altura máxima" not in x for x in resumen):
-                resumen.append(f"Altura máxima (m): {basic['altura_maxima_m']}")
-            if basic.get("retranqueo_min_m") is not None and all("Retanqueo mínimo" not in x for x in resumen):
-                resumen.append(f"Retanqueo mínimo (m): {basic['retranqueo_min_m']}")
-            if basic.get("setback_front_m") is not None and all("Frente (m):" not in x for x in resumen):
-                resumen.append(f"Frente (m): {basic['setback_front_m']}")
-            if basic.get("setback_side_m") is not None and all("Laterales (m):" not in x for x in resumen):
-                resumen.append(f"Laterales (m): {basic['setback_side_m']}")
-            if basic.get("setback_back_m") is not None and all("Fondo (m):" not in x for x in resumen):
-                resumen.append(f"Fondo (m): {basic['setback_back_m']}")
-            if basic.get("edificabilidad_max_m2_m2") is not None and all("Edificabilidad" not in x for x in resumen):
-                resumen.append(f"Edificabilidad (m2/m2): {basic['edificabilidad_max_m2_m2']}")
-            # Si la consulta es general (sin intención local), priorizar extracto legal según uso_suelo detectado
-            if not wants_local:
-                uso_det = str(basic.get("uso_suelo") or '').lower()
-                if uso_det in ("rustico", "rústico"):
-                    resumen = [
-                        "Suelo rústico: usos compatibles con su naturaleza (agrícolas, ganaderos, forestales, de protección ambiental e infraestructuras), evitando transformaciones urbanísticas.",
-                        "Referencia: Ley 2/2016 del Suelo de Galicia, Artículos 31–32."
-                    ]
-                elif uso_det.startswith("urbano") or uso_det == "urbana":
-                    resumen = [
-                        "Suelo urbano consolidado: integrado en la malla urbana, con servicios urbanísticos completos; reúne la condición de solar o puede adquirirla con obras accesorias menores.",
-                        "Referencia: Ley 2/2016 del Suelo de Galicia, Artículo 17."
-                    ]
-                else:
-                    # Respaldo: detección acento-insensible por texto
-                    import unicodedata as _ud
-                    def _strip(s: str) -> str:
-                        try:
-                            return ''.join(ch for ch in _ud.normalize('NFD', s.lower()) if _ud.category(ch) != 'Mn')
-                        except Exception:
-                            return s.lower()
-                    base = _strip(txt)
-                    if ('rustico' in base) and ('urbano' not in base):
-                        resumen = [
-                            "Suelo rústico: usos compatibles con su naturaleza (agrícolas, ganaderos, forestales, de protección ambiental e infraestructuras), evitando transformaciones urbanísticas.",
-                            "Referencia: Ley 2/2016 del Suelo de Galicia, Artículos 31–32."
-                        ]
-                    elif ('urbano' in base) and ('rustico' not in base):
-                        resumen = [
-                            "Suelo urbano consolidado: integrado en la malla urbana, con servicios urbanísticos completos; reúne la condición de solar o puede adquirirla con obras accesorias menores.",
-                            "Referencia: Ley 2/2016 del Suelo de Galicia, Artículo 17."
-                        ]
-            # Si hay intención local pero no hay datos CSV, informar y aportar extracto legal si procede
-            if wants_local and (p is None):
-                import unicodedata as _ud
-                def _strip2(s: str) -> str:
-                    try:
-                        return ''.join(ch for ch in _ud.normalize('NFD', s.lower()) if _ud.category(ch) != 'Mn')
-                    except Exception:
-                        return s.lower()
-                base2 = _strip2(txt)
-                resumen.append("No se encontraron parámetros en el CSV para el municipio/subzona indicados.")
-                if ('rustico' in base2) and ('urbano' not in base2):
-                    resumen.append("Referencia: Ley 2/2016 del Suelo de Galicia, Artículos 31–32 (suelo rústico).")
-                elif ('urbano' in base2) and ('rustico' not in base2):
-                    resumen.append("Referencia: Ley 2/2016 del Suelo de Galicia, Artículo 17 (suelo urbano).")
-            if not resumen:
-                resumen = ["Servicio operativo. Aporta municipio y, si lo conoces, la subzona (p. ej., Vigo RZ-2 o A Coruña NR-1)."]
-            msg = "\n".join(resumen) + "\n\nNota: respuesta generada en modo básico (sin modelo)."
-            return QAResponse(respuesta=msg)
+            return QAResponse(respuesta=build_qa_fallback_response(req.pregunta or ""))
         except Exception:
-            # Último recurso
             return QAResponse(respuesta="Servicio de preguntas operativo en modo básico. Indica municipio y subzona para más detalle.")
+
+
+@app.post("/qa/verbose", response_model=QAResponseVerbose)
+async def qa_verbose(req: QARequest):
+    """Versión con diagnóstico: incluye fuente (rag|fallback), municipio/subzona detectados y origen de cada campo (csv|heuristica|none)."""
+    # Manejo temprano de small talk y "donde estoy" para evitar caer en RAG genérico
+    try:
+        low = (req.pregunta or '').strip().lower()
+        # Intentar leer breve contexto del visor si viene embebido en la pregunta
+        ctx_muni = None; ctx_subz = None
+        try:
+            for ln in str(req.pregunta or '').splitlines():
+                ln2 = ln.strip()
+                if ln2.lower().startswith('[contexto visor]'):
+                    parts = ln2.split(' ', 2)[-1].split(',')
+                    for part in parts:
+                        if '=' in part:
+                            k,v = part.split('=',1)
+                            k=k.strip().lower(); v=v.strip()
+                            if k=='municipio': ctx_muni = v
+                            if k=='subzona': ctx_subz = v
+        except Exception:
+            pass
+        if any(x in low for x in ("hola", "buenas", "qué tal", "que tal", "hola?", "buenos días", "buenas tardes", "buenas noches")):
+            return QAResponseVerbose(respuesta="¡Hola! Puedo ayudarte con normativa urbanística y el visor. Indícame municipio y, si procede, la subzona.", diag={'mode':'smalltalk'})
+        if ("donde estoy" in low) or ("dónde estoy" in low):
+            if ctx_muni:
+                return QAResponseVerbose(respuesta=f"Parece que estás consultando {ctx_muni}{(' '+ctx_subz) if ctx_subz else ''}.", diag={'mode':'fallback','municipio':ctx_muni,'subzona':ctx_subz,'provider_used':'none','fields_source':{}})
+            return QAResponseVerbose(respuesta="No puedo conocer tu posición sin contexto. Dime municipio/subzona (p. ej., Vigo RZ-2).", diag={'mode':'fallback','municipio':None,'subzona':None,'provider_used':'none','fields_source':{}})
+    except Exception:
+        pass
+    # Intentar modo RAG si recursos disponibles; si falla, usar fallback con diag
+    try:
+        if not _RESOURCES['loaded']:
+            try:
+                chunks, index, bi_encoder, cross_encoder, llm = cargar_recursos()
+                _RESOURCES.update({
+                    'loaded': True,
+                    'chunks': chunks,
+                    'index': index,
+                    'bi_encoder': bi_encoder,
+                    'cross_encoder': cross_encoder,
+                    'llm': llm,
+                })
+            except Exception:
+                raise RuntimeError('rag_unavailable')
+        frags = buscar_fragmentos(req.pregunta, _RESOURCES['chunks'], _RESOURCES['index'], _RESOURCES['bi_encoder'], _RESOURCES['cross_encoder'])
+        resp = generar_respuesta(req.pregunta, frags, _RESOURCES['llm'])
+        return QAResponseVerbose(respuesta=resp, diag={
+            'mode': 'rag',
+            'fragments': len(frags or []),
+        })
+    except Exception:
+        payload = build_qa_verbose_fallback_response(req.pregunta or "")
+        return QAResponseVerbose(respuesta=payload["respuesta"], diag=payload["diag"])
 
 
 @app.post("/zoning/analyze")
@@ -1556,12 +1190,12 @@ async def zoning_analyze(inp: ZoneInput):
         try:
             if (not getattr(inp, 'subzona', None)) and getattr(inp, 'municipio', None):
                 if str(inp.municipio).strip().lower().find('vigo') >= 0:
-                    cfg = _wms_config_for_municipio(inp.municipio)
+                    cfg = wms_config_for_municipio(inp.municipio)
                     feature_url = (cfg or {}).get('feature_url') if isinstance(cfg, dict) else None
                     if feature_url and getattr(inp, 'geometry', None):
-                        lon, lat = _centroid_lonlat_from_geojson(inp.geometry, getattr(inp, 'crs', None))
+                        lon, lat = centroid_lonlat_from_geojson(inp.geometry, getattr(inp, 'crs', None))
                         if (lon is not None) and (lat is not None):
-                            subz, _diag = _arcgis_feature_query(feature_url, float(lon), float(lat))
+                            subz, _diag = arcgis_feature_query(feature_url, float(lon), float(lat))
                             if subz:
                                 inp.subzona = subz
         except Exception:
@@ -1590,409 +1224,10 @@ class InferSubzoneResponse(BaseModel):
     diagnostics: dict | None = None
 
 
-def _wms_config_for_municipio(muni: str):
-    m = (muni or "").strip().lower()
-    # MVP: A Coruña PGOM13 Ordenanzas. Se pueden añadir más municipios aquí.
-    if m in ("a coruña", "a coruna", "coruna", "a corunha"):
-        return {
-            "base": os.getenv("ACORUNA_WMS_BASE", "https://geo.coruna.es/geoserver/wms"),
-            "layers": os.getenv("ACORUNA_WMS_LAYERS", "pgom13:Ordenanzas"),
-            "info_format": os.getenv("ACORUNA_WMS_INFO_FORMAT", "application/json"),
-            "srs": os.getenv("ACORUNA_WMS_SRS", "EPSG:4326"),
-        }
-    # Vigo: desde 2025 migrado a ArcGIS Online. Configurable via variables de entorno.
-    if m in ("vigo",):
-        cfg: dict = {
-            # Endpoint Identify (opcional) hacia MapServer/identify del servicio municipal
-            "rest_identify": (os.getenv("VIGO_ARCGIS_IDENTIFY", "").strip() or None),
-            # URL de Feature Layer (FeatureServer/N o MapServer/N) para /query (recomendado)
-            "feature_url": (os.getenv("VIGO_ARCGIS_FEATURE_URL", "").strip() or None),
-            "srs": "EPSG:4326",
-        }
-        return cfg
-    return None
-
-
-def _lonlat_to_mercator(lon: float, lat: float):
-    import math as _math
-    r_major = 6378137.0
-    x = r_major * _math.radians(lon)
-    lat = max(min(lat, 89.9), -89.9)
-    y = r_major * _math.log(_math.tan(_math.pi/4.0 + _math.radians(lat)/2.0))
-    return x, y
-
-
-def _mercator_to_lonlat(x: float, y: float):
-    import math as _math
-    r_major = 6378137.0
-    lon = (x / r_major) * (180.0 / _math.pi)
-    lat = (2 * _math.atan(_math.exp(y / r_major)) - _math.pi / 2) * (180.0 / _math.pi)
-    return lon, lat
-
-
-def _centroid_lonlat_from_geojson(geometry: dict | None, crs: str | None = None) -> tuple[float | None, float | None]:
-    """Obtiene el centroide en lon/lat a partir de un GeoJSON simple.
-    Soporta geometrías en EPSG:4326. Si el CRS parece métrico WebMercator (3857/900913), se hace la inversa.
-    """
-    if not geometry or not isinstance(geometry, dict):
-        return None, None
-    try:
-        gtype = (geometry.get('type') or '').lower()
-        coords = geometry.get('coordinates')
-        if gtype in ('polygon', 'multipolygon') and coords:
-            # Bounding box aproximado para centroide rápido
-            def _iter_pts(c):
-                if gtype == 'polygon':
-                    for ring in c or []:
-                        for pt in ring or []:
-                            yield pt
-                else:
-                    for poly in c or []:
-                        for ring in poly or []:
-                            for pt in ring or []:
-                                yield pt
-            xs = []
-            ys = []
-            for pt in _iter_pts(coords):
-                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
-                    xs.append(float(pt[0]))
-                    ys.append(float(pt[1]))
-            if not xs or not ys:
-                return None, None
-            cx = (min(xs) + max(xs)) / 2.0
-            cy = (min(ys) + max(ys)) / 2.0
-            # Interpretar CRS
-            crs_s = (crs or '').lower()
-            if ('3857' in crs_s) or ('900913' in crs_s):
-                lon, lat = _mercator_to_lonlat(cx, cy)
-            else:
-                # Asumir lon/lat por defecto
-                lon, lat = cx, cy
-            return float(lon), float(lat)
-    except Exception:
-        return None, None
-    return None, None
-
-
-def _build_wms_getfeatureinfo_url(base: str, layers: str, lon: float, lat: float, srs: str = "EPSG:4326", info_format: str = "application/json", version: str = "1.1.1") -> str:
-    import urllib.parse as _up
-    # Padding de selección en metros para el BBOX (configurable)
-    try:
-        pad_m = float(os.getenv('WMS_GFI_PAD_M', '30'))
-    except Exception:
-        pad_m = 30.0
-    if srs.upper() == "EPSG:4326":
-        x, y = _lonlat_to_mercator(lon, lat)
-        bbox = f"{x-pad_m},{y-pad_m},{x+pad_m},{y+pad_m}"
-        req_srs = "EPSG:3857"
-    else:
-        # Suponemos coords ya en el SRS solicitado
-        bbox = f"{lon-pad_m},{lat-pad_m},{lon+pad_m},{lat+pad_m}"
-        req_srs = srs
-    params = {
-        "SERVICE": "WMS",
-        "REQUEST": "GetFeatureInfo",
-        "VERSION": version,
-        "LAYERS": layers,
-        "QUERY_LAYERS": layers,
-        **({"SRS": srs} if version == "1.1.1" else {"CRS": srs}),
-        "BBOX": bbox,
-        "WIDTH": "256",
-        "HEIGHT": "256",
-        # Nota: X/Y para 1.1.1; I/J para 1.3.0
-        **(({"X": "128", "Y": "128"} if version == "1.1.1" else {"I": "128", "J": "128"})),
-        "INFO_FORMAT": info_format,
-    }
-    qs = _up.urlencode(params)
-    return f"{base}?{qs}"
-
-
-def _extract_subzone_from_wms_json(data: dict) -> str | None:
-    try:
-        feats = data.get("features") or data.get("FeatureCollection") or []
-        if isinstance(feats, dict):
-            feats = feats.get("features", [])
-        # ArcGIS Identify JSON fallback: results / identifyResults with attributes
-        if not feats and isinstance(data, dict) and ("results" in data or "identifyResults" in data):
-            try:
-                lst = data.get("results") or data.get("identifyResults") or []
-                if isinstance(lst, list) and lst:
-                    first = lst[0] or {}
-                    attrs = first.get("attributes") or first.get("Attributes") or {}
-                    if isinstance(attrs, dict) and attrs:
-                        # Try to extract from attributes directly with robust matching
-                        props = attrs
-                        # Build normalized key map
-                        norm = lambda s: ''.join(ch for ch in s.lower() if ch.isalnum())
-                        by_norm = {norm(k): k for k in props.keys()}
-                        candidates = [
-                            # very common
-                            "subzona","ordenanza","clave","categoria","codigo",
-                            # variations and Spanish diacritics removed
-                            "claseordenanza","claveordenanza","clase","zonificacion","zonificacion",
-                            "zona","leyenda","denominacion","denominacion","codordenanza","codorden",
-                            # other possible naming
-                            "ordenanzas","claveorden","claveordenanzas","planeamiento","clasesuelo",
-                        ]
-                        for c in candidates:
-                            key_norm = norm(c)
-                            if key_norm in by_norm:
-                                k = by_norm[key_norm]
-                                v = props.get(k)
-                                if isinstance(v, str) and v.strip():
-                                    return v.strip()
-                        # Fallback: first non-empty string
-                        for k, v in props.items():
-                            if isinstance(v, str) and v.strip():
-                                return v.strip()
-            except Exception:
-                pass
-        if not feats and isinstance(data, dict) and "raw" in data:
-            # Fallback: parse simple HTML table from ArcGIS WMS GetFeatureInfo
-            try:
-                import re as _re
-                raw = data.get("raw") or ""
-                # Buscar pares clave-valor en celdas de tabla
-                patterns = [
-                    r"(?i)ORDENANZA\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                    r"(?i)SUBZONA\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                    r"(?i)CLAVE[_ ]?ORDENANZA\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                    r"(?i)CLAVE\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                    r"(?i)ClaseSuelo\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                    r"(?i)PLANEAMIENTO\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                    r"(?i)LEYENDA\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                    r"(?i)ZONA\s*</t[dh]>\s*<t[dh][^>]*>\s*([^<\n]+)",
-                ]
-                for pat in patterns:
-                    m = _re.search(pat, raw)
-                    if m:
-                        val = (m.group(1) or '').strip()
-                        if val:
-                            return val
-            except Exception:
-                pass
-            return None
-        # Tomar primera feature
-        f0 = feats[0] if feats else None
-        props = (f0.get("properties") if isinstance(f0, dict) else None) or {}
-        # Buscar campos típicos de subzona/ordenanza/clave (case-insensitive, normalizados)
-        norm = lambda s: ''.join(ch for ch in s.lower() if ch.isalnum())
-        by_norm = {norm(k): k for k in props.keys()}
-        candidates = [
-            # genéricos
-            "subzona","ordenanza","clave","categoria","codigo",
-            # SIU / Vigo propuestos por el usuario
-            "clasesuelo","planeamiento","clave_ordenanza",
-            # variaciones frecuentes en WMS municipales
-            "ordenanzas","leyenda","zona","zonificacion","denominacion","codordenanza","codorden",
-        ]
-        for c in candidates:
-            key_norm = norm(c)
-            if key_norm in by_norm:
-                k = by_norm[key_norm]
-                v = props.get(k)
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
-        # Fallback: primera cadena no vacía en props
-        for k, v in props.items():
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-    except Exception:
-        return None
-    return None
-
-
 @app.post("/zoning/infer-subzone", response_model=InferSubzoneResponse)
 async def zoning_infer_subzone(req: InferSubzoneRequest):
-    cfg = _wms_config_for_municipio(req.municipio)
-    if not cfg:
-        return InferSubzoneResponse(municipio=req.municipio, subzona=None, diagnostics={"reason":"no_cfg_for_municipio"})
-    try:
-        import urllib.request as _ur
-        logger = logging.getLogger("zoning.infer_subzone")
-        attempts_info: list[dict] = []
-        def _attempt(base: str, layers: str, info_format: str, *, version: str = "1.1.1") -> tuple[str | None, str]:
-            url = _build_wms_getfeatureinfo_url(base, layers, req.lon, req.lat, req.srs or cfg.get("srs", "EPSG:4326"), info_format, version)
-            try:
-                logger.info("attempt muni='%s' layers='%s' fmt='%s' lon=%.6f lat=%.6f url=%s", req.municipio, layers, info_format, req.lon, req.lat, url)
-            except Exception:
-                pass
-            import urllib.error as _ue
-            try:
-                resp = _ur.urlopen(_ur.Request(url, headers={"User-Agent":"NormativaGalicia/1.0"}), timeout=15)
-                raw = resp.read()
-                ctype = resp.headers.get("Content-Type", info_format or "application/octet-stream")
-                import json as _json
-                if "json" in ctype.lower():
-                    try:
-                        data = _json.loads(raw.decode("utf-8", "ignore"))
-                    except Exception:
-                        data = {}
-                    try:
-                        feats = data.get("features") or []
-                        props_keys = list((feats[0].get("properties") or {}).keys()) if feats else []
-                        logger.info("props(keys)=%s", props_keys)
-                        attempts_info.append({"url": url, "ctype": ctype, "props_keys": props_keys})
-                    except Exception:
-                        attempts_info.append({"url": url, "ctype": ctype, "props_keys": []})
-                else:
-                    data = {"raw": raw.decode("utf-8", "ignore")}
-                    try:
-                        html_len = len(data.get("raw") or "")
-                        logger.info("html_len=%d ctype=%s", html_len, ctype)
-                        attempts_info.append({"url": url, "ctype": ctype, "html_len": html_len})
-                    except Exception:
-                        attempts_info.append({"url": url, "ctype": ctype})
-                sz_local = _extract_subzone_from_wms_json(data)
-                try:
-                    logger.info("extracted subzona=%s", sz_local)
-                except Exception:
-                    pass
-                return sz_local, ctype
-            except _ue.HTTPError as e:
-                try:
-                    attempts_info.append({"url": url, "error": f"HTTP {int(getattr(e, 'code', 0))}", "ctype": getattr(e, 'headers', {}).get('Content-Type', '')})
-                except Exception:
-                    attempts_info.append({"url": url, "error": "HTTP error"})
-                return None, "error"
-            except _ue.URLError as e:
-                try:
-                    attempts_info.append({"url": url, "error": f"URL error: {e.reason}"})
-                except Exception:
-                    attempts_info.append({"url": url, "error": "URL error"})
-                return None, "error"
-
-        # 0) ArcGIS Identify (si está configurado para el municipio)
-        rest_url_pref = cfg.get("rest_identify")
-        if rest_url_pref:
-            for mode in ("top", "visible", "all"):
-                try:
-                    sz_id, id_diag = _arcgis_identify_extract(rest_url_pref, req.lon, req.lat, sr=4326, tol=16, layers_mode=mode)
-                except Exception:
-                    sz_id, id_diag = None, {"error": "identify exception"}
-                try:
-                    id_diag["layers_mode"] = mode
-                    attempts_info.append({"identify": id_diag})
-                except Exception:
-                    pass
-                if sz_id:
-                    return InferSubzoneResponse(municipio=req.municipio, subzona=sz_id, source="identify")
-
-        # 1) ArcGIS Feature Layer /query (si está configurado)
-        feature_url = cfg.get("feature_url")
-        if feature_url:
-            sz_q, q_diag = _arcgis_feature_query(feature_url, req.lon, req.lat, sr_in=4326, out_fields="*")
-            try: attempts_info.append({"feature_query": q_diag})
-            except Exception: pass
-            if sz_q:
-                return InferSubzoneResponse(municipio=req.municipio, subzona=sz_q, source="feature_query")
-
-        # 2) WMS clásico (si hay configuración base/layers)
-        if "base" in cfg and "layers" in cfg:
-            sz, _ = _attempt(cfg["base"], cfg["layers"], cfg.get("info_format", "application/json"), version="1.1.1")
-            if sz:
-                return InferSubzoneResponse(municipio=req.municipio, subzona=sz)
-
-        # Fallback genérico: probar con text/html si el primer intento no devolvió subzona
-        sz_html = None
-        if "base" in cfg and "layers" in cfg:
-            try:
-                sz_html, _ = _attempt(cfg["base"], cfg["layers"], "text/html", version="1.1.1")
-            except Exception:
-                sz_html = None
-        if sz_html:
-            return InferSubzoneResponse(municipio=req.municipio, subzona=sz_html)
-
-        # Fallback adicional: reintentar con WMS 1.3.0 (CRS + I/J)
-        if "base" in cfg and "layers" in cfg:
-            try:
-                sz_130_json, _ = _attempt(cfg["base"], cfg["layers"], cfg.get("info_format", "application/json"), version="1.3.0")
-            except Exception:
-                sz_130_json = None
-            if sz_130_json:
-                return InferSubzoneResponse(municipio=req.municipio, subzona=sz_130_json)
-            try:
-                sz_130_html, _ = _attempt(cfg["base"], cfg["layers"], "text/html", version="1.3.0")
-            except Exception:
-                sz_130_html = None
-            if sz_130_html:
-                return InferSubzoneResponse(municipio=req.municipio, subzona=sz_130_html)
-
-        # Reintentos específicos para A Coruña: variaciones de capa y formato
-        m = (req.municipio or "").strip().lower()
-        if m in ("a coruña", "a coruna", "coruna", "a corunha"):
-            layer_candidates = [cfg.get("layers", "pgom13:Ordenanzas"), "Ordenanzas", "pgom13:Ordenanzas"]
-            fmt_candidates = [cfg.get("info_format", "application/json"), "text/html", "application/json"]
-            tried: set[tuple[str,str]] = set()
-            for lyr in layer_candidates:
-                for fmt in fmt_candidates:
-                    key = (lyr, fmt)
-                    if key in tried:
-                        continue
-                    tried.add(key)
-                    # Probar 1.1.1 y 1.3.0 por cada combinación
-                    sz2, _ctype = _attempt(cfg["base"], lyr, fmt, version="1.1.1")
-                    if not sz2:
-                        sz2, _ctype = _attempt(cfg["base"], lyr, fmt, version="1.3.0")
-                    if sz2:
-                        return InferSubzoneResponse(municipio=req.municipio, subzona=sz2)
-            # Fallback adicional: ArcGIS REST Identify
-            rest_url = cfg.get("rest_identify")
-            if rest_url:
-                try:
-                    sz3, id_diag = _arcgis_identify_extract(rest_url, req.lon, req.lat, sr=4326, tol=16)
-                except Exception:
-                    sz3, id_diag = None, {}
-                try:
-                    attempts_info.append({"identify": id_diag})
-                except Exception:
-                    pass
-                if sz3:
-                    try:
-                        logging.getLogger("zoning.infer_subzone").info("identify extracted subzona=%s", sz3)
-                    except Exception:
-                        pass
-                    return InferSubzoneResponse(municipio=req.municipio, subzona=sz3, source="identify")
-
-        # Intento Identify genérico si hay configuración para el municipio
-        rest_url_generic = cfg.get("rest_identify")
-        if rest_url_generic:
-            try:
-                sz_ident, id_diag2 = _arcgis_identify_extract(rest_url_generic, req.lon, req.lat, sr=4326, tol=16)
-            except Exception:
-                sz_ident, id_diag2 = None, {}
-            try:
-                attempts_info.append({"identify": id_diag2})
-            except Exception:
-                pass
-            if sz_ident:
-                return InferSubzoneResponse(municipio=req.municipio, subzona=sz_ident, source="identify")
-
-        # Reintentos específicos para Vigo: variaciones de formato (algunos servidores devuelven HTML)
-        if m in ("vigo",):
-            layer_candidates = [cfg.get("layers", "CLASES_DE_SUELO"), "CLASES_DE_SUELO"]
-            fmt_candidates = [cfg.get("info_format", "application/json"), "text/html", "application/json"]
-            tried: set[tuple[str,str]] = set()
-            for lyr in layer_candidates:
-                for fmt in fmt_candidates:
-                    key = (lyr, fmt)
-                    if key in tried:
-                        continue
-                    tried.add(key)
-                    sz2, _ctype = _attempt(cfg["base"], lyr, fmt)
-                    if sz2:
-                        return InferSubzoneResponse(municipio=req.municipio, subzona=sz2)
-
-        # Si nada funcionó, devolvemos sin subzona
-        return InferSubzoneResponse(municipio=req.municipio, subzona=None, diagnostics={"attempts": attempts_info})
-    except Exception as e:
-        # No bloquear: devolver sin subzona
-        return InferSubzoneResponse(municipio=req.municipio, subzona=None, diagnostics={"error": str(e)})
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "resources_loaded": bool(_RESOURCES['loaded'])}
+    result = infer_subzone(req.municipio, req.lon, req.lat, req.srs)
+    return InferSubzoneResponse(**result)
 
 
 @app.get("/diagnostics/log-config")
@@ -2059,7 +1294,7 @@ async def endpoint_geometry_checks(req: GeometryChecksRequest):
 
 # Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)
 class VolumeRequest(BaseModel):
-    geometry: dict
+    geometry: dict | None = None
     altura_maxima_m: float | None = None
     retranqueo_min_m: float | None = None
     municipio: str | None = None
@@ -2098,172 +1333,11 @@ async def zoning_assess(req: VolumeRequest = Body(...)):
     """Evalúa la viabilidad normativa de una parcela con parámetros de plan.
     Devuelve una etiqueta de viabilidad y razones, junto a los parámetros efectivos aplicados.
     """
-    # Resolver parámetros como en /zoning/volume
-    altura = req.altura_maxima_m
-    retranqueo = req.retranqueo_min_m or 0.0
-    reasons: list[str] = []
-    effective_front_direction = req.front_direction
-    front_dir_source = None
-    setback_front = req.setback_front_m
-    setback_side = req.setback_side_m
-    setback_back = req.setback_back_m
-
     try:
-        if altura is None:
-            if req.municipio:
-                # Auto-inferir subzona si estamos en Vigo y no se proporcionó, usando el centro de la geometría
-                try:
-                    if (not getattr(req, 'subzona', None)) and getattr(req, 'municipio', None):
-                        if str(req.municipio).strip().lower().find('vigo') >= 0:
-                            cfg = _wms_config_for_municipio(req.municipio)
-                            feature_url = (cfg or {}).get('feature_url') if isinstance(cfg, dict) else None
-                            if feature_url and getattr(req, 'geometry', None):
-                                lon, lat = _centroid_lonlat_from_geojson(req.geometry, getattr(req, 'crs', None))
-                                if (lon is not None) and (lat is not None):
-                                    subz, _diag = _arcgis_feature_query(feature_url, float(lon), float(lat))
-                                    if subz:
-                                        req.subzona = subz
-                except Exception:
-                    pass
-                # Usar el proveedor activo (CSV/mock) para obtener parámetros del plan
-                plan = get_plan_params_dynamic(req.municipio, req.subzona)
-                if plan.altura_maxima_m is None:
-                    raise ValueError("El plan municipal no devuelve altura máxima")
-                altura = plan.altura_maxima_m
-                if req.retranqueo_min_m is None and plan.retranqueo_min_m is not None:
-                    retranqueo = plan.retranqueo_min_m
-                # Determinar dirección de frente efectiva
-                pfd = getattr(plan, 'front_direction_default', None)
-                pf = getattr(plan, 'setback_front_m', None)
-                ps = getattr(plan, 'setback_side_m', None)
-                pb = getattr(plan, 'setback_back_m', None)
-                has_plan_dir_setbacks = (pf is not None) or (ps is not None) or (pb is not None)
-                if (
-                    effective_front_direction is None
-                    and req.street_axis is None
-                    and bool(req.use_plan_front_default)
-                    and pfd
-                    and has_plan_dir_setbacks
-                ):
-                    effective_front_direction = pfd
-                    front_dir_source = 'plan_default'
-                    reasons.append("front_direction por defecto del plan aplicado")
-                # Rellenar retranqueos direccionales si hay contexto direccional
-                if effective_front_direction is not None or req.street_axis is not None:
-                    setback_front = req.setback_front_m if req.setback_front_m is not None else pf
-                    setback_side = req.setback_side_m if req.setback_side_m is not None else ps
-                    setback_back = req.setback_back_m if req.setback_back_m is not None else pb
-            else:
-                raise HTTPException(status_code=400, detail="altura_maxima_m requerida si no se especifica municipio")
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Fallback: continuar con valores por defecto si el proveedor falla
-        reasons.append(f"Fallback de plan: {e}")
-
-    # Fallback definitivo si seguimos sin altura
-    if altura is None:
-        altura = 12.0
-        if retranqueo is None:
-            retranqueo = 3.0
-        reasons.append("Parámetros por defecto aplicados (altura=12m, retranqueo_min=3m)")
-
-    # Construir parámetros y calcular envolvente (en seco)
-    try:
-        params = VolumeParams(
-            altura_maxima_m=float(altura),
-            retranqueo_min_m=float(retranqueo or 0.0),
-            setback_front_m=setback_front,
-            setback_side_m=setback_side,
-            setback_back_m=setback_back,
-            front_direction=effective_front_direction,
-        )
-        feat = compute_building_envelope(req.geometry, params, street_axis=req.street_axis, front_direction_source=front_dir_source, crs=getattr(req, 'crs', None))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error en evaluación volumétrica: {e}")
-
-    # Resumen geométrico opcional
-    geometry_summary = None
-    try:
-        _gs = geometry_checks(req.geometry)
-        # Normalizar a dict para la respuesta
-        try:
-            geometry_summary = _gs.model_dump()  # Pydantic v2
-        except Exception:
-            try:
-                # Compatibilidad u otros tipos
-                geometry_summary = dict(_gs) if isinstance(_gs, dict) else (
-                    _gs.__dict__ if hasattr(_gs, '__dict__') else None
-                )
-            except Exception:
-                geometry_summary = None
-    except Exception:
-        geometry_summary = None
-
-    # Determinar viabilidad
-    if feat is None:
-        reasons.append("La envolvente edificable no existe (retranqueos agotan la parcela)")
-        return AssessResponse(
-            viability='no_apto',
-            reasons=reasons,
-            params_effective={
-                'altura_maxima_m': altura,
-                'retranqueo_min_m': retranqueo,
-                'setback_front_m': setback_front,
-                'setback_side_m': setback_side,
-                'setback_back_m': setback_back,
-                'front_direction': effective_front_direction,
-                'front_direction_source': front_dir_source or ('request' if effective_front_direction else 'none'),
-                'municipio': (req.municipio or '').strip() if isinstance(req.municipio, str) else req.municipio,
-                'subzona': (req.subzona or '').strip() if isinstance(req.subzona, str) else req.subzona,
-            },
-            feature=None,
-            geometry_summary=geometry_summary,
-        )
-
-    props = feat.get('properties') or {}
-    # Exponer municipio/subzona en las properties para consumo del visor
-    try:
-        muni_norm = (req.municipio or '').strip() if isinstance(req.municipio, str) else req.municipio
-        subz_norm = (req.subzona or '').strip() if isinstance(req.subzona, str) else req.subzona
-        if isinstance(props, dict):
-            if muni_norm and 'municipio' not in props:
-                props['municipio'] = muni_norm
-            if subz_norm and 'subzona' not in props:
-                props['subzona'] = subz_norm
-            feat['properties'] = props
-    except Exception:
-        pass
-    # Heurísticas de condición
-    condicionado = False
-    if props.get('directional_not_applied_reason'):
-        condicionado = True
-        reasons.append(f"No se aplicó retranqueo direccional: {props.get('directional_not_applied_reason')}")
-    if props.get('street_axis_ignored_reason'):
-        condicionado = True
-        reasons.append(f"Eje de calle ignorado: {props.get('street_axis_ignored_reason')}")
-    if (front_dir_source == 'plan_default') and not req.front_direction and not req.street_axis:
-        condicionado = True
-        reasons.append("Dirección de frente por defecto del plan (sin eje de calle ni petición explícita)")
-
-    viability = 'condicionado' if condicionado else 'apto'
-    return AssessResponse(
-        viability=viability,
-        reasons=reasons,
-        params_effective={
-            'altura_maxima_m': altura,
-            'retranqueo_min_m': retranqueo,
-            'setback_front_m': setback_front,
-            'setback_side_m': setback_side,
-            'setback_back_m': setback_back,
-            'front_direction': effective_front_direction,
-            'front_direction_source': props.get('front_direction_source') or front_dir_source or ('request' if effective_front_direction else 'none'),
-            'municipio': (req.municipio or '').strip() if isinstance(req.municipio, str) else req.municipio,
-            'subzona': (req.subzona or '').strip() if isinstance(req.subzona, str) else req.subzona,
-        },
-        feature=feat,
-        geometry_summary=geometry_summary,
-    )
+        result = evaluate_zoning_assessment(req)
+    except ZoningAssessmentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return AssessResponse(**result)
 
 
 @app.get("/zoning/assess-report")
@@ -2353,231 +1427,6 @@ async def zoning_assess_report_post(req: AssessReportRequest):
     html = _render_assess_report_html(body, res, logo=req.logo, title=req.title, client=req.client, project=req.project, snapshot_data_url=req.snapshot_data_url, brand_color=req.brand_color, signature=bool(req.signature or False), sign_by=req.sign_by, sign_place=req.sign_place, notes=req.notes, source_ref=req.source_ref)
     return Response(content=html, media_type='text/html; charset=utf-8')
 
-
-def _render_assess_report_html(body: dict, res: "AssessResponse", *, logo: Optional[str] = None, title: Optional[str] = None, client: Optional[str] = None, project: Optional[str] = None, snapshot_data_url: Optional[str] = None, brand_color: Optional[str] = None, signature: bool = False, sign_by: Optional[str] = None, sign_place: Optional[str] = None, notes: Optional[str] = None, source_ref: Optional[str] = None) -> str:
-    import html as _html
-    def esc(x: str) -> str:
-        try:
-            return _html.escape(x if isinstance(x, str) else str(x))
-        except Exception:
-            return str(x)
-    v = (res.viability or '').upper()
-    color = {'APTO':'#2e7d32','CONDICIONADO':'#f57f17','NO APTO':'#c62828'}.get(v, (brand_color or '#37474f'))
-    reasons = ''.join(f"<li>{esc(r)}</li>" for r in (res.reasons or []))
-    pe = res.params_effective or {}
-    rows = ''
-    for k in ['altura_maxima_m','retranqueo_min_m','setback_front_m','setback_side_m','setback_back_m','front_direction','front_direction_source']:
-        rows += f"<tr><td>{esc(k)}</td><td>{esc(pe.get(k))}</td></tr>"
-    area_txt = ''
-    try:
-        a = (res.geometry_summary or {}).get('area') or (res.geometry_summary or {}).get('area_m2')
-        if a is not None:
-            area_txt = f"<div class=muted>Área de parcela: {esc(round(float(a), 2))} m²</div>"
-    except Exception:
-        pass
-    muni = (body.get('municipio') or '').strip() if isinstance(body, dict) else ''
-    subz = (body.get('subzona') or '').strip() if isinstance(body, dict) else ''
-    loc_txt = ''
-    if muni or subz:
-        loc_txt = f"<div class=muted>Municipio: {esc(muni) or '—'}{(' · Subzona: ' + esc(subz)) if subz else ''}</div>"
-    import datetime as _dt
-    gen_date = _dt.datetime.now().strftime('%Y-%m-%d %H:%M')
-    ttl = esc(title) if title else 'Informe de Viabilidad'
-    cl = esc(client) if client else ''
-    pj = esc(project) if project else ''
-    logo_html = f"<img src='{esc(logo)}' alt='logo' style='height:40px'/>" if logo else ''
-    client_proj = ''
-    if cl or pj:
-        client_proj = f"<div class=muted>{('Cliente: ' + cl) if cl else ''}{(' · Proyecto: ' + pj) if pj else ''}</div>"
-    snap_html = ''
-    if snapshot_data_url:
-        try:
-            snap_html = f"<div style='margin-top:10px'><img alt='snapshot' src='{esc(snapshot_data_url)}' style='max-width:100%;border:1px solid #333;border-radius:6px'/></div>"
-        except Exception:
-            snap_html = ''
-    # Bloque de firma pre-renderizado para evitar expresiones complejas en la f-string principal
-    sig_html = ''
-    if signature:
-        try:
-            _sb = esc(sign_by) if sign_by else ''
-            _sp = esc(sign_place) if sign_place else 'Lugar y fecha'
-            _sb_txt = (f" · {_sb}") if _sb else ''
-            sig_html = (
-                "<h2>Firma</h2>"
-                "<div style=\"display:flex;gap:24px;flex-wrap:wrap;margin-top:8px\">"
-                "<div style=\"flex:1 1 280px;border:1px dashed var(--line);border-radius:6px;padding:12px;\">"
-                "<div style=\"height:70px\"></div>"
-                f"<div class=\"muted\" style=\"margin-top:6px\">Firma{_sb_txt}</div>"
-                "</div>"
-                "<div style=\"flex:1 1 240px;border:1px dashed var(--line);border-radius:6px;padding:12px;\">"
-                "<div style=\"height:70px\"></div>"
-                "<div class=\"muted\" style=\"margin-top:6px\">Sello</div>"
-                "</div>"
-                "<div style=\"flex:1 1 240px;border:1px dashed var(--line);border-radius:6px;padding:12px;\">"
-                "<div style=\"height:70px\"></div>"
-                f"<div class=\"muted\" style=\"margin-top:6px\">{_sp}</div>"
-                "</div>"
-                "</div>"
-            )
-        except Exception:
-            sig_html = ''
-    # Resumen ejecutivo
-    try:
-        muni = esc((res.context or {}).get('municipio') or (body.get('municipio') if isinstance(body, dict) else '') or '')
-    except Exception:
-        muni = ''
-    try:
-        subz = esc((res.context or {}).get('subzona') or (body.get('subzona') if isinstance(body, dict) else '') or '')
-    except Exception:
-        subz = ''
-    prov_kind = esc((_PLAN_PROVIDER_CACHE.get('kind') or 'desconocido'))
-    alt = pe.get('altura_maxima_m')
-    ret = pe.get('retranqueo_min_m')
-    ocu = pe.get('ocupacion_max') or pe.get('ocupacion')
-    edi = pe.get('edificabilidad_max_m2_m2') or pe.get('edificabilidad')
-    def _fmt(x):
-        try:
-            if x is None:
-                return '—'
-            if isinstance(x, (int, float)):
-                return str(round(float(x), 2))
-            return esc(str(x))
-        except Exception:
-            return esc(str(x))
-    resumen_html = (
-        f"<p class=muted>Zona: {muni or '—'}{(' · ' + subz) if subz else ''} · Proveedor: {prov_kind}. "
-        f"Viabilidad: <b>{esc(v or '—')}</b>. Altura máx: {_fmt(alt)} m; Retranqueo: {_fmt(ret)} m; "
-        f"Ocupación: {_fmt(ocu)}; Edificabilidad: {_fmt(edi)}.</p>"
-    )
-    ficha_rows = ''.join([
-        f"<tr><td>Municipio</td><td>{muni or '—'}</td></tr>",
-        f"<tr><td>Subzona</td><td>{subz or '—'}</td></tr>",
-        f"<tr><td>Proveedor</td><td>{prov_kind}</td></tr>",
-        f"<tr><td>Altura máxima (m)</td><td>{_fmt(alt)}</td></tr>",
-        f"<tr><td>Retranqueo mínimo (m)</td><td>{_fmt(ret)}</td></tr>",
-        f"<tr><td>Ocupación máx</td><td>{_fmt(ocu)}</td></tr>",
-        f"<tr><td>Edificabilidad máx</td><td>{_fmt(edi)}</td></tr>",
-    ])
-    src_row = ''
-    if source_ref:
-        try:
-            _s = esc(source_ref)
-            # Detectar si parece URL
-            if isinstance(source_ref, str) and (source_ref.startswith('http://') or source_ref.startswith('https://')):
-                _s = f"<a href=\"{_s}\" target=\"_blank\" rel=\"noopener\">{_s}</a>"
-            src_row = f"<tr><td>Fuente normativa</td><td>{_s}</td></tr>"
-        except Exception:
-            src_row = ''
-    notes_html = ''
-    if notes:
-        try:
-            notes_html = f"<section>\n      <h2>Observaciones</h2>\n      <p>{esc(notes)}</p>\n    </section>"
-        except Exception:
-            notes_html = ''
-    html = f"""
-<!doctype html>
-<html lang=es>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>{ttl}</title>
-  <style>
-    :root{{
-      --fg:#eaeaea; --bg:#111; --card:#1a1a1a; --line:#2e2e2e; --muted:#b0b0b0; --accent:{esc(brand_color) if brand_color else '#607d8b'};
-    }}
-    /* Pantalla (oscuro sobrio) */
-    body{{font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);margin:24px;line-height:1.45;}}
-    .card{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;max-width:980px;margin:0 auto;}}
-    h1{{margin:0 0 8px 0;font-size:24px;font-weight:650;letter-spacing:.2px;}}
-    h2{{margin:18px 0 8px 0;font-size:18px;font-weight:600;}}
-    h3{{margin:16px 0 8px 0;font-size:16px;font-weight:600;}}
-    .badge{{display:inline-block;padding:4px 12px;border-radius:18px;border:1px solid {color};color:{color};font-weight:600;}}
-    h2, h3{{ border-left:4px solid var(--accent); padding-left:8px; }}
-    .meta{{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin-top:2px}}
-    table{{width:100%;border-collapse:collapse;margin-top:10px;}}
-    th,td{{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;font-size:14px;vertical-align:top;}}
-    th{{color:var(--muted);font-weight:600;}}
-    ul{{margin:6px 0 0 20px;}}
-    .muted{{opacity:0.85;font-size:13px;}}
-    .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:16px;}}
-    .toolbar{{position:sticky;top:0;display:flex;gap:8px;margin-bottom:14px}}
-    .toolbar button{{padding:6px 10px;border:1px solid #4a4a4a;background:#1f1f1f;color:#eee;border-radius:6px;cursor:pointer}}
-    .toolbar button:hover{{background:#2a2a2a}}
-    footer{{margin-top:18px;color:var(--muted);font-size:12px}}
-    /* Impresión (claro, márgenes y tipografía más formal) */
-    @media print{{
-      body{{background:#fff;color:#000;margin:0;font-family:"Georgia", "Times New Roman", Times, serif;}}
-      .card{{border:none;border-radius:0;padding:0 2mm;}}
-      .toolbar{{display:none}}
-      a[href]::after{{content:"";}}
-      h1{{font-size:22px}}
-      h2{{font-size:16px}}
-      h3{{font-size:14px}}
-      @page{{margin:14mm}}
-    }}
-  </style>
-  <meta name="format-detection" content="telephone=no"/>
-  <meta name="color-scheme" content="dark light"/>
-</head>
-<body>
-  <div class="toolbar">
-    <button onclick="window.print()">Descargar PDF</button>
-    <button onclick="window.close()">Cerrar</button>
-  </div>
-  <div class="card">
-    <header style="display:flex;align-items:flex-start;gap:12px;justify-content:space-between">
-      <div style="display:flex;align-items:center;gap:12px">{logo_html}<h1 style="margin:0">{ttl}</h1></div>
-      <div class="muted">Generado: {esc(gen_date)}</div>
-    </header>
-    <div class="meta">
-      <span class="badge">{v}</span>
-      {loc_txt}
-      {client_proj}
-      {area_txt}
-    </div>
-    {resumen_html}
-    {snap_html}
-    <section>
-      <h2>Parámetros efectivos</h2>
-      <table>
-        <thead><tr><th>Parámetro</th><th>Valor</th></tr></thead>
-        <tbody>
-          {rows}
-        </tbody>
-      </table>
-    </section>
-    <section>
-      <h2>Ficha técnica</h2>
-      <table>
-        <tbody>
-          {ficha_rows}
-          {src_row}
-        </tbody>
-      </table>
-    </section>
-    <section class="grid2">
-      <div>
-        <h2>Viabilidad</h2>
-        <div class="muted">Resultado: {v or '—'}</div>
-      </div>
-      <div>
-        <h2>Motivos</h2>
-        <ul>{reasons or '<li>—</li>'}</ul>
-      </div>
-    </section>
-    {notes_html}
-    <section style="margin-top:14px;">
-      {sig_html}
-    </section>
-    <footer style="margin-top:14px;">
-      Este informe es orientativo y no sustituye a la verificación oficial del planeamiento vigente. Revise siempre la normativa y planos urbanísticos aplicables.
-    </footer>
-  </div>
-  
-</body>
-</html>
-"""
-    return html
 
 # ... (rest of the code remains the same)
 
@@ -2838,73 +1687,7 @@ async def zoning_volume(req: VolumeRequest):
                 "limiting_factor": "retranqueos",
                 "limiting_details": {"reason": diag["reason"]},
             }
-        # Calcular diagnóstico de qué limita el volumen (prioridad: ocupación > edificabilidad > retranqueos > altura)
-        limiting_factor = "altura"
-        limiting_details = {}
-        try:
-            from src.rules_engine import geometry_checks
-            parcel_area = None
-            try:
-                parcel_area = float(geometry_checks(req.geometry).area)
-            except Exception:
-                parcel_area = None
-            props = (feature.get('properties') or {})
-            build_area = props.get('area_m2')
-            setback_applied = float(props.get('setback_applied_m') or 0.0)
-            dir_applied = (props.get('directional_applicability') == 'applied')
-            # Considerar ocupación del plan si existe
-            occ_used = None
-            occ_cap = None
-            # Considerar edificabilidad del plan si existe: si el cap (m2 techo) es menor que el área de una planta edificable, entonces limita edificabilidad inmediatamente
-            edi_used = None
-            edi_cap = None
-            try:
-                if req.municipio and (parcel_area is not None) and (build_area is not None):
-                    from src.rules_engine import get_plan_params_dynamic
-                    _plan = get_plan_params_dynamic(req.municipio, req.subzona)
-                    occ_used = getattr(_plan, 'ocupacion_max', None)
-                    if occ_used is not None:
-                        occ_cap = float(parcel_area) * float(occ_used)
-                        try:
-                            ba = float(build_area)
-                        except Exception:
-                            ba = None
-                        # Prioridad 1: ocupación limita si el tope de m2 en planta es menor que el área edificable calculada
-                        if ba is not None and occ_cap is not None and occ_cap < (ba * 0.99):
-                            limiting_factor = 'ocupacion'
-                    edi_used = getattr(_plan, 'edificabilidad_max_m2_m2', None)
-                    if edi_used is not None:
-                        edi_cap = float(parcel_area) * float(edi_used)  # m2 techo total permitidos
-                        try:
-                            ba = float(build_area)  # m2 de una planta
-                        except Exception:
-                            ba = None
-                        # Prioridad 2: edificabilidad limita si incluso una planta excede el tope total de m2/m2
-                        if ba is not None and edi_cap is not None and edi_cap < (ba * 0.99) and limiting_factor == 'altura':
-                            limiting_factor = 'edificabilidad'
-            except Exception:
-                pass
-            # Prioridad 3: retranqueos si reducen el área edificable frente a la parcela y no limitaron ocupación/edificabilidad
-            if limiting_factor == 'altura' and (dir_applied or (setback_applied > 0.0)):
-                if (parcel_area is not None and build_area is not None):
-                    try:
-                        ba = float(build_area)
-                    except Exception:
-                        ba = None
-                    if ba is not None and ba <= parcel_area * 0.99:
-                        limiting_factor = 'retranqueos'
-            limiting_details = {
-                'parcel_area_m2': parcel_area,
-                'buildable_area_m2': build_area,
-                'setback_applied_m': props.get('setback_applied_m'),
-                'directional_applicability': props.get('directional_applicability'),
-                'ocupacion_max': occ_used,
-                'ocupacion_cap_area_m2': occ_cap,
-                'edificabilidad_max_m2_m2': edi_used,
-                'edificabilidad_cap_m2': edi_cap,
-            }
-        except Exception:
-            pass
+        limiting_factor, limiting_details = infer_limiting_factor(req.municipio, req.subzona, feature)
         _effective = _resolve_diag_verbosity(req.diagnostics_verbosity)
         return {
             "feature": _filter_volume_diagnostics(feature, _effective),
@@ -2920,226 +1703,15 @@ class VolumeExportRequest(VolumeRequest):
     format: Optional[str] = 'cityjson'  # 'cityjson' | 'gltf'
 
 
-def _extrude_polygon_to_cityjson(feature: dict) -> dict:
-    """Convierte un Feature 2D (Polygon/MultiPolygon, con o sin huecos) a CityJSON.
-    - Cada polígono se extruye como un Solid independiente.
-    - Top/Bottom incluyen huecos si existen; paredes para anillos exteriores e interiores.
-    """
-    if not feature or not isinstance(feature, dict):
-        raise ValueError("feature inválido")
-    geom = feature.get('geometry') or {}
-    gtype = geom.get('type')
-    h = float((feature.get('properties') or {}).get('height_m') or 0.0)
-    if h <= 0:
-        raise ValueError("height_m debe ser > 0")
-
-    # Acumuladores globales de vértices
-    vert_index: dict[tuple[float, float, float], int] = {}
-    vertices: list[list[float]] = []
-
-    def _vid(x: float, y: float, z: float) -> int:
-        key = (float(x), float(y), float(z))
-        idx = vert_index.get(key)
-        if idx is not None:
-            return idx
-        vertices.append([float(x), float(y), float(z)])
-        idx = len(vertices) - 1
-        vert_index[key] = idx
-        return idx
-
-    def _ensure_closed(ring) -> list[list[float]]:
-        # Acepta lista o tupla de puntos; fuerza a lista de listas
-        ring = [list(pt) for pt in ring]
-        if len(ring) < 4:
-            raise ValueError("Anillo inválido")
-        if ring[0] != ring[-1]:
-            return ring + [ring[0]]
-        return ring
-
-    def _process_polygon(poly_coords) -> dict:
-        # poly_coords: [outer, hole1, hole2, ...]
-        if not poly_coords or not isinstance(poly_coords, (list, tuple)):
-            raise ValueError("Coordenadas de polígono inválidas")
-        rings = [
-            _ensure_closed(r) for r in poly_coords
-        ]
-        # Construir loops de índices top/bottom por anillo
-        top_loops: list[list[int]] = []
-        bottom_loops: list[list[int]] = []
-        for ring in rings:
-            top_loop: list[int] = []
-            bottom_loop: list[int] = []
-            for (x, y) in ring[:-1]:  # omite cierre duplicado
-                bottom_loop.append(_vid(x, y, 0.0))
-                top_loop.append(_vid(x, y, h))
-            top_loops.append(top_loop)
-            bottom_loops.append(bottom_loop)
-        # Superficies: top con huecos, bottom con huecos invertidos, paredes por anillo
-        surfaces: list[list[list[int]]] = []
-        # Top: el primer bucle es exterior, el resto son huecos
-        surfaces.append(top_loops)
-        # Bottom: mismo conjunto de anillos pero invertidos
-        surfaces.append([list(reversed(loop)) for loop in bottom_loops])
-        # Walls: por cada anillo, por cada arista, un quad
-        for loop_idx, (b_loop, t_loop) in enumerate(zip(bottom_loops, top_loops)):
-            n = len(t_loop)
-            for i in range(n):
-                i2 = (i + 1) % n
-                v0 = b_loop[i]
-                v1 = b_loop[i2]
-                v2 = t_loop[i2]
-                v3 = t_loop[i]
-                surfaces.append([[v0, v1, v2, v3]])
-        # Semánticas: 2 superficies base + tantas paredes como quads
-        wall_count = sum(len(tl) for tl in top_loops)  # paredes por segmento; ajustaremos usando recuento real
-        # Nota: para consistencia, calculamos wall_count real:
-        wall_count = 0
-        for t_loop in top_loops:
-            wall_count += len(t_loop)
-        semantics = {
-            "surfaces": (
-                [{"type": "RoofSurface"}, {"type": "GroundSurface"}] +
-                ([{"type": "WallSurface"}] * wall_count)
-            )
-        }
-        return {
-            "type": "Solid",
-            "lod": 2,
-            "boundaries": [[s for s in surfaces]],
-            "semantics": semantics,
-        }
-
-    geometries: list[dict] = []
-    if gtype == 'Polygon':
-        coords = geom.get('coordinates')
-        geometries.append(_process_polygon(coords))
-    elif gtype == 'MultiPolygon':
-        for poly in (geom.get('coordinates') or []):
-            geometries.append(_process_polygon(poly))
-    else:
-        raise ValueError("Tipo de geometría no soportado para CityJSON (use Polygon o MultiPolygon)")
-
-    cityjson = {
-        "type": "CityJSON",
-        "version": "1.0",
-        "vertices": vertices,
-        "CityObjects": {
-            "building-1": {
-                "type": "Building",
-                "geometry": geometries,
-                "attributes": {
-                    "height_m": h,
-                    "area_m2": (feature.get('properties') or {}).get('area_m2')
-                }
-            }
-        }
-    }
-    return cityjson
-
-
 @app.post("/zoning/volume-export")
 async def zoning_volume_export(req: VolumeExportRequest, download: bool = False, strict: bool = False, gzip: bool = False):
-    fmt = (req.format or 'cityjson').strip().lower()
-    if fmt not in ('cityjson', 'gltf', 'glb'):
-        raise HTTPException(status_code=400, detail="Formato no soportado: use 'cityjson', 'gltf' o 'glb'")
-    # Reutilizar la lógica de /zoning/volume para construir el feature 2D con height
     try:
-        # Construye el feature usando la misma ruta que zoning_volume pero sin filtrar diagnósticos
-        altura = req.altura_maxima_m
-        retranqueo = req.retranqueo_min_m or 0.0
-        if altura is None:
-            if req.municipio:
-                from src.rules_engine import get_plan_params_dynamic
-                plan = get_plan_params_dynamic(req.municipio, req.subzona)
-                if plan.altura_maxima_m is None:
-                    raise ValueError("El plan municipal no devuelve altura máxima")
-                altura = plan.altura_maxima_m
-                if req.retranqueo_min_m is None and plan.retranqueo_min_m is not None:
-                    retranqueo = plan.retranqueo_min_m
-                pf = getattr(plan, 'setback_front_m', None)
-                ps = getattr(plan, 'setback_side_m', None)
-                pb = getattr(plan, 'setback_back_m', None)
-                pfd = getattr(plan, 'front_direction_default', None)
-                effective_front_direction = req.front_direction
-                has_plan_dir_setbacks = (pf is not None) or (ps is not None) or (pb is not None)
-                if (effective_front_direction is None and req.street_axis is None and bool(req.use_plan_front_default) and pfd and has_plan_dir_setbacks):
-                    effective_front_direction = pfd
-                if effective_front_direction is not None or req.street_axis is not None:
-                    setback_front = req.setback_front_m if req.setback_front_m is not None else pf
-                    setback_side = req.setback_side_m if req.setback_side_m is not None else ps
-                    setback_back = req.setback_back_m if req.setback_back_m is not None else pb
-                else:
-                    setback_front = req.setback_front_m
-                    setback_side = req.setback_side_m
-                    setback_back = req.setback_back_m
-            else:
-                raise HTTPException(status_code=400, detail="altura_maxima_m requerida si no se especifica municipio")
-        else:
-            setback_front = req.setback_front_m
-            setback_side = req.setback_side_m
-            setback_back = req.setback_back_m
-
-        feature = None
-        try:
-            # Ruta rápida para GLTF/GLB: si no es estricto y la geometría es Polygon simple sin huecos,
-            # evitamos cálculos complejos y usamos directamente la geometría aportada.
-            if (not strict) and fmt in ('gltf', 'glb') and isinstance(req.geometry, dict):
-                g = req.geometry
-                if (g.get('type') == 'Polygon') and isinstance(g.get('coordinates'), list):
-                    coords = g.get('coordinates')
-                    if len(coords) == 1 and len(coords[0]) >= 4:  # un único anillo, al menos 4 puntos (cerrado)
-                        feature = {
-                            'type': 'Feature',
-                            'geometry': g,
-                            'properties': {
-                                'height_m': float(altura or 0.0),
-                                'area_m2': None,
-                            }
-                        }
-            # Si no se aplicó la ruta rápida, usar el cómputo completo de la envolvente
-            if feature is None:
-                feature = compute_building_envelope(
-                    req.geometry,
-                    VolumeParams(
-                        altura_maxima_m=altura,
-                        retranqueo_min_m=retranqueo,
-                        setback_front_m=setback_front,
-                        setback_side_m=setback_side,
-                        setback_back_m=setback_back,
-                        front_direction=req.front_direction,
-                    ),
-                    street_axis=req.street_axis,
-                    front_direction_source=None,
-                    crs=getattr(req, 'crs', None),
-                )
-        except Exception:
-            # Fallback: para CityJSON, si la extrusión de la envolvente falla (p.ej. por huecos/MultiPolygon),
-            # intentamos extruir la geometría original cuando hay altura y sin aplicar retranqueos complejos.
-            if (not strict) and fmt == 'cityjson' and isinstance(req.geometry, dict) and req.geometry.get('type') in ('Polygon', 'MultiPolygon'):
-                feature = {
-                    'type': 'Feature',
-                    'geometry': req.geometry,
-                    'properties': {
-                        'height_m': float(altura or 0.0),
-                        'area_m2': None,
-                    }
-                }
-            else:
-                raise
-        # Considerar "agotado" si no hay feature o si el área es prácticamente nula
-        def _is_exhausted(feat: dict | None) -> bool:
-            try:
-                if not feat:
-                    return True
-                props = feat.get('properties') or {}
-                area = props.get('area_m2')
-                if area is None:
-                    return False
-                return float(area) <= 1e-8
-            except Exception:
-                return False
-
-        if _is_exhausted(feature):
+        fmt = normalize_volume_export_format(req.format)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        feature = build_volume_export_feature(req, fmt, strict=strict)
+        if is_exhausted_feature(feature):
             import json as _json
             if fmt == 'cityjson' and strict:
                 # Sin envolvente y en modo estricto no hay fallback
@@ -3236,10 +1808,12 @@ async def zoning_volume_export(req: VolumeExportRequest, download: bool = False,
                     _EXP_SIZE.labels(format=fmt, status='200').observe(size_bytes)
             except Exception:
                 pass
-            # Para GLTF, devolver siempre Response con el JSON serializado
+            # Para GLTF, devolver JSON envuelto cuando download=false (consistencia con diagnostics)
+            if fmt == 'gltf' and not download:
+                return {"gltf": payload}
             media = 'model/gltf+json'
             fname = 'building.gltf'
-            return Response(content=content, media_type=media, headers=({"Content-Disposition": f"attachment; filename=\"{fname}\""} if download else {}))
+            return Response(content=content, media_type=media, headers={"Content-Disposition": f"attachment; filename=\"{fname}\""} if download else {})
     except HTTPException as he:
         try:
             if _metrics_env_enabled and _metrics_ready:
@@ -3258,132 +1832,89 @@ async def zoning_volume_export(req: VolumeExportRequest, download: bool = False,
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def _extrude_polygon_to_gltf(feature: dict) -> dict:
-    """Convierte el Feature 2D en un GLTF 2.0 embebido (data URI) sin dependencias externas.
-    Limitaciones: Polygon sin huecos.
-    """
-    geom = feature.get('geometry') or {}
-    if geom.get('type') != 'Polygon':
-        raise ValueError("Solo se soporta Polygon sin huecos para exportación GLTF")
-    coords = geom.get('coordinates') or []
-    if len(coords) == 0 or len(coords) > 1:
-        raise ValueError("No se soportan huecos ni geometrías vacías en GLTF")
-    ring = coords[0]
-    if ring and ring[0] == ring[-1]:
-        ring = ring[:-1]
-    if len(ring) < 3:
-        raise ValueError("Anillo inválido")
-    h = float((feature.get('properties') or {}).get('height_m') or 0.0)
-    if h <= 0:
-        raise ValueError("height_m debe ser > 0")
-    # Construir vértices: bottom seguido de top
-    bottom = [(float(x), float(y), 0.0) for (x, y) in ring]
-    top = [(float(x), float(y), h) for (x, y) in ring]
-    vertices = bottom + top
-    n = len(ring)
-    # Triangulación tipo fan para top (sentido CCW) y bottom (CW)
-    indices: list[int] = []
-    # top fan: índices desplazados por n (top start)
-    top_off = n
-    for i in range(1, n - 1):
-        indices.extend([top_off, top_off + i, top_off + i + 1])
-    # bottom fan invertido
-    for i in range(1, n - 1):
-        indices += [0, i + 1, i]
-    # lados como dos triángulos por arista
-    for i in range(n):
-        i2 = (i + 1) % n
-        b0 = i
-        b1 = i2
-        t1 = top_off + i2
-        t0 = top_off + i
-        # (b0, b1, t1) y (b0, t1, t0)
-        indices += [b0, b1, t1, b0, t1, t0]
-    # Empaquetar binarios
-    import struct, base64
-    # Positions float32
-    pos_bytes = struct.pack('<' + 'f' * (len(vertices) * 3), *[c for v in vertices for c in v])
-    # Padding a múltiplo de 4
-    def _pad4(b: bytes) -> bytes:
-        pad = (4 - (len(b) % 4)) % 4
-        return b + (b'\x00' * pad)
-    pos_bytes = _pad4(pos_bytes)
-    # Indices uint32
-    idx_bytes = struct.pack('<' + 'I' * len(indices), *indices)
-    idx_bytes = _pad4(idx_bytes)
-    # Concatenar y crear bufferViews
-    buf = pos_bytes + idx_bytes
-    uri = 'data:application/octet-stream;base64,' + base64.b64encode(buf).decode('ascii')
-    # bufferViews
-    pos_view = {"buffer": 0, "byteOffset": 0, "byteLength": len(pos_bytes), "target": 34962}
-    idx_view = {"buffer": 0, "byteOffset": len(pos_bytes), "byteLength": len(idx_bytes), "target": 34963}
-    # accessors
-    # Positions accessor
-    xs = [v[0] for v in vertices]; ys = [v[1] for v in vertices]; zs = [v[2] for v in vertices]
-    minv = [min(xs), min(ys), min(zs)]
-    maxv = [max(xs), max(ys), max(zs)]
-    pos_acc = {"bufferView": 0, "componentType": 5126, "count": len(vertices), "type": "VEC3", "min": minv, "max": maxv}
-    idx_acc = {"bufferView": 1, "componentType": 5125, "count": len(indices), "type": "SCALAR"}
-    gltf = {
-        "asset": {"version": "2.0", "generator": "Asistente Normativa Galicia"},
-        "buffers": [{"byteLength": len(buf), "uri": uri}],
-        "bufferViews": [pos_view, idx_view],
-        "accessors": [pos_acc, idx_acc],
-        "meshes": [{
-            "primitives": [{
-                "attributes": {"POSITION": 0},
-                "indices": 1
-            }]
-        }],
-        "nodes": [{"mesh": 0, "name": "building"}],
-        "scenes": [{"nodes": [0]}],
-        "scene": 0
-    }
-    return gltf
+# ------------------------------
+# Inventario de planeamiento (CSV oficial Xunta)
+# ------------------------------
+_INV_CACHE = {
+  'path': None,
+  'mtime': None,
+  'rows': None,
+}
+
+def _get_inventario_path() -> str:
+  p = os.getenv('INVENTARIO_PLANEAMENTO_PATH')
+  if p and os.path.isfile(p):
+    return p
+  for cand in (
+    os.path.join('datos', 'inventario_planeamento.csv'),
+    os.path.join('app', 'data', 'inventario_planeamento.csv'),
+  ):
+    if os.path.isfile(cand):
+      return cand
+  return os.path.join('datos', 'inventario_planeamento.csv')
+
+def _load_inventario() -> list[dict]:
+  path = _get_inventario_path()
+  try:
+    mtime = os.path.getmtime(path)
+  except Exception:
+    return []
+  if _INV_CACHE['rows'] is not None and _INV_CACHE['path'] == path and _INV_CACHE['mtime'] == mtime:
+    return _INV_CACHE['rows'] or []
+  rows: list[dict] = []
+  try:
+    with open(path, 'r', encoding='utf-8-sig') as f:
+      rdr = csv.DictReader(f)
+      for r in rdr:
+        rows.append(r)
+    _INV_CACHE.update({'path': path, 'mtime': mtime, 'rows': rows})
+    return rows
+  except Exception:
+    return []
+
+@app.get('/planeamento/inventario')
+def planeamento_inventario(municipio: Optional[str] = None):
+  """Devuelve el inventario de planeamiento (CSV Xunta). Si se indica municipio, filtra por coincidencia case-insensitive.
+  Respuesta: { count, rows }
+  """
+  rows = _load_inventario()
+  if not rows:
+    return {'count': 0, 'rows': []}
+  if municipio:
+    target = (municipio or '').strip()
+    def _norm(s: str) -> str:
+      try:
+        import unicodedata as _ud
+        return ''.join(ch for ch in _ud.normalize('NFD', s.lower()) if _ud.category(ch) != 'Mn')
+      except Exception:
+        return s.lower()
+    out = [r for r in rows if _norm(str(r.get('CONCELLO') or r.get('Concello') or r.get('municipio') or '')) == _norm(target)]
+    return {'count': len(out), 'rows': out}
+  return {'count': len(rows), 'rows': rows[:5000]}
 
 
-def _gltf_to_glb_bytes(gltf: dict) -> bytes:
-    """Convierte un GLTF 2.0 (JSON) con buffer embebido (data URI base64) a GLB binario.
-    Requisitos: un único buffer con "uri" data: y sin recursos externos.
-    """
-    import base64 as _b64
-    import json as _json
-    import struct as _struct
+# ------------------------------
+# Subzonas espaciales (Fase 2 GeoLibre)
+# ------------------------------
+@app.get("/planeamiento/subzonas")
+def planeamento_subzonas(municipio: Optional[str] = None):
+  """Devuelve el GeoJSON de subzonas espaciales piloto.
 
-    buffers = gltf.get('buffers') or []
-    if len(buffers) != 1:
-        raise ValueError("Se requiere un único buffer embebido")
-    uri = buffers[0].get('uri')
-    if not uri or not uri.startswith('data:'):
-        raise ValueError("Buffer debe estar embebido como data URI")
-    # extrae base64 después de ','
-    try:
-        b64 = uri.split(',', 1)[1]
-        bin_data = _b64.b64decode(b64)
-    except Exception as e:
-        raise ValueError(f"URI embebido inválido: {e}")
-    # Actualiza buffers: GLB no usa uri, solo byteLength
-    buffers[0].pop('uri', None)
-    buffers[0]['byteLength'] = len(bin_data)
+  Si se indica municipio, filtra por coincidencia case-insensitive sin acentos.
+  """
+  return get_subzones(municipio)
 
-    # JSON chunk
-    json_bytes = _json.dumps(gltf, separators=(',', ':')).encode('utf-8')
-    def _pad4(b: bytes) -> bytes:
-        rem = (4 - (len(b) % 4)) % 4
-        return b + (b' ' * rem)
-    json_chunk = _pad4(json_bytes)
-    bin_chunk = _pad4(bin_data)
 
-    # GLB header
-    magic = 0x46546C67  # 'glTF'
-    version = 2
-    total_length = 12 + 8 + len(json_chunk) + 8 + len(bin_chunk)
-    header = _struct.pack('<III', magic, version, total_length)
+@app.get("/planeamiento/subzonas/municipios")
+def planeamento_subzonas_municipios():
+  """Devuelve la lista de municipios que tienen subzonas espaciales."""
+  return {"municipios": list_municipios_with_subzones()}
 
-    # Chunks: JSON (type 0x4E4F534A 'JSON'), BIN (type 0x004E4942 'BIN\0')
-    JSON_TYPE = 0x4E4F534A
-    BIN_TYPE = 0x004E4942
-    json_header = _struct.pack('<II', len(json_chunk), JSON_TYPE)
-    bin_header = _struct.pack('<II', len(bin_chunk), BIN_TYPE)
 
-    return header + json_header + json_chunk + bin_header + bin_chunk
+@app.get("/planeamiento/subzonas/lookup")
+def planeamento_subzonas_lookup(lon: float, lat: float):
+  """Busca la subzona espacial que contiene el punto (lon, lat) en EPSG:4326."""
+  props = find_subzone_for_point(lon, lat)
+  if props is None:
+    return {"found": False, "subzona": None}
+  return {"found": True, "subzona": props}

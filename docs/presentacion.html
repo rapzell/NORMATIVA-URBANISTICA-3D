@@ -20,14 +20,15 @@
 </head>
 <body>
   <h1>Normativa Urbanística Galicia 3D <span class="badge">Fase: desarrollo</span></h1>
-  <p class="muted">Visor 3D con edificios OSM y análisis de normativa. Backend FastAPI, Frontend Three.js + MapLibre.</p>
+  <p class="muted">Visor urbanístico con análisis normativo y hoja de ruta 100% gratuita. Backend FastAPI, frontend actual Three.js + MapLibre y propuesta de integración progresiva con GeoLibre.</p>
 
   <h2>Visión y objetivos</h2>
   <ul>
     <li><b>Explorar en 3D</b> el entorno urbano con edificios OSM y relieve.</li>
     <li><b>Aplicar normativa</b> (altura, retranqueos, ocupación, etc.) para generar volúmenes y validar casos.</li>
     <li><b>Informes reproducibles</b> con parámetros y geometrías, exportables a GLB y CityJSON.</li>
-    <li><b>IA (en evolución)</b>: extracción de reglas desde PDFs y preguntas/respuestas sobre normativa.</li>
+    <li><b>IA (en evolución)</b>: extracción de reglas desde PDFs y preguntas/respuestas sobre normativa, con objetivo de operación 100% gratuita.</li>
+    <li><b>Evolución GIS</b>: integración progresiva con GeoLibre para cartografía avanzada, capas legales y análisis espacial exploratorio.</li>
   </ul>
 
   <h2>Tecnologías clave</h2>
@@ -37,6 +38,7 @@
       <ul>
         <li>Three.js (modelos GLB/GLTF)</li>
         <li>MapLibre GL JS (mapa y extrusiones)</li>
+        <li>GeoLibre como evolución GIS propuesta</li>
         <li>Overpass API (OSM) con <i>mirrors</i> y rotación</li>
       </ul>
     </div>
@@ -45,6 +47,7 @@
       <ul>
         <li>FastAPI (Python)</li>
         <li>Proveedor de planes CSV/mock</li>
+        <li>Motor geométrico con Shapely</li>
         <li>Endpoints <code>/zoning/*</code>, <code>/proxy/*</code>, <code>/metrics</code></li>
       </ul>
     </div>
@@ -72,8 +75,9 @@
     <li class="ok"><b>Exportaciones</b>: GLB/GLTF (visor) y CityJSON (descarga) operativas.</li>
     <li class="ok"><b>Informes demo</b>: HTML autoincluidos en <code>reports/</code>.</li>
     <li class="wip"><b>Normativa</b>: proveedor CSV/mock funcional; ampliar dataset municipal.</li>
-    <li class="wip"><b>IA</b>: base para extracción/QA; integración avanzada pendiente.</li>
-    <li class="wip"><b>Docs</b>: README amplio; presentación ejecutiva en progreso.</li>
+    <li class="wip"><b>IA</b>: base para extracción/QA y gateway configurable ya iniciado; falta cerrar configuración gratuita por defecto y pruebas end-to-end.</li>
+    <li class="wip"><b>GeoLibre</b>: integración propuesta como visor GIS principal en fases, manteniendo el visor 3D actual para volumetría.</li>
+    <li class="wip"><b>Docs</b>: guía técnica ampliada y propuesta GeoLibre ya documentadas.</li>
   </ul>
 
   <h2>Avance estimado</h2>
@@ -89,9 +93,9 @@
   <h2>Roadmap próximo</h2>
   <ul>
     <li>QA de Overpass en 4–5 ciudades (feats y p50 en panel de estado).</li>
-    <li>Ampliar CSV de planes municipales y pruebas de regresión.</li>
-    <li>Mejorar presentación e incorporar ejemplos guiados.</li>
-    <li>Integración progresiva de IA para extracción desde PDFs municipales.</li>
+    <li>Ampliar CSV de planes municipales y añadir una capa geoespacial de subzonas.</li>
+    <li>Introducir GeoLibre como vista GIS paralela y futura interfaz cartográfica principal.</li>
+    <li>Cerrar la configuración gratuita por defecto del gateway IA y validar un flujo real end-to-end con proveedores OpenAI-compatible.</li>
   </ul>
 
   <p class="muted">Repo: NORMATIVA-URBANISTICA-3D — Esta guía refleja un estado en desarrollo; pueden cambiar detalles sin previo aviso.</p>

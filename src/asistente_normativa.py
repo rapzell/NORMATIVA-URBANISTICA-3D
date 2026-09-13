@@ -1,4 +1,3 @@
-import faiss
 import json
 from sentence_transformers import SentenceTransformer, CrossEncoder
 import numpy as np
@@ -31,11 +30,19 @@ def cargar_recursos():
     chunks = None
     index = None
     errors = []
+    # Importar FAISS de forma opcional
+    try:
+        import faiss  # type: ignore
+    except Exception:
+        faiss = None  # type: ignore
     # Nombres preferentes
     try:
         with open('datos/normativa_chunks.json', 'r', encoding='utf-8') as f:
             chunks = json.load(f)
-        index = faiss.read_index('datos/normativa.index')
+        if faiss is not None:
+            index = faiss.read_index('datos/normativa.index')
+        else:
+            raise RuntimeError('faiss_unavailable')
     except Exception as e:
         errors.append(str(e))
     # Fallback legacy
@@ -43,7 +50,10 @@ def cargar_recursos():
         try:
             with open('datos/fragmentos_limpios.json', 'r', encoding='utf-8') as f:
                 chunks = json.load(f)
-            index = faiss.read_index('datos/faiss_index.bin')
+            if faiss is not None:
+                index = faiss.read_index('datos/faiss_index.bin')
+            else:
+                raise RuntimeError('faiss_unavailable')
         except Exception as e:
             errors.append(str(e))
     if chunks is None or index is None:
@@ -132,6 +142,12 @@ def cargar_recursos():
 
 def buscar_fragmentos(pregunta, chunks, index, bi_encoder, cross_encoder, top_k_retrieval=8, top_k_rerank=6):
     """Realiza una búsqueda semántica y re-ranking para encontrar los fragmentos más relevantes."""
+    if not chunks or index is None or bi_encoder is None or cross_encoder is None:
+        return []
+    try:
+        import faiss  # type: ignore
+    except Exception:
+        return []
     question_embedding = bi_encoder.encode([pregunta], convert_to_tensor=True, show_progress_bar=False).cpu().numpy()
     faiss.normalize_L2(question_embedding)
 
@@ -911,7 +927,7 @@ def generar_respuesta(pregunta, chunks_relevantes, llm):
         "Respuesta (máx 3 oraciones):"
     )
 
-    # Generar la respuesta usando gateway con fallback (OpenAI -> local)
+    # Generar la respuesta usando gateway configurable con fallback a local/heurístico
     respuesta = generate_with_fallback(prompt, llm)
 
     # Post-procesado: cortar en marcadores y limitar a 3 oraciones
@@ -950,7 +966,7 @@ def main():
     parser = argparse.ArgumentParser(description="Asistente Normativa Galicia")
     parser.add_argument("--query", type=str, default=None, help="Pregunta a realizar (modo no interactivo)")
     parser.add_argument("--max-context-chars", type=int, default=2000, help="Máximo de caracteres de contexto a incluir")
-    parser.add_argument("--model", type=str, choices=["fast", "balanced", "advanced"], default="balanced", help="Perfil de modelo: fast (TinyLlama), balanced (Mistral) u advanced (Ollama gpt-oss:20b con fallback local)")
+    parser.add_argument("--model", type=str, choices=["fast", "balanced", "advanced"], default="balanced", help="Perfil de modelo local: fast (TinyLlama), balanced (Mistral) u advanced (prioriza proveedor externo configurado y conserva fallback local)")
     args = parser.parse_args()
 
     # Permitir ajustar el límite de contexto desde CLI
@@ -959,9 +975,10 @@ def main():
     # Perfil de modelo seleccionado
     global MODEL_PROFILE
     if args.model == "advanced":
-        # Usar Ollama como proveedor principal y TinyLLaMA como fallback local
-        os.environ.setdefault("MODEL_PROVIDER", "ollama")
-        os.environ.setdefault("OLLAMA_MODEL", "gpt-oss:20b")
+        # Priorizar un proveedor externo ya configurado; si no existe, mantener compatibilidad con Ollama.
+        os.environ.setdefault("MODEL_PROVIDER", os.getenv("MODEL_PROVIDER", "ollama"))
+        if os.getenv("MODEL_PROVIDER", "").lower() == "ollama":
+            os.environ.setdefault("OLLAMA_MODEL", "gpt-oss:20b")
         MODEL_PROFILE = "fast"  # fallback local ligero
     else:
         MODEL_PROFILE = args.model

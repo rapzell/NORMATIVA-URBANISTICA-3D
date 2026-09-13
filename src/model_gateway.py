@@ -2,35 +2,112 @@ import os
 import time
 import random
 import threading
-from typing import Optional
+from typing import Dict, List
 
 # Environment-driven configuration
 MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "local").lower()  # initial read; actual selection is re-read per call
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # initial default
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")  # initial default
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")  # initial default
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # legacy default
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")  # legacy default
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")  # legacy default
 TIMEOUT_S = float(os.getenv("TIMEOUT_S", "45"))
 
+_OPENAI_COMPAT_PRESETS: Dict[str, Dict[str, str]] = {
+    "openai": {"base_url": "", "model_env": "OPENAI_MODEL", "api_key_env": "OPENAI_API_KEY"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+    "groq": {"base_url": "https://api.groq.com/openai/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+    "mistral": {"base_url": "https://api.mistral.ai/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+    "cerebras": {"base_url": "https://api.cerebras.ai/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+    "huggingface": {"base_url": "https://api-inference.huggingface.co/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+    "freellm": {"base_url": "http://localhost:3000/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+}
 
-def _call_openai(prompt: str, timeout: float) -> str:
+
+# Global lock to serialize local generation calls (ctransformers is not thread-safe on Windows)
+_LOCAL_LOCK = threading.Lock()
+
+
+def _get_timeout_s() -> float:
+    try:
+        return float(os.getenv("TIMEOUT_S", str(TIMEOUT_S)))
+    except Exception:
+        return TIMEOUT_S
+
+
+def _get_temperature() -> float:
+    try:
+        return float(os.getenv("MODEL_TEMPERATURE", os.getenv("OPENAI_TEMPERATURE", "0.2")))
+    except Exception:
+        return 0.2
+
+
+def _get_max_tokens() -> int:
+    raw = os.getenv("MODEL_MAX_TOKENS") or os.getenv("OPENAI_MAX_TOKENS") or "600"
+    try:
+        return int(raw)
+    except Exception:
+        return 600
+
+
+def _get_provider_config(provider: str) -> Dict[str, str]:
+    normalized = (provider or "").strip().lower()
+    preset = dict(_OPENAI_COMPAT_PRESETS.get(normalized, {}))
+    model_env = preset.get("model_env", "MODEL_NAME")
+    api_key_env = preset.get("api_key_env", "MODEL_API_KEY")
+
+    if normalized == "openai":
+        model_name = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL", OPENAI_MODEL)
+        api_key = os.getenv("MODEL_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+        base_url = os.getenv("MODEL_BASE_URL") or os.getenv("OPENAI_BASE_URL", preset.get("base_url", ""))
+    else:
+        model_name = os.getenv("MODEL_NAME") or os.getenv(model_env, "")
+        api_key = os.getenv("MODEL_API_KEY") or os.getenv(api_key_env, "")
+        base_url = os.getenv("MODEL_BASE_URL") or preset.get("base_url", "")
+
+    return {
+        "provider": normalized,
+        "base_url": base_url.strip(),
+        "model_name": model_name.strip(),
+        "api_key": api_key.strip(),
+    }
+
+
+
+def _call_openai_compatible(prompt: str, provider: str, timeout: float) -> str:
     try:
         from openai import OpenAI  # type: ignore
     except Exception as e:
         raise RuntimeError(f"openai_sdk_missing: {e}")
 
-    client = OpenAI()
+    cfg = _get_provider_config(provider)
+    model_name = cfg["model_name"]
+    if not model_name:
+        raise RuntimeError(f"{provider}_model_missing")
+
+    client_kwargs = {}
+    if cfg["api_key"]:
+        client_kwargs["api_key"] = cfg["api_key"]
+    if cfg["base_url"]:
+        client_kwargs["base_url"] = cfg["base_url"]
+
     try:
-        model_name = os.getenv("OPENAI_MODEL", OPENAI_MODEL)
+        client = OpenAI(**client_kwargs)
         resp = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=600,
+            temperature=_get_temperature(),
+            max_tokens=_get_max_tokens(),
             timeout=timeout,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
-        raise RuntimeError(f"openai_error: {e}")
+        raise RuntimeError(f"{provider}_error: {e}")
+
+
+
+def _call_openai(prompt: str, timeout: float) -> str:
+    return _call_openai_compatible(prompt, "openai", timeout)
+
 
 
 def _call_ollama(prompt: str, timeout: float) -> str:
@@ -68,6 +145,7 @@ def _call_ollama(prompt: str, timeout: float) -> str:
         raise RuntimeError(f"ollama_error: {e}")
 
 
+
 def _call_local(llm, prompt: str) -> str:
     # ctransformers models are callable. Conservative decoding to reduce repetition and length.
     import os as _os
@@ -79,7 +157,7 @@ def _call_local(llm, prompt: str) -> str:
     # Stop tokens por defecto para cortar respuestas largas o nuevas preguntas
     default_stops = [
         "</s>",
-        "\n\n",           # salto doble de párrafo
+        "\n\n",
         "Fuentes:",
         "**Fuentes",
         "Pregunta:",
@@ -102,8 +180,6 @@ def _call_local(llm, prompt: str) -> str:
     ).strip()
 
 
-# Global lock to serialize local generation calls (ctransformers is not thread-safe on Windows)
-_LOCAL_LOCK = threading.Lock()
 
 def _call_local_with_timeout(llm, prompt: str, timeout: float) -> str:
     # To avoid Windows access violations, avoid background threads and serialize access.
@@ -113,59 +189,71 @@ def _call_local_with_timeout(llm, prompt: str, timeout: float) -> str:
         return _call_local(llm, prompt)
 
 
-def generate_with_fallback(prompt: str, llm_local) -> str:
-    """Generate using OpenAI if configured; otherwise use local llm.
-    Falls back to GPT-4o then local if low response or errors.
-    """
-    def low_response(s: str) -> bool:
-        # very short or empty
-        return len(s.strip()) < 40
 
-    # Re-read provider dynamically per call
-    provider = os.getenv("MODEL_PROVIDER", MODEL_PROVIDER).lower()
+def _iter_provider_attempts() -> List[str]:
+    provider = os.getenv("MODEL_PROVIDER", MODEL_PROVIDER).strip().lower() or "local"
+    raw_chain = os.getenv("MODEL_FALLBACK_CHAIN", "")
+    seen = set()
+    attempts: List[str] = []
+    for name in [provider] + [p.strip().lower() for p in raw_chain.split(",") if p.strip()]:
+        if name and name not in seen:
+            attempts.append(name)
+            seen.add(name)
+    return attempts or ["local"]
 
-    # Try OpenAI primary model if enabled
-    if provider == "openai":
-        # up to 2 attempts on the chosen model
-        for attempt in range(2):
-            try:
-                ans = _call_openai(prompt, TIMEOUT_S)
-                if not low_response(ans):
-                    return ans
-            except Exception:
-                pass
-            time.sleep(0.8 * (2 ** attempt) + random.uniform(0, 0.2))
 
-        # fallback to gpt-4o if different from primary
-        if os.getenv("OPENAI_MODEL", OPENAI_MODEL).lower() != "gpt-4o":
-            try:
-                os.environ["OPENAI_MODEL"] = "gpt-4o"
-                ans = _call_openai(prompt, TIMEOUT_S)
-                if not low_response(ans):
-                    return ans
-            except Exception:
-                pass
 
-    # Try Ollama primary model if enabled
+def _provider_attempt(provider: str, prompt: str, timeout: float) -> str:
+    if provider == "local":
+        raise RuntimeError("local_provider_requires_llm")
     if provider == "ollama":
-        for attempt in range(2):
-            try:
-                ans = _call_ollama(prompt, TIMEOUT_S)
-                if not low_response(ans):
-                    return ans
-            except Exception:
-                pass
-            time.sleep(0.8 * (2 ** attempt) + random.uniform(0, 0.2))
+        return _call_ollama(prompt, timeout)
+    if provider in _OPENAI_COMPAT_PRESETS:
+        return _call_openai_compatible(prompt, provider, timeout)
+    raise RuntimeError(f"unsupported_provider: {provider}")
 
-    # final fallback: local model with timeout and fast retry
+
+
+def _local_fallback(prompt: str, llm_local, timeout: float) -> str:
     try:
-        return _call_local_with_timeout(llm_local, prompt, TIMEOUT_S)
+        return _call_local_with_timeout(llm_local, prompt, timeout)
     except Exception as e:
-        # As última opción, reducir aún más y reintentar una vez
         os.environ["LOCAL_MAX_NEW_TOKENS"] = "80"
         os.environ["LOCAL_TEMPERATURE"] = "0.15"
         os.environ["LOCAL_TOP_P"] = "0.8"
         try:
-            return _call_local_with_timeout(llm_local, prompt, TIMEOUT_S)
+            return _call_local_with_timeout(llm_local, prompt, timeout)
         except Exception as e2:
             return f"No ha sido posible generar respuesta (local fallo): {e2}"
+
+
+
+def generate_with_fallback(prompt: str, llm_local) -> str:
+    """Generate using the configured provider chain and fall back to local llm when needed."""
+
+    def low_response(s: str) -> bool:
+        txt = s.strip()
+        if not txt:
+            return True
+        try:
+            min_chars = int(os.getenv("MODEL_MIN_RESPONSE_CHARS", "8"))
+        except Exception:
+            min_chars = 8
+        return len(txt) < min_chars
+
+    timeout = _get_timeout_s()
+    attempts = _iter_provider_attempts()
+
+    for provider in attempts:
+        if provider == "local":
+            break
+        for attempt in range(2):
+            try:
+                ans = _provider_attempt(provider, prompt, timeout)
+                if not low_response(ans):
+                    return ans
+            except Exception:
+                pass
+            time.sleep(0.8 * (2 ** attempt) + random.uniform(0, 0.2))
+
+    return _local_fallback(prompt, llm_local, timeout)

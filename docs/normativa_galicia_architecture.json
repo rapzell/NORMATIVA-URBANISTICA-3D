@@ -1,0 +1,382 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Arquitectura técnica de NORMATIVA GALICIA 3D",
+    "output": "normativa_galicia_architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/rapzell/NORMATIVA-GALICIA-3D",
+      "provider": "github",
+      "revision": "2f9775c06f3798c992ba0002f887e206d01f9db0"
+    },
+    "views": [
+      {
+        "id": "viewer-request-path",
+        "label": "Ruta visor/API",
+        "focus": ["user", "viewer", "api", "rules", "volume"],
+        "note": "Sigue el flujo principal desde el visor hasta la evaluación y generación de volumen."
+      },
+      {
+        "id": "municipal-data",
+        "label": "Datos municipales",
+        "focus": ["api", "plan_csv", "inventory", "gis"],
+        "note": "Aísla las fuentes de planeamiento y la inferencia externa de subzona."
+      },
+      {
+        "id": "qa-stack",
+        "label": "Asistente IA",
+        "focus": ["api", "qa", "llm"],
+        "note": "Resume la ruta RAG y sus fallbacks cuando faltan recursos o modelos."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Usuario técnico",
+      "sublabel": "Browser / operador",
+      "pos": [30, 280],
+      "size": [140, 60]
+    },
+    {
+      "id": "viewer",
+      "type": "frontend",
+      "label": "Visor Three.js",
+      "sublabel": "/viewer estático",
+      "tag": "same-origin UI",
+      "pos": [240, 280],
+      "size": [150, 64],
+      "sources": [
+        {
+          "path": "web/examples/threejs-viewer/index.html",
+          "label": "viewer UI"
+        },
+        {
+          "path": "docs/VISOR_QUICKSTART.md",
+          "line": 18,
+          "end_line": 25,
+          "label": "flujo visor"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI app",
+      "sublabel": "app/main.py",
+      "brand": "fastapi",
+      "tag": "endpoints + estáticos",
+      "pos": [470, 280],
+      "size": [150, 64],
+      "sources": [
+        {
+          "path": "app/main.py",
+          "line": 214,
+          "end_line": 245,
+          "label": "app + mounts"
+        },
+        {
+          "path": "app/main.py",
+          "line": 983,
+          "end_line": 1019,
+          "label": "root + metrics"
+        }
+      ]
+    },
+    {
+      "id": "rules",
+      "type": "backend",
+      "label": "Rules engine",
+      "sublabel": "zoning/analyze",
+      "tag": "clasificación normativa",
+      "pos": [700, 180],
+      "size": [150, 64],
+      "sources": [
+        {
+          "path": "src/rules_engine.py",
+          "line": 61,
+          "end_line": 156,
+          "label": "analizar"
+        },
+        {
+          "path": "app/main.py",
+          "line": 1734,
+          "end_line": 1754,
+          "label": "endpoint analyze"
+        }
+      ]
+    },
+    {
+      "id": "volume",
+      "type": "backend",
+      "label": "Motor geométrico",
+      "sublabel": "volume + export",
+      "tag": "Shapely / GeoJSON",
+      "pos": [700, 380],
+      "size": [150, 64],
+      "sources": [
+        {
+          "path": "src/volume.py",
+          "line": 19,
+          "end_line": 391,
+          "label": "envolvente"
+        },
+        {
+          "path": "app/main.py",
+          "label": "volume/export"
+        }
+      ]
+    },
+    {
+      "id": "plan_csv",
+      "type": "database",
+      "label": "CSV de planeamiento",
+      "sublabel": "PLAN_CSV_PATH",
+      "tag": "municipio/subzona",
+      "pos": [930, 180],
+      "size": [160, 64],
+      "sources": [
+        {
+          "path": "src/planes/csv_provider.py",
+          "line": 9,
+          "end_line": 230,
+          "label": "csv provider"
+        },
+        {
+          "path": "docs/offline_flow.md",
+          "line": 5,
+          "end_line": 23,
+          "label": "schema csv"
+        }
+      ]
+    },
+    {
+      "id": "inventory",
+      "type": "database",
+      "label": "Inventario Xunta",
+      "sublabel": "inventario_planeamento.csv",
+      "tag": "/planeamento/inventario",
+      "pos": [930, 470],
+      "size": [160, 64],
+      "sources": [
+        {
+          "path": "app/main.py",
+          "label": "inventario"
+        }
+      ]
+    },
+    {
+      "id": "qa",
+      "type": "backend",
+      "label": "Asistente normativa",
+      "sublabel": "RAG + fallback",
+      "tag": "/qa y /qa/verbose",
+      "pos": [700, 560],
+      "size": [150, 64],
+      "sources": [
+        {
+          "path": "src/asistente_normativa.py",
+          "line": 22,
+          "end_line": 139,
+          "label": "carga RAG"
+        },
+        {
+          "path": "app/main.py",
+          "line": 1363,
+          "end_line": 1619,
+          "label": "qa endpoints"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "Modelos IA",
+      "sublabel": "OpenAI / Ollama / GGUF",
+      "tag": "fallback multi-provider",
+      "pos": [930, 560],
+      "size": [160, 64],
+      "sources": [
+        {
+          "path": "src/model_gateway.py",
+          "line": 15,
+          "end_line": 171,
+          "label": "gateway llm"
+        },
+        {
+          "path": "scripts/launch_server.cmd",
+          "line": 24,
+          "end_line": 39,
+          "label": "perfil modelo"
+        }
+      ]
+    },
+    {
+      "id": "gis",
+      "type": "external",
+      "label": "Servicios GIS externos",
+      "sublabel": "ArcGIS / WMS / SIOSE",
+      "tag": "proxy + inferencia",
+      "pos": [470, 80],
+      "size": [170, 64],
+      "sources": [
+        {
+          "path": "app/main.py",
+          "line": 99,
+          "end_line": 157,
+          "label": "feature query"
+        },
+        {
+          "path": "app/main.py",
+          "line": 1082,
+          "end_line": 1182,
+          "label": "proxies"
+        },
+        {
+          "path": "docs/offline_flow.md",
+          "line": 107,
+          "end_line": 113,
+          "label": "arcgis futuro"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Repositorio local / backend Python",
+      "wraps": ["viewer", "api", "rules", "volume", "plan_csv", "inventory", "qa"],
+      "pad": 26
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-viewer",
+      "from": "user",
+      "to": "viewer",
+      "label": "HTTP UI",
+      "variant": "emphasis"
+    },
+    {
+      "id": "viewer-api",
+      "from": "viewer",
+      "to": "api",
+      "label": "POST /zoning/* y /qa",
+      "variant": "emphasis",
+      "labelDy": 56
+    },
+    {
+      "id": "api-rules",
+      "from": "api",
+      "to": "rules",
+      "label": "analizar normativa",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 13
+    },
+    {
+      "id": "api-volume",
+      "from": "api",
+      "to": "volume",
+      "label": "evaluar volumen / exportar 3D",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [430, 458]
+    },
+    {
+      "id": "rules-plan",
+      "from": "rules",
+      "to": "plan_csv",
+      "label": "get_plan_params_dynamic",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 63
+    },
+    {
+      "id": "volume-plan",
+      "from": "volume",
+      "to": "plan_csv",
+      "label": "altura y setbacks",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [[1120, 412], [1010, 412], [1010, 244]],
+      "labelSegment": 1,
+      "labelDy": -18
+    },
+    {
+      "id": "api-inventory",
+      "from": "api",
+      "to": "inventory",
+      "label": "leer inventario CSV",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [[640, 312], [640, 450], [1010, 450]],
+      "labelAt": [920, 438]
+    },
+    {
+      "id": "api-qa",
+      "from": "api",
+      "to": "qa",
+      "label": "preguntas y contexto",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [540, 376]
+    },
+    {
+      "id": "qa-llm",
+      "from": "qa",
+      "to": "llm",
+      "label": "embeddings / generación",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 56
+    },
+    {
+      "id": "api-gis",
+      "from": "api",
+      "to": "gis",
+      "label": "proxy SIOSE + inferir subzona",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "viewer-gis-through-api",
+      "from": "viewer",
+      "to": "gis",
+      "label": "same-origin vía API",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ruta principal",
+      "items": [
+        "El visor llama a FastAPI en same-origin para analizar, evaluar y exportar volúmenes.",
+        "La API sirve también los assets del visor y rutas de administración."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Normativa municipal",
+      "items": [
+        "El proveedor CSV resuelve parámetros por municipio/subzona con validaciones de rango y fallback.",
+        "El inventario de planeamiento se expone como consulta separada desde CSV oficial."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "IA y enriquecimiento",
+      "items": [
+        "El stack RAG puede responder con embeddings + re-ranking o degradar a heurísticas robustas.",
+        "OpenAI, Ollama y GGUF local se encadenan mediante un gateway de fallback."
+      ]
+    }
+  ]
+}

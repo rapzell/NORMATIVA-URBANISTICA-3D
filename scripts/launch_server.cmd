@@ -21,8 +21,13 @@ REM set VIGO_ARCGIS_FEATURE_URL=https://TU_SERVIDOR/arcgis/rest/services/Ordenan
 REM (Opcional) Nivel de log de uvicorn
 set LOG_LEVEL=info
 
-REM Perfil de modelo para el asistente IA (fast|balanced). balanced activa Mistral 7B Instruct (CPU)
+REM Perfil de modelo local para el asistente IA (fast|balanced). Se usa como fallback o modo local.
 set MODEL_PROFILE=balanced
+REM Gateway IA configurable. Puedes usar openrouter, groq, gemini, mistral, cerebras, openai, ollama o local.
+REM set MODEL_PROVIDER=openrouter
+REM set MODEL_NAME=meta-llama/llama-3.3-70b-instruct:free
+REM set MODEL_API_KEY=tu_clave
+REM set MODEL_FALLBACK_CHAIN=groq,gemini,local
 REM Opcional: hilos y contexto del modelo GGUF (ajustables según CPU)
 set GGUF_THREADS=4
 set GGUF_CONTEXT=2048
@@ -34,6 +39,8 @@ echo PLAN_PROVIDER=%PLAN_PROVIDER%
 echo PLAN_CSV_PATH=%PLAN_CSV_PATH%
 IF DEFINED VIGO_ARCGIS_FEATURE_URL echo VIGO_ARCGIS_FEATURE_URL=%VIGO_ARCGIS_FEATURE_URL%
 echo MODEL_PROFILE=%MODEL_PROFILE%
+IF DEFINED MODEL_PROVIDER echo MODEL_PROVIDER=%MODEL_PROVIDER%
+IF DEFINED MODEL_NAME echo MODEL_NAME=%MODEL_NAME%
 
 REM Ejecutar uvicorn con autoreload
 py -m uvicorn app.main:app --host %HOST% --port %PORT% --reload --log-level %LOG_LEVEL%

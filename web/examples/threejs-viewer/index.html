@@ -16,7 +16,7 @@
     /* Por defecto: mapa oculto; tamaños se fijan por modo (split/full) */
     :root { --toolbar-h: 48px; }
     #map { position: absolute; left:0; right:0; top:var(--toolbar-h); bottom:0; display:none; z-index: 1; background:#eaeff5; }
-    #canvas { position: relative; width: 100%; height: calc(100% - var(--toolbar-h)); display: block; z-index: 3; background: transparent !important; }
+    #canvas { position: relative; width: 100%; height: calc(100% - var(--toolbar-h)); display: block; z-index: 3; background: transparent !important; pointer-events: none; }
     /* Asegurar que el canvas de MapLibre actualiza transformaciones suavemente */
     /* Evitar transform forzado que puede causar borrosidad en algunos navegadores */
     #map canvas { will-change: transform; }
@@ -73,7 +73,12 @@
       <option value="https://demotiles.maplibre.org/style.json">OSM Demo</option>
     </select>
     <button id="btn-ai-chat" title="Pregúntale a la normativa" style="margin-left:6px">Chat IA</button>
+    <button id="btn-ai-verbose" title="Pregunta con diagnóstico de fuente y campos (CSV/heurística)">IA diag</button>
+    <button id="btn-apply-text" title="Extraer parámetros desde un párrafo de normativa y aplicarlos">Aplicar desde texto</button>
+    <button id="btn-apply-params" title="Recalcular volumen con parámetros actuales y cargar en el visor" style="margin-left:6px">Aplicar parámetros</button>
+    <button id="btn-clear-params" title="Limpiar parámetros normativos aplicados (altura, retranqueos)">Limpiar parámetros</button>
     <button id="btn-more" title="Más opciones" style="margin-left:6px">⋯</button>
+    <span id="norm-badge" class="hint" style="margin-left:8px">norma: —</span>
     <button id="btn-terrain-toggle" title="Activar/Desactivar relieve (DEM)">Relieve: OFF</button>
     <label class="adv" style="margin-left:8px">Exag.:</label>
     <input id="terrain-exag" class="adv" type="range" min="0.5" max="2.0" step="0.1" value="1.2" style="width:120px" title="Exageración vertical del relieve" />
@@ -96,7 +101,11 @@
     <button id="toggle-advanced" title="Mostrar/ocultar controles avanzados">Más…</button>
     <button id="toggle-markers" class="adv" title="Poner números a los controles para reportar">UI markers</button>
     <button id="bld-refresh" title="Forzar actualización de edificios" style="margin-left:6px">Refrescar edificios</button>
+    <button id="bld-retry-now" title="Reintentar ahora aunque el circuito esté abierto">Reintentar ahora</button>
+    <button id="bld-next-mirror" title="Cambiar al siguiente mirror de Overpass">Siguiente mirror</button>
     <span id="bld-status" class="hint" style="margin-left:6px"></span>
+    <button id="btn-planeamento" title="Consultar inventario de planeamiento del municipio activo" style="margin-left:6px">Planeamiento</button>
+    <span id="planeamento-badge" class="badge" style="display:none;margin-left:6px" title="Inventario de planeamiento (Xunta)">planeam: —</span>
     <div class="toolbar-break"></div>
     <button id="toggle-map" class="adv" title="Mostrar mapa base (experimental)">Mapa: off</button>
     <button id="map-2d" title="Vista 2D (pitch 0)">2D</button>
@@ -1060,6 +1069,228 @@
             const on = !!(m.getStyle?.().terrain);
             const btn = document.getElementById('btn-terrain-toggle');
             if (btn) btn.textContent = 'Relieve: ' + (on ? 'ON' : 'OFF');
+          } catch{}
+          // Botón Chat IA (diagnóstico) usando /qa/verbose
+          try {
+            const vbtn = document.getElementById('btn-ai-verbose');
+            const ensureQaPanel = () => {
+              let el = document.getElementById('qa-verbose-panel');
+              if (el) return el;
+              el = document.createElement('div');
+              el.id = 'qa-verbose-panel';
+              el.setAttribute('role','dialog');
+              el.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:99999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,0.15);max-width:520px;width:92vw;max-height:60vh;overflow:auto;padding:12px;';
+              const close = document.createElement('button');
+              close.textContent = 'Cerrar';
+              close.style.cssText = 'float:right;margin-left:8px';
+              close.addEventListener('click', ()=>{ el.style.display = 'none'; try { (window.mapInstance||window.ensureMap?.())?.resize?.(); } catch {} });
+              const h = document.createElement('h3'); h.textContent = 'IA (diagnóstico)'; h.style.margin = '0 0 8px 0';
+              const content = document.createElement('div'); content.id = 'qa-verbose-content';
+              el.appendChild(close); el.appendChild(h); el.appendChild(content);
+              document.body.appendChild(el);
+              return el;
+            };
+            vbtn?.addEventListener('click', async ()=>{
+              try {
+                const sample = 'Qué altura máxima y retranqueos aplican en Vigo RZ-2?';
+                const pregunta = prompt('Pregunta urbanística (se mostrará diagnóstico de fuente y campos):', sample);
+                if (!pregunta) return;
+                const r = await fetch('/qa/verbose', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pregunta }) });
+                if (!r.ok) throw new Error('HTTP '+r.status);
+                const dat = await r.json();
+                const el = ensureQaPanel();
+                const c = el.querySelector('#qa-verbose-content');
+                const escape = (s)=>String(s).replace(/[&<>]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
+                const diag = dat?.diag||{};
+                const fields = diag?.fields_source||{};
+                const fieldsList = Object.keys(fields).map(k=>`<li><b>${escape(k)}</b>: ${escape(String(fields[k]||''))}</li>`).join('');
+                const provider = String(diag.provider_used||'—');
+                const pColor = provider.toLowerCase()==='csv'?'#16a34a':(provider.toLowerCase()==='heuristica'?'#f59e0b':(provider.toLowerCase()==='rag'?'#2563eb':'#6b7280'));
+                const mode = String(diag.mode||'—');
+                const mColor = mode.toLowerCase()==='rag'?'#2563eb':(mode.toLowerCase()==='fallback'?'#6b7280':(mode.toLowerCase()==='smalltalk'?'#10b981':'#6b7280'));
+                // Guardar historial (máx 10)
+                try {
+                  const entry = { q: pregunta, a: String(dat?.respuesta||''), diag };
+                  const raw = localStorage.getItem('qa_history');
+                  const hist = Array.isArray(JSON.parse(raw||'[]')) ? JSON.parse(raw||'[]') : [];
+                  hist.unshift(entry);
+                  if (hist.length > 10) hist.length = 10;
+                  localStorage.setItem('qa_history', JSON.stringify(hist));
+                } catch{}
+                // Construir listado de historial
+                let hist = [];
+                try { hist = JSON.parse(localStorage.getItem('qa_history')||'[]')||[]; } catch{}
+                const histList = (hist||[]).map((h,i)=>{
+                  const q = escape(h?.q||'');
+                  return `<li data-idx="${i}"><b>Q:</b> ${q} <button class="qa-reuse" data-idx="${i}">Reutilizar</button></li>`;
+                }).join('');
+                c.innerHTML = `
+                  <div style="margin-bottom:8px; display:flex; gap:8px; align-items:center">
+                    <span class="badge" style="background:${mColor}; color:#fff" title="Modo">${escape(mode)}</span>
+                    <span class="badge" style="background:${pColor}; color:#fff" title="Fuente">${escape(provider)}</span>
+                  </div>
+                  <div class="hint" style="margin-bottom:6px">Municipio: <b>${escape(diag.municipio||'—')}</b> · Subzona: <b>${escape(diag.subzona||'—')}</b></div>
+                  <div style="white-space:pre-wrap;border:1px solid #eee;border-radius:6px;padding:8px;margin-bottom:8px">${escape(dat?.respuesta||'')}</div>
+                  <div><span class="muted">Campos:</span><ul style="margin:6px 0 0 18px">${fieldsList||'<li>(sin campos)</li>'}</ul></div>
+                  <div style="margin-top:10px; display:flex; gap:8px; align-items:center">
+                    <button id="qa-apply-btn" title="Extrae parámetros de la respuesta y los aplica al visor">Aplicar al visor</button>
+                    <button id="qa-apply-recalc-btn" title="Aplica parámetros y recalcula el volumen en el visor">Aplicar y recalcular</button>
+                    <button id="qa-copy-btn" title="Copiar texto de la respuesta al portapapeles">Copiar respuesta</button>
+                  </div>
+                  <hr style="margin:10px 0" />
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">Historial:</div>
+                    <ul id="qa-history-list" style="margin:6px 0 0 18px">${histList||'<li>(sin historial)</li>'}</ul>
+                    <div style="margin-top:6px"><button id="qa-history-clear">Borrar historial</button></div>
+                  </div>
+                `;
+                el.style.display = 'block'; try { (window.mapInstance||window.ensureMap?.())?.resize?.(); } catch {}
+                // Acción: aplicar al visor -> usa /normativa/extract sobre la respuesta
+                try {
+                  const applyFromRespuesta = async ()=>{
+                    try {
+                      const text = String(dat?.respuesta||'');
+                      if (!text) { showToast?.('No hay respuesta para extraer.'); return; }
+                      const r2 = await fetch('/normativa/extract', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) });
+                      if (!r2.ok) throw new Error('HTTP '+r2.status);
+                      const ex = await r2.json();
+                      const set = (k,v)=>{ try { if (v!=null && v!=='' && !Number.isNaN(Number(v))) localStorage.setItem(k, String(v)); } catch{} };
+                      set('viewer_norm_altura_max_m', ex.altura_maxima_m);
+                      set('viewer_norm_retranqueo_min_m', ex.retranqueo_min_m);
+                      set('viewer_norm_setback_front_m', ex.setback_front_m);
+                      set('viewer_norm_setback_side_m', ex.setback_side_m);
+                      set('viewer_norm_setback_back_m', ex.setback_back_m);
+                      const parts = [];
+                      if (Number.isFinite(ex?.altura_maxima_m)) parts.push('altura='+ex.altura_maxima_m+' m');
+                      if (Number.isFinite(ex?.retranqueo_min_m)) parts.push('retranqueo='+ex.retranqueo_min_m+' m');
+                      if (Number.isFinite(ex?.setback_front_m)) parts.push('frente='+ex.setback_front_m+' m');
+                      if (Number.isFinite(ex?.setback_side_m)) parts.push('laterales='+ex.setback_side_m+' m');
+                      if (Number.isFinite(ex?.setback_back_m)) parts.push('fondo='+ex.setback_back_m+' m');
+                      showToast?.('Parámetros aplicados: '+(parts.join(' · ')||'—'));
+                      try { window.dispatchEvent(new CustomEvent('viewer:normativa:updated')); } catch{}
+                      return true;
+                    } catch(e) {
+                      showToast?.('Error al aplicar: '+(e&&e.message?e.message:String(e)));
+                      return false;
+                    }
+                  };
+                  const ab = c.querySelector('#qa-apply-btn');
+                  ab?.addEventListener('click', applyFromRespuesta);
+                  const ab2 = c.querySelector('#qa-apply-recalc-btn');
+                  ab2?.addEventListener('click', async ()=>{
+                    const ok = await applyFromRespuesta();
+                    if (!ok) return;
+                    try {
+                      if (typeof buildVolumeReq !== 'function') { showToast?.('No se encontró buildVolumeReq'); return; }
+                      const req = buildVolumeReq();
+                      const s = JSON.stringify(req);
+                      const b64 = btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+                      const rel = `/zoning/volume-export?format=glb&body_b64=${b64}`;
+                      const full = location.origin + rel;
+                      const input = document.getElementById('url');
+                      const loadBtn = document.getElementById('load');
+                      if (input) input.value = full;
+                      loadBtn?.click();
+                      showToast?.('Aplicado y recalculado el volumen con parámetros detectados');
+                    } catch(e) {
+                      showToast?.('Error al recalcular: '+(e&&e.message?e.message:String(e)));
+                    }
+                  });
+                  // Copiar respuesta al portapapeles
+                  try {
+                    const cb = c.querySelector('#qa-copy-btn');
+                    cb?.addEventListener('click', async ()=>{
+                      try {
+                        const text = String(dat?.respuesta||'');
+                        if (!text) { showToast?.('No hay respuesta que copiar'); return; }
+                        if (navigator?.clipboard?.writeText) {
+                          await navigator.clipboard.writeText(text);
+                        } else {
+                          const ta = document.createElement('textarea');
+                          ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+                        }
+                        showToast?.('Respuesta copiada');
+                      } catch(e) { showToast?.('Error al copiar'); }
+                    });
+                  } catch{}
+                  // Reutilizar histórico
+                  try {
+                    c.querySelectorAll('.qa-reuse').forEach(btn=>{
+                      btn.addEventListener('click', async (ev)=>{
+                        try {
+                          const idx = Number(ev.currentTarget.getAttribute('data-idx'));
+                          let hist2 = [];
+                          try { hist2 = JSON.parse(localStorage.getItem('qa_history')||'[]')||[]; } catch{}
+                          const h = hist2[idx];
+                          const q2 = String(h?.q||'').trim();
+                          if (!q2) { showToast?.('Entrada vacía'); return; }
+                          const r3 = await fetch('/qa/verbose', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pregunta: q2 }) });
+                          if (!r3.ok) throw new Error('HTTP '+r3.status);
+                          const dat3 = await r3.json();
+                          // Simular render llamando de nuevo al botón para reusar flujo
+                          try { localStorage.setItem('qa_history_last', q2); } catch{}
+                          // Re-render simple: reemplazar contenido principal
+                          const diag3 = dat3?.diag||{};
+                          const fields3 = diag3?.fields_source||{};
+                          const fieldsList3 = Object.keys(fields3).map(k=>`<li><b>${k}</b>: ${String(fields3[k]||'')}</li>`).join('');
+                          c.innerHTML = '<div style="white-space:pre-wrap;border:1px solid #eee;border-radius:6px;padding:8px;margin-bottom:8px">'+String(dat3?.respuesta||'')+'</div>'+
+                                        '<div><span class="muted">Campos:</span><ul style="margin:6px 0 0 18px">'+(fieldsList3||'<li>(sin campos)</li>')+'</ul></div>';
+                        } catch(e) {
+                          showToast?.('Error al reutilizar: '+(e&&e.message?e.message:String(e)));
+                        }
+                      });
+                    });
+                  } catch{}
+                  // Borrar histórico
+                  try {
+                    const hb = c.querySelector('#qa-history-clear');
+                    hb?.addEventListener('click', ()=>{ try { localStorage.removeItem('qa_history'); showToast?.('Historial limpiado'); } catch{} });
+                  } catch{}
+                } catch{}
+              } catch(e) {
+                showToast?.('Error IA diag: '+(e&&e.message?e.message:String(e)));
+              }
+            });
+          } catch{}
+          // Botón Aplicar desde texto (usa /normativa/extract)
+          try {
+            const abtn = document.getElementById('btn-apply-text');
+            const getMuni = () => { try { return (localStorage.getItem('viewer_zone_municipio')||'').trim(); } catch { return ''; } };
+            const applyParams = (dat) => {
+              try {
+                if (!dat || typeof dat !== 'object') return false;
+                const set = (k,v)=>{ try { if (v!=null && v!=='' && !Number.isNaN(Number(v))) localStorage.setItem(k, String(v)); } catch{} };
+                set('viewer_norm_altura_max_m', dat.altura_maxima_m);
+                set('viewer_norm_retranqueo_min_m', dat.retranqueo_min_m);
+                set('viewer_norm_setback_front_m', dat.setback_front_m);
+                set('viewer_norm_setback_side_m', dat.setback_side_m);
+                set('viewer_norm_setback_back_m', dat.setback_back_m);
+                return true;
+              } catch { return false; }
+            };
+            abtn?.addEventListener('click', async ()=>{
+              try {
+                const sample = 'Uso residencial. Altura máxima 12 m. Retranqueo mínimo 3 m. Art. 5.2.';
+                const text = prompt('Pega un párrafo de normativa para extraer altura/retranqueos:', sample);
+                if (!text) return;
+                const body = { text, municipio: getMuni()||undefined };
+                const r = await fetch('/normativa/extract', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+                if (!r.ok) throw new Error('HTTP '+r.status);
+                const dat = await r.json();
+                const ok = applyParams(dat||{});
+                const parts = [];
+                if (Number.isFinite(dat?.altura_maxima_m)) parts.push('altura='+dat.altura_maxima_m+' m');
+                if (Number.isFinite(dat?.retranqueo_min_m)) parts.push('retranqueo='+dat.retranqueo_min_m+' m');
+                if (Number.isFinite(dat?.setback_front_m)) parts.push('frente='+dat.setback_front_m+' m');
+                if (Number.isFinite(dat?.setback_side_m)) parts.push('laterales='+dat.setback_side_m+' m');
+                if (Number.isFinite(dat?.setback_back_m)) parts.push('fondo='+dat.setback_back_m+' m');
+                showToast?.('Aplicado: '+(parts.join(' · ')||'—'));
+                // Señal de que hay nuevos parámetros
+                try { window.dispatchEvent(new CustomEvent('viewer:normativa:updated')); } catch{}
+              } catch(e) {
+                showToast?.('Error al extraer: '+(e&&e.message?e.message:String(e)));
+              }
+            });
           } catch{}
         }
         // Fuerza la activación del terreno usando tiles DEM de MapLibre demo
@@ -2619,11 +2850,11 @@
             if (localStorage.getItem('viewer_buildings_stage_min_zoom')==null) localStorage.setItem('viewer_buildings_stage_min_zoom','13.2');
             if (localStorage.getItem('viewer_buildings_refine_delay_ms')==null) localStorage.setItem('viewer_buildings_refine_delay_ms','1200');
             if (localStorage.getItem('viewer_buildings_refine_area_km2')==null) localStorage.setItem('viewer_buildings_refine_area_km2','3.5');
-            if (localStorage.getItem('viewer_buildings_cooldown_ms')==null) localStorage.setItem('viewer_buildings_cooldown_ms','350');
+            if (localStorage.getItem('viewer_buildings_cooldown_ms')==null) localStorage.setItem('viewer_buildings_cooldown_ms','600');
             if (localStorage.getItem('viewer_buildings_lead_pct')==null) localStorage.setItem('viewer_buildings_lead_pct','45');
             if (localStorage.getItem('viewer_buildings_cache_max')==null) localStorage.setItem('viewer_buildings_cache_max','30');
-            if (localStorage.getItem('viewer_buildings_prefetch')==null) localStorage.setItem('viewer_buildings_prefetch','on');
-            if (localStorage.getItem('viewer_buildings_autotune')==null) localStorage.setItem('viewer_buildings_autotune','on');
+            if (localStorage.getItem('viewer_buildings_prefetch')==null) localStorage.setItem('viewer_buildings_prefetch','off');
+            if (localStorage.getItem('viewer_buildings_autotune')==null) localStorage.setItem('viewer_buildings_autotune','off');
           } catch {}
           const lastRequests = [];
           // Estado para backoff/mirrors
@@ -2751,6 +2982,33 @@
             if (Number.isFinite(wv) && wv >= 0.5 && wv <= 16) return wv;
             return 4;
           }
+          function getDebounceMs(){
+            try {
+              const ls = parseInt(localStorage.getItem('viewer_buildings_debounce_ms')||'');
+              if (Number.isFinite(ls) && ls >= 200 && ls <= 2000) return ls;
+            } catch{}
+            const wv = (typeof window.__bld_debounce_ms==='number') ? window.__bld_debounce_ms : null;
+            if (Number.isFinite(wv) && wv >= 200 && wv <= 2000) return wv;
+            return 500;
+          }
+          function getMaxConc(){
+            try {
+              const ls = parseInt(localStorage.getItem('viewer_buildings_max_conc')||'');
+              if (Number.isFinite(ls) && ls >= 1 && ls <= 8) return ls;
+            } catch{}
+            const wv = (typeof window.__bld_max_conc==='number') ? window.__bld_max_conc : null;
+            if (Number.isFinite(wv) && wv >= 1 && wv <= 8) return wv;
+            return 1;
+          }
+          function getLeadPercent(){
+            try {
+              const ls = parseInt(localStorage.getItem('viewer_buildings_lead_pct')||'');
+              if (Number.isFinite(ls) && ls >= 0 && ls <= 100) return ls;
+            } catch{}
+            const wv = (typeof window.__bld_lead_pct==='number') ? window.__bld_lead_pct : null;
+            if (Number.isFinite(wv) && wv >= 0 && wv <= 100) return wv;
+            return 45;
+          }
           const renderMetrics = () => {
             try {
               const p50 = p50Latency();
@@ -2823,8 +3081,18 @@
                 const mkBtn = (id, text, title) => { const b=document.createElement('button'); b.id=id; b.textContent=text; b.title=title||text; b.style.cssText='padding:2px 6px; font-size:12px; border-radius:4px; border:1px solid #666; background:#2c2c2c; color:#eee;'; return b; };
                 const btnPref = mkBtn('b-prefetch', prefetchEnabled?'prefetch:on':'prefetch:off', 'Alterna prefetch');
                 btnPref.addEventListener('click', ()=>{ try { prefetchEnabled=!prefetchEnabled; localStorage.setItem('viewer_buildings_prefetch', prefetchEnabled?'on':'off'); btnPref.textContent = prefetchEnabled?'prefetch:on':'prefetch:off'; renderMetrics(); } catch{} });
-                const btnClear = mkBtn('b-clear-cache', 'limpiar caché', 'Limpia caché Overpass');
-                btnClear.addEventListener('click', ()=>{ try { overpassCache.clear(); showToast?.('Caché de edificios limpiada'); } catch{} });
+                const btnClear = mkBtn('b-clear-cache', 'limpiar caché', 'Limpia cachés de edificios');
+                btnClear.addEventListener('click', ()=>{ try {
+                  overpassCache.clear();
+                  tileCache.clear();
+                  try {
+                    const lkey='bld_gj_keys';
+                    const lst = JSON.parse(sessionStorage.getItem(lkey)||'[]')||[];
+                    lst.forEach(k=>{ try { sessionStorage.removeItem('bld_gj_'+k); } catch{} });
+                    sessionStorage.removeItem(lkey);
+                  } catch{}
+                  showToast?.('Cachés de edificios limpiadas');
+                } catch{} });
                 const btnRefresh = mkBtn('b-refresh', 'refrescar', 'Forzar actualización');
                 btnRefresh.addEventListener('click', ()=>{ try { updateBuildingsForViewport(true); } catch{} });
                 const btnFallback = mkBtn('b-fallback', (localStorage.getItem('viewer_raster_auto_fallback')==='on')?'fallback:on':'fallback:off', 'Fallback raster si no hay tiles vectoriales');
@@ -2861,6 +3129,12 @@
                 const lpIn = document.createElement('input'); lpIn.type='number'; lpIn.min='0'; lpIn.max='100'; lpIn.step='5'; lpIn.value=String(getLeadPercent()); lpIn.style.cssText='width:60px; background:#1f1f1f; color:#eee; border:1px solid #555; border-radius:4px; padding:2px 4px;';
                 lpIn.title='Porcentaje de adelanto del BBOX para prefetch';
                 lpIn.addEventListener('change', ()=>{ try { const v=parseInt(lpIn.value||''); if (Number.isFinite(v)) { localStorage.setItem('viewer_buildings_lead_pct', String(Math.max(0, Math.min(100, v)))); } } catch{} });
+                const dbIn = document.createElement('input'); dbIn.type='number'; dbIn.min='200'; dbIn.max='2000'; dbIn.step='50'; dbIn.value=String(getDebounceMs()); dbIn.style.cssText='width:70px; background:#1f1f1f; color:#eee; border:1px solid #555; border-radius:4px; padding:2px 4px;';
+                dbIn.title='Debounce de actualización (ms)';
+                dbIn.addEventListener('change', ()=>{ try { const v=parseInt(dbIn.value||''); if (Number.isFinite(v)) { localStorage.setItem('viewer_buildings_debounce_ms', String(Math.max(200, Math.min(2000, v)))); window.__bld_debounce_ms = v; buildingsUpdateDebounced = useDebounce(updateBuildingsForViewport, getDebounceMs()); } } catch{} });
+                const ccIn = document.createElement('input'); ccIn.type='number'; ccIn.min='1'; ccIn.max='8'; ccIn.step='1'; ccIn.value=String(getMaxConc()); ccIn.style.cssText='width:50px; background:#1f1f1f; color:#eee; border:1px solid #555; border-radius:4px; padding:2px 4px;';
+                ccIn.title='Concurrencia máx. de teselas';
+                ccIn.addEventListener('change', ()=>{ try { const v=parseInt(ccIn.value||''); if (Number.isFinite(v)) { localStorage.setItem('viewer_buildings_max_conc', String(Math.max(1, Math.min(8, v)))); window.__bld_max_conc = v; } } catch{} });
                 const resetAdv = mkBtn('b-adv-reset','adv:reset','Restablecer ajustes avanzados');
                 const btnAT = mkBtn('b-autotune', (localStorage.getItem('viewer_buildings_autotune')||'off')==='on' ? 'autotune:on' : 'autotune:off', 'Autotune de parámetros (p95)');
                 btnAT.addEventListener('click', ()=>{ try { const cur=(localStorage.getItem('viewer_buildings_autotune')||'off')==='on'; localStorage.setItem('viewer_buildings_autotune', cur?'off':'on'); btnAT.textContent = cur?'autotune:off':'autotune:on'; showToast?.('Autotune '+(cur?'desactivado':'activado')); } catch{} });
@@ -2908,6 +3182,8 @@
                 w.appendChild(mkLbl('refDelay(ms):')); w.appendChild(rdIn);
                 w.appendChild(mkLbl('refArea(km²):')); w.appendChild(raIn);
                 w.appendChild(mkLbl('lead%:')); w.appendChild(lpIn);
+                w.appendChild(mkLbl('debounce(ms):')); w.appendChild(dbIn);
+                w.appendChild(mkLbl('conc:')); w.appendChild(ccIn);
                 w.appendChild(resetAdv);
                 ctrlBox.appendChild(btnPref);
                 ctrlBox.appendChild(btnClear);
@@ -2983,8 +3259,8 @@
           try {
             if (!(Array.isArray(window.mirrors) && window.mirrors.length>0)) {
               window.mirrors = [
-                'https://overpass-api.de/api/interpreter',
-                'https://overpass.kumi.systems/api/interpreter'
+                'https://overpass.kumi.systems/api/interpreter',
+                'https://overpass-api.de/api/interpreter'
               ];
             }
             if (typeof window.mirrorIdx !== 'number' || window.mirrorIdx<0 || window.mirrorIdx>=window.mirrors.length) {
@@ -3077,8 +3353,16 @@
                   continue;
                 }
                 const json = await resp.json();
+                // Fijar mirror exitoso y notificar si hubo cambio efectivo
+                const prevIdx = (typeof window.mirrorIdx==='number')? window.mirrorIdx : mirrorIdx;
                 mirrorIdx = (mirrorIdx + attempt) % mirrors.length; // fijar mirror exitoso
                 try { window.mirrorIdx = mirrorIdx; } catch {}
+                if (!isPrefetch && prevIdx !== mirrorIdx) {
+                  try {
+                    const host = String(mirrors[mirrorIdx]||'').replace(/^https?:\/\//,'').split('/')[0];
+                    showToast?.('Mirror activo: '+host);
+                  } catch {}
+                }
                 if (!isPrefetch) {
                   consecutiveFailures = 0;
                   // Reducir degradación progresivamente con éxitos
@@ -3108,11 +3392,15 @@
             if (!isPrefetch) {
               consecutiveFailures++;
               if (consecutiveFailures >= 3) {
-                circuitOpenUntil = Date.now() + 20000; // 20s circuito abierto
+                circuitOpenUntil = Date.now() + 60000; // 60s circuito abierto
               }
               // Incrementar degradación en fallos sostenidos (p.ej., 429)
               try { window.__bld_degrade_level = Math.min(2, (window.__bld_degrade_level|0)+1); } catch{}
               setStatus(`<b>[buildings]</b> error Overpass · circuito=${(Date.now()<circuitOpenUntil)?'abierto':'cerrado'}`);
+              try {
+                const msg = (lastErr && (lastErr.message||String(lastErr))) || 'Error Overpass';
+                showToast?.((''+msg).slice(0,120) + ' · reintenta o cambia de mirror');
+              } catch {}
               throw lastErr || new Error('Overpass error');
             }
             // En prefetch, no abrir circuito ni lanzar error
@@ -3264,6 +3552,100 @@
               return { type: 'FeatureCollection', features: feats };
             } catch (e) { return { type: 'FeatureCollection', features: [] }; }
           };
+          function subdivideBBoxGrid(bb, nx, ny, padFrac=0.03) {
+            try {
+              const [s,w,n,e] = bb.split(',').map(parseFloat);
+              const parts = [];
+              const dLat = (n - s) / ny;
+              const dLon = (e - w) / nx;
+              for (let iy=0; iy<ny; iy++) {
+                for (let ix=0; ix<nx; ix++) {
+                  let s2 = s + dLat*iy;
+                  let n2 = s + dLat*(iy+1);
+                  let w2 = w + dLon*ix;
+                  let e2 = w + dLon*(ix+1);
+                  // Expandir ligeramente cada sub-bbox para evitar cortes en bordes, pero limitar al bbox padre
+                  const padLat = dLat * Math.max(0, Math.min(0.2, padFrac));
+                  const padLon = dLon * Math.max(0, Math.min(0.2, padFrac));
+                  s2 = Math.max(s, s2 - padLat);
+                  n2 = Math.min(n, n2 + padLat);
+                  w2 = Math.max(w, w2 - padLon);
+                  e2 = Math.min(e, e2 + padLon);
+                  parts.push(`${s2.toFixed(6)},${w2.toFixed(6)},${n2.toFixed(6)},${e2.toFixed(6)}`);
+                }
+              }
+              return parts;
+            } catch { return [bb]; }
+          }
+          function mergeFCsDedup(fcs) {
+            try {
+              const out = { type:'FeatureCollection', features: [] };
+              const seen = new Set();
+              for (const fc of fcs||[]) {
+                const feats = (fc && Array.isArray(fc.features)) ? fc.features : [];
+                for (const f of feats) {
+                  const fid = (f && f.id!=null) ? String(f.id) : JSON.stringify((f&&f.geometry&&f.geometry.coordinates)||[]);
+                  if (seen.has(fid)) continue;
+                  seen.add(fid);
+                  out.features.push(f);
+                }
+              }
+              return out;
+            } catch { return { type:'FeatureCollection', features: [] }; }
+          }
+          // Tile cache helpers (grilla fija por zoom)
+          const tileCache = new Map(); // key -> { time, data: FC }
+          function getTileCacheMax(){
+            try {
+              const ls = parseInt(localStorage.getItem('viewer_tile_cache_max')||'');
+              if (Number.isFinite(ls) && ls >= 50 && ls <= 1200) return ls;
+            } catch{}
+            const wv = (typeof window.__tile_cache_max==='number') ? window.__tile_cache_max : null;
+            if (Number.isFinite(wv) && wv >= 50 && wv <= 1200) return wv;
+            return 300;
+          }
+          function tileCacheTrimLRU(){
+            try { while (tileCache.size > getTileCacheMax()) { const k = tileCache.keys().next().value; tileCache.delete(k); } } catch{}
+          }
+          function tileStepDegForZoom(z){
+            const zz = Number(z)||0;
+            if (zz >= 17) return 0.005; // ~550 m lat
+            if (zz >= 16) return 0.01;  // ~1.1 km
+            if (zz >= 15) return 0.02;  // ~2.2 km
+            if (zz >= 14) return 0.03;  // ~3.3 km
+            return 0.06;                // ~6.6 km
+          }
+          function tileIndexForLatLon(lat, lon, z){
+            const stepLat = tileStepDegForZoom(z);
+            const stepLon = tileStepDegForZoom(z);
+            const iy = Math.floor((lat + 90) / stepLat);
+            const ix = Math.floor((lon + 180) / stepLon);
+            return { ix, iy, stepLat, stepLon };
+          }
+          function tileKeyFromIndex(ix, iy, z){ return `z${Math.floor(z)}_${ix}_${iy}`; }
+          function bboxFromTileIndex(ix, iy, z){
+            const stepLat = tileStepDegForZoom(z);
+            const stepLon = tileStepDegForZoom(z);
+            const s = -90 + iy*stepLat;
+            const n = s + stepLat;
+            const w = -180 + ix*stepLon;
+            const e = w + stepLon;
+            return `${s.toFixed(6)},${w.toFixed(6)},${n.toFixed(6)},${e.toFixed(6)}`;
+          }
+          function coverBBoxWithTiles(bbox, z){
+            try {
+              const [s,w,n,e] = bbox.split(',').map(parseFloat);
+              const a = tileIndexForLatLon(s, w, z);
+              const b = tileIndexForLatLon(n, e, z);
+              const ix0 = Math.min(a.ix, b.ix), ix1 = Math.max(a.ix, b.ix);
+              const iy0 = Math.min(a.iy, b.iy), iy1 = Math.max(a.iy, b.iy);
+              const keys = [];
+              for (let iy=iy0; iy<=iy1; iy++) for (let ix=ix0; ix<=ix1; ix++) keys.push(tileKeyFromIndex(ix,iy,z));
+              return keys;
+            } catch { return []; }
+          }
+          function bboxKeyDecimalsForZoom(z){ try { const zz = Number(z)||0; if (zz < 11) return 3; if (zz < 13) return 4; if (zz < 15) return 5; return 6; } catch { return 5; } }
+          function normBBoxKey(bbox, dec){ try { const d = Math.max(0, Math.min(8, Number(dec)||5)); const parts = String(bbox||'').split(',').map(parseFloat); if (parts.length!==4 || parts.some(v=>!Number.isFinite(v))) return String(bbox||''); const [s,w,n,e]=parts; return [s,w,n,e].map(v=>v.toFixed(d)).join(','); } catch { return String(bbox||''); } }
           const computeBBox = (m) => {
             try {
               const b = m.getBounds();
@@ -3404,6 +3786,14 @@
               if (!m) return;
               // Requiere estilo cargado para manipular fuentes/capas
               try { if (typeof m.isStyleLoaded === 'function' && !m.isStyleLoaded()) return; } catch {}
+              // Respetar circuito abierto para no saturar Overpass
+              try {
+                if (!force && circuitOpenUntil && Date.now() < circuitOpenUntil) {
+                  setStatus(`<b>[buildings]</b> en cooldown Overpass · reintento en ${Math.ceil((circuitOpenUntil - Date.now())/1000)}s`);
+                  hideSpinner();
+                  return;
+                }
+              } catch {}
               // Asegurar que existen fuente y capa antes de cargar datos
               ensureBuildingSourceAndLayer(m);
               // Warm-up de prefetch (solo si no hay features cargadas aún)
@@ -3411,11 +3801,21 @@
               // Calcular bbox actual y timestamp
               const b = m.getBounds?.();
               if (!b) return;
-              const s = b.getSouth(), n = b.getNorth(), w = b.getWest(), e = b.getEast();
-              const bbox = `${s.toFixed(6)},${w.toFixed(6)},${n.toFixed(6)},${e.toFixed(6)}`;
+              const bbox = computeBBox(m) || (function(){ const s=b.getSouth(), n=b.getNorth(), w=b.getWest(), e=b.getEast(); return `${s.toFixed(6)},${w.toFixed(6)},${n.toFixed(6)},${e.toFixed(6)}`; })();
+              // Área aproximada del bbox en km² (para decidir subdivisión y refinamiento)
+              try {
+                const n0 = b.getNorth(), s0 = b.getSouth(), e0 = b.getEast(), w0 = b.getWest();
+                const latMid = (n0 + s0) / 2;
+                const kmPerDegLat = 111.32;
+                const kmPerDegLon = 111.32 * Math.cos(latMid * Math.PI / 180);
+                const hDeg = Math.max(0, n0 - s0);
+                const wDeg = Math.max(0, e0 - w0);
+                window.__bld_pf_bbox_area_km2 = (kmPerDegLat * hDeg) * (kmPerDegLon * wDeg);
+              } catch {}
               const now = Date.now();
-              // Cache por BBOX
-              const cached = overpassCache.get(bbox);
+              // Cache por BBOX (normalizada para tolerar pequeños movimientos)
+              const cacheKey = normBBoxKey(bbox, bboxKeyDecimalsForZoom(m.getZoom ? m.getZoom() : 0));
+              const cached = overpassCache.get(cacheKey);
               if (cached && (now - cached.time) < CACHE_MS) {
                 const srcC = m.getSource('buildings-geojson');
                 srcC && srcC.setData(cached.data);
@@ -3443,15 +3843,85 @@
               let gj = null;
               const t0 = Date.now();
               try {
-                // Primera etapa: carga mínima rápida
+                // Camino 1: caché por teselas (grilla fija)
+                const tileKeys = coverBBoxWithTiles(bbox, z);
+                if (tileKeys && tileKeys.length>0 && z>=13) {
+                  const fresh = [];
+                  const missing = [];
+                  const TTL = CACHE_MS; // misma ventana temporal que el BBOX cache
+                  for (const tk of tileKeys) {
+                    const ent = tileCache.get(tk);
+                    if (ent && (now - ent.time) < TTL) fresh.push(ent.data); else missing.push(tk);
+                  }
+                  if (fresh.length) gj = mergeFCsDedup(fresh);
+                  if (missing.length) {
+                    const ctrl = currentReqCtrl;
+                    const parts = missing.map(tk => ({ tk, bb: bboxFromTileIndex(parseInt(tk.split('_')[1]), parseInt(tk.split('_')[2]), z) }));
+                    const p50 = (typeof p50Latency === 'function') ? p50Latency() : null;
+                    let MAX_CONC = getMaxConc(); if (p50!=null && p50 > 1500) MAX_CONC = Math.max(1, Math.min(MAX_CONC, 2));
+                    window.__bld_tiles_total = parts.length; window.__bld_tiles_pending = parts.length;
+                    const fcs = [];
+                    for (let i=0; i<parts.length; i += MAX_CONC) {
+                      const batch = parts.slice(i, i+MAX_CONC);
+                      const resps = await Promise.all(batch.map(p => fetchOverpass(p.bb, z, false, ctrl?.signal || null, { forceMinimal: true })));
+                      const fs = resps.map(r => overpassToGeoJSON(r, z)).filter(fc => fc && Array.isArray(fc.features));
+                      // Guardar en tile cache
+                      for (let j=0;j<batch.length;j++) { const tk = batch[j].tk; const fc = fs[j]; if (fc && Array.isArray(fc.features)) { tileCache.set(tk, { time: Date.now(), data: fc }); tileCacheTrimLRU(); } }
+                      fcs.push(...fs);
+                      try { window.__bld_tiles_pending = Math.max(0, (window.__bld_tiles_pending|0) - batch.length); } catch{}
+                    }
+                    const merged = mergeFCsDedup((gj && gj.features && gj.features.length)? [gj, ...fcs] : fcs);
+                    gj = merged;
+                    try { window.__bld_tiles_total = 0; window.__bld_tiles_pending = 0; } catch{}
+                  }
+                  if (gj && src && src.setData) {
+                    src.setData(gj);
+                    overpassCache.set(cacheKey, { time: Date.now(), data: gj });
+                    try { while (overpassCache.size > getCacheMax()) { const k = overpassCache.keys().next().value; overpassCache.delete(k); } } catch{}
+                    lastAppliedBbox = cacheKey;
+                    try { if (!firstDataReceived && Array.isArray(gj.features) && gj.features.length>0) { firstDataReceived = true; hideSpinner(); } } catch{}
+                  }
+                }
+                // Si el área es grande y el zoom es alto, subdividir en 2x2 para cubrir más rápido y evitar huecos de borde
+                const areaKm2 = (typeof window.__bld_pf_bbox_area_km2==='number') ? window.__bld_pf_bbox_area_km2 : null;
+                const dlevNow = (window.__bld_degrade_level|0) || 0;
+                const shouldSubdivide = (z >= 14) && (areaKm2!=null && areaKm2 > 6) && dlevNow === 0;
+                if (shouldSubdivide) {
+                  let grid = 2;
+                  try {
+                    if (areaKm2 > 12) grid = 3;
+                    // si la latencia p50 es alta, usar 3x3 para cubrir antes
+                    const p50 = (typeof p50Latency === 'function') ? p50Latency() : null;
+                    if (p50!=null && p50 > 1500) grid = 3;
+                  } catch {}
+                  const parts = subdivideBBoxGrid(bbox, grid, grid, 0.04);
+                  const ctrl = currentReqCtrl; // reutilizar señal de cancelación
+                  const resps = await Promise.all(parts.map(p => fetchOverpass(p, z, false, ctrl?.signal || null, { forceMinimal: true })));
+                  const fcs = resps.map(r => overpassToGeoJSON(r, z)).filter(fc => fc && Array.isArray(fc.features));
+                  const merged = mergeFCsDedup(fcs);
+                  gj = merged;
+                  // Si esta respuesta ya es obsoleta, abortar
+                  if (reqId !== currentReqId || (currentReqCtrl?.signal?.aborted)) return;
+                  if (src && src.setData && gj) {
+                    src.setData(gj);
+                    overpassCache.set(cacheKey, { time: Date.now(), data: gj });
+                    try { while (overpassCache.size > getCacheMax()) { const k = overpassCache.keys().next().value; overpassCache.delete(k); } } catch{}
+                    lastAppliedBbox = cacheKey;
+                    try { if (!firstDataReceived && Array.isArray(gj.features) && gj.features.length>0) { firstDataReceived = true; hideSpinner(); } } catch{}
+                  }
+                  // Continuar al flow normal de refinamiento completo después del bloque subdividido
+                }
+                // Primera etapa: carga mínima rápida (si no subdividimos)
                 const doMinimalFirst = (z >= 13);
-                json = await fetchOverpass(bbox, z, false, currentReqCtrl?.signal || null, doMinimalFirst ? { forceMinimal: true } : null);
-                gj = overpassToGeoJSON(json, z);
+                if (!gj) {
+                  json = await fetchOverpass(bbox, z, false, currentReqCtrl?.signal || null, doMinimalFirst ? { forceMinimal: true } : null);
+                  gj = overpassToGeoJSON(json, z);
+                }
                 // Si esta respuesta ya es obsoleta (hubo una petición más nueva), no aplicar
                 if (reqId !== currentReqId || (currentReqCtrl?.signal?.aborted)) return;
                 if (src && src.setData && gj) {
                   src.setData(gj);
-                  overpassCache.set(bbox, { time: Date.now(), data: gj });
+                  overpassCache.set(cacheKey, { time: Date.now(), data: gj });
                   // Recorte LRU simple
                   try { while (overpassCache.size > getCacheMax()) { const k = overpassCache.keys().next().value; overpassCache.delete(k); } } catch{}
                   // Persistir en sessionStorage (mantener últimas 3 entradas)
@@ -3459,18 +3929,18 @@
                     const ssKey = (b)=>`bld_gj_${b}`;
                     const lkey = 'bld_gj_keys';
                     const obj = { time: Date.now(), data: gj };
-                    sessionStorage.setItem(ssKey(bbox), JSON.stringify(obj));
+                    sessionStorage.setItem(ssKey(cacheKey), JSON.stringify(obj));
                     let lst = [];
                     try { lst = JSON.parse(sessionStorage.getItem(lkey)||'[]'); if(!Array.isArray(lst)) lst=[]; } catch { lst=[] }
-                    lst = lst.filter(k => k !== bbox);
-                    lst.push(bbox);
+                    lst = lst.filter(k => k !== cacheKey);
+                    lst.push(cacheKey);
                     while (lst.length > 3) {
                       const victim = lst.shift();
                       try { sessionStorage.removeItem(ssKey(victim)); } catch {}
                     }
                     sessionStorage.setItem(lkey, JSON.stringify(lst));
                   } catch {}
-                  lastAppliedBbox = bbox;
+                  lastAppliedBbox = cacheKey;
                   try { if (!firstDataReceived && Array.isArray(gj.features) && gj.features.length>0) { firstDataReceived = true; hideSpinner(); } } catch{}
                   // Programar refinamiento si procede (mapa estable, zoom alto, sin degradación, área moderada)
                   try {
@@ -3483,7 +3953,7 @@
                       const tryRefine = async () => {
                         try {
                           if (reqId !== currentReqId) { hideRefineSpinner(); return; }
-                          if (lastAppliedBbox !== bbox) { hideRefineSpinner(); return; }
+                          if (lastAppliedBbox !== cacheKey) { hideRefineSpinner(); return; }
                           const lastMove = window.__bld_last_move_t || 0;
                           // Esperar estabilidad mínima (600ms) antes de refinar
                           if (Date.now() - lastMove < 600) {
@@ -3491,58 +3961,27 @@
                             // Demasiados intentos: abortar refinamiento silenciosamente
                             hideRefineSpinner(); return;
                           }
+                          // Heurística: si el área o el número de features del primer pase es alto, saltar el refine completo
+                          try {
+                            const featsNow = Number(window.lastOverpassFeatureCount||0);
+                            const areaNow = (typeof window.__bld_pf_bbox_area_km2==='number') ? window.__bld_pf_bbox_area_km2 : null;
+                            if ((areaNow!=null && areaNow > getRefineAreaKm2()) || featsNow > 2200) {
+                              hideRefineSpinner(); return; // demasiado costoso, mantener minimal
+                            }
+                          } catch {}
                           showRefineSpinner();
                           const ctrl2 = new AbortController();
                           const json2 = await fetchOverpass(bbox, z, false, ctrl2.signal, { forceFull: true });
                           const gj2 = overpassToGeoJSON(json2, z);
                           if (reqId !== currentReqId) { hideRefineSpinner(); return; }
-                          if (lastAppliedBbox !== bbox) { hideRefineSpinner(); return; }
+                          if (lastAppliedBbox !== cacheKey) { hideRefineSpinner(); return; }
                           if (src && src.setData && gj2 && Array.isArray(gj2.features) && gj2.features.length) {
                             src.setData(gj2);
-                            overpassCache.set(bbox, { time: Date.now(), data: gj2 });
+                            overpassCache.set(cacheKey, { time: Date.now(), data: gj2 });
+                            try { showToast?.('Detalle de edificios actualizado'); } catch{}
                           }
                         } catch(e) { /* silencioso */ }
                         finally { hideRefineSpinner(); }
-                      };
-                      btnQuickReport.onclick = async ()=>{
-                        try { console.log('[normativa] click Informe rápido'); } catch{}
-                        try {
-                          const req = buildVolumeReq();
-                          const s = JSON.stringify(req);
-                          const b64 = btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-                          const prefs = getReportPrefs();
-                          const params = new URLSearchParams({ body_b64: b64 });
-                          if (prefs.logo) params.set('logo', prefs.logo);
-                          if (prefs.title) params.set('title', prefs.title);
-                          if (prefs.client) params.set('client', prefs.client);
-                          if (prefs.project) params.set('project', prefs.project);
-                          // adjuntar snapshot SIEMPRE en informe rápido (comprimido)
-                          try {
-                            const snap = await getCompressedSnapshot(true);
-                            if (snap) params.set('snap', snap);
-                          } catch{}
-                          const url = `/zoning/assess-report?${params.toString()}`;
-                          const w = window.open(url, '_blank');
-                          if (!w) { window.location.href = url; }
-                        } catch(e) { showToast?.('Error informe rápido: '+(e&&e.message?e.message:String(e))); }
-                      };
-                      btnExtract.onclick = async ()=>{
-                        try {
-                          const sample = 'Uso residencial. Altura máxima 12 m. Retranqueo mínimo 3 m. Art. 5.2.';
-                          const text = prompt('Pega un fragmento de normativa para extraer (mock reglas):', sample);
-                          if (!text) return;
-                          const r = await fetch('/normativa/extract', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text, municipio: (localStorage.getItem('viewer_zone_municipio')||undefined) }) });
-                          if (!r.ok) throw new Error('HTTP '+r.status);
-                          const dat = await r.json();
-                          const parts = [];
-                          if (dat.uso_suelo) parts.push('uso='+dat.uso_suelo);
-                          if (Number.isFinite(dat.altura_maxima_m)) { parts.push('altura='+dat.altura_maxima_m+' m'); try { localStorage.setItem('viewer_norm_altura_max_m', String(dat.altura_maxima_m)); } catch{} }
-                          if (Number.isFinite(dat.retranqueo_min_m)) { parts.push('retranqueo='+dat.retranqueo_min_m+' m'); try { localStorage.setItem('viewer_norm_retranqueo_min_m', String(dat.retranqueo_min_m)); } catch{} }
-                          const refs = Array.isArray(dat.referencias) && dat.referencias.length ? ('<br/><span class="muted">Ref: '+dat.referencias.join('; ')+'</span>') : '';
-                          normPanel.querySelector('#normativa-content').innerHTML += `<br/><u>Extracción</u>: ${parts.join(' · ')||'—'}${refs}`;
-                          // Auto-aplicar si está activado y hay geometría
-                          try { const auto = autoChk && autoChk.checked && hasGeom; if (auto) setTimeout(()=>btnCalc.click(), 40); } catch{}
-                        } catch(e) { showToast?.('Error extracción: '+(e&&e.message?e.message:String(e))); }
                       };
                       refineTimer = setTimeout(tryRefine, Math.max(600, delay));
                     }
@@ -3583,7 +4022,13 @@
                       }
                       const featsNow = Number(lastFeatures)||0;
                       try { window.lastOverpassFeatureCount = featsNow; } catch{}
-                      st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} feats:${featsNow}${(p50!=null)?` p50:${p50}ms`:''}`;
+                      try {
+                        const tp = window.__bld_tiles_pending|0; const tt = window.__bld_tiles_total|0;
+                        const tilesStr = (tp>0 && tt>0) ? ` tiles:${tp}/${tt}` : '';
+                        st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} feats:${featsNow}${(p50!=null)?` p50:${p50}ms`:''}${tilesStr}`;
+                      } catch {
+                        st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} feats:${featsNow}${(p50!=null)?` p50:${p50}ms`:''}`;
+                      }
                     }
                   } catch{}
                 } catch{}
@@ -3636,10 +4081,30 @@
             };
           };
           const useDebounce = (typeof window !== 'undefined' && typeof window.debounce === 'function') ? window.debounce : localDebounce;
-          buildingsUpdateDebounced = useDebounce(updateBuildingsForViewport, (typeof window.__bld_debounce_ms === 'number' ? window.__bld_debounce_ms : 350));
-          // Prefetch predictivo adelantado según dirección de movimiento (lead window) con control UI lead% y persistencia
-          async function prefetchBuildingsPredictive(m) {
+          buildingsUpdateDebounced = useDebounce(updateBuildingsForViewport, getDebounceMs());
+          (function fpsWatchdog(){
             try {
+              let last = performance.now();
+              let frames = 0;
+              let lowStreak = 0;
+              function step(){
+                const now = performance.now(); frames++;
+                if (now - last >= 1000) {
+                  const fps = frames * 1000 / (now - last);
+                  frames = 0; last = now;
+                  if (fps < 24) lowStreak++; else lowStreak = Math.max(0, lowStreak-1);
+                  if (lowStreak >= 2) { try { window.__bld_degrade_level = 1; prefetchEnabled = false; } catch{} }
+                  if (lowStreak === 0) { try { prefetchEnabled = (localStorage.getItem('viewer_buildings_prefetch')||'on')==='on'; } catch{} }
+                }
+                requestAnimationFrame(step);
+              }
+              requestAnimationFrame(step);
+            } catch{}
+          })();
+          // Capa de depuración para visualizar el BBOX de prefetch
+          function ensurePrefetchDebug() {
+            try {
+              const m = ensureMap(); if (!m) return;
               if (!m.getSource('prefetch-debug')) {
                 m.addSource('prefetch-debug', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
               }
@@ -3722,7 +4187,7 @@
               showPrefetchBBox(s,w,n,e);
               // Si ya hay caché fresca, no prefetch
               const now = Date.now();
-              const cached = overpassCache.get(bbox);
+              const cached = overpassCache.get(normBBoxKey(bbox, bboxKeyDecimalsForZoom(m.getZoom ? m.getZoom() : 0)));
               if (cached && (now - cached.time) < CACHE_MS) return;
               // Prefetch: consulta y guarda en caché sin tocar la fuente
               // Si hay petición principal en curso, no prefetch para no competir
@@ -3731,7 +4196,8 @@
                 const json = await fetchOverpass(bbox, z, true);
                 const gj = overpassToGeoJSON(json, z);
                 if (gj && Array.isArray(gj.features) && gj.features.length > 0) {
-                  overpassCache.set(bbox, { time: Date.now(), data: gj });
+                  const key = normBBoxKey(bbox, bboxKeyDecimalsForZoom(m.getZoom ? m.getZoom() : 0));
+                  overpassCache.set(key, { time: Date.now(), data: gj });
                   try { while (overpassCache.size > getCacheMax()) { const k = overpassCache.keys().next().value; overpassCache.delete(k); } } catch{}
                   log(`Prefetch OK (bbox=${bbox}) features=${gj.features.length}`);
                   try { lastRequests.push({ kind:'prefetch', z, features: gj.features.length||0, ms:0, src:lastMirror, prefetch:true }); if (lastRequests.length>30) lastRequests.shift(); } catch{}
@@ -3894,13 +4360,39 @@
           try {
             const rbtn = document.getElementById('bld-refresh');
             rbtn?.addEventListener('click', () => { try { updateBuildingsForViewport?.(true); } catch{} });
+            const retryBtn = document.getElementById('bld-retry-now');
+            retryBtn?.addEventListener('click', ()=>{
+              try {
+                // Cerrar circuito y reducir degradación antes de forzar el update
+                if (typeof window.circuitOpenUntil !== 'undefined') window.circuitOpenUntil = 0;
+                if (typeof window.__bld_degrade_level !== 'undefined') window.__bld_degrade_level = Math.max(0, (window.__bld_degrade_level|0)-1);
+                if (typeof window.consecutiveFailures !== 'undefined') window.consecutiveFailures = 0;
+              } catch {}
+              try { updateBuildingsForViewport?.(true); } catch{}
+            });
+            const nbtn = document.getElementById('bld-next-mirror');
+            nbtn?.addEventListener('click', ()=>{
+              try {
+                const mirrors = (Array.isArray(window.mirrors)&&window.mirrors.length>0)? window.mirrors : [];
+                if (mirrors.length===0) { showToast?.('No hay mirrors configurados'); return; }
+                const cur = (typeof window.mirrorIdx==='number')? window.mirrorIdx : 0;
+                window.mirrorIdx = (cur + 1) % mirrors.length;
+                showToast?.('Mirror cambiado: '+String(mirrors[window.mirrorIdx]||''));
+                updateBuildingsForViewport?.(true);
+              } catch(e) { showToast?.('Error al cambiar mirror'); }
+            });
             const st = document.getElementById('bld-status');
             const renderBldStatus = () => {
               try {
-                if (!st) return;
-                const mirrors = (Array.isArray(window.mirrors) && window.mirrors.length>0)? window.mirrors : [];
+                const mirrors = (Array.isArray(window.mirrors)&&window.mirrors.length>0)? window.mirrors : [];
                 const midx = (typeof window.mirrorIdx==='number')? window.mirrorIdx : 0;
-                const feats = (typeof window.lastOverpassFeatureCount==='number')? window.lastOverpassFeatureCount : 0;
+                const feats = (typeof lastFeatures!=='undefined')? lastFeatures : (window.lastFeatures||0);
+                const lastMir = (typeof lastMirror!=='undefined')? lastMirror : (window.lastMirror||'');
+                const host = (lastMir||mirrors[midx]||'').replace(/^https?:\/\//,'').split('/')[0];
+                const now = Date.now();
+                const openUntil = (typeof window.circuitOpenUntil==='number')? window.circuitOpenUntil : 0;
+                const circuitOpen = now < openUntil;
+                const rem = circuitOpen ? Math.max(0, Math.ceil((openUntil - now)/1000)) : 0;
                 let p50 = null;
                 try {
                   const ls = (window.latencySamples||typeof latencySamples!=='undefined'&&latencySamples)||[];
@@ -3909,13 +4401,213 @@
                     p50 = arr[Math.floor(arr.length*0.5)]|0;
                   }
                 } catch {}
-                st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} feats:${feats}${(p50!=null)?` p50:${p50}ms`:''}`;
+                try {
+                  const tp = window.__bld_tiles_pending|0; const tt = window.__bld_tiles_total|0;
+                  const tilesStr = (tp>0 && tt>0) ? ` tiles:${tp}/${tt}` : '';
+                  st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} host:${host||'—'} feats:${feats}${(p50!=null)?` p50:${p50}ms`:''}${tilesStr} · circuito:${circuitOpen?`abierto(${rem}s)`:"cerrado"}`;
+                } catch {
+                  st.textContent = `mirror:${(midx+1)}/${mirrors.length||0} host:${host||'—'} feats:${feats}${(p50!=null)?` p50:${p50}ms`:''} · circuito:${circuitOpen?`abierto(${rem}s)`:"cerrado"}`;
+                }
               } catch {}
             };
             // Actualizar periódicamente y tras carga
             renderBldStatus();
             setInterval(renderBldStatus, 2000);
           } catch {}
+          // Botón Planeamiento (inventario Xunta) y badge
+          try {
+            const pbtn = document.getElementById('btn-planeamento');
+            const pbadge = document.getElementById('planeamento-badge');
+            const getMuni = () => {
+              try { return (localStorage.getItem('viewer_zone_municipio')||'').trim(); } catch { return ''; }
+            };
+            const renderPlaneam = async () => {
+              try {
+                const muni = getMuni();
+                if (!muni) { if (pbadge) { pbadge.style.display='none'; pbadge.textContent='planeam: —'; } return; }
+                const url = `/planeamento/inventario?municipio=${encodeURIComponent(muni)}`;
+                const r = await fetch(url);
+                if (!r.ok) throw new Error('HTTP '+r.status);
+                const dat = await r.json();
+                const n = Number(dat?.count||0)|0;
+                if (pbadge) { pbadge.style.display='inline-block'; pbadge.textContent = `planeam:${muni} (${n})`; }
+                try { window.__planeam_rows = dat?.rows||[]; window.__planeam_muni = muni; } catch{}
+                return { muni, n, rows: dat?.rows||[] };
+              } catch(e) {
+                if (pbadge) { pbadge.style.display='inline-block'; pbadge.textContent = 'planeam: error'; }
+                return null;
+              }
+            };
+            // Crear panel on-demand
+            const ensurePlaneamPanel = () => {
+              let el = document.getElementById('planeamento-panel');
+              if (el) return el;
+              el = document.createElement('div');
+              el.id = 'planeamento-panel';
+              el.setAttribute('role','dialog');
+              el.style.cssText = 'position:fixed;right:12px;top:60px;z-index:99999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,0.15);max-width:460px;width:90vw;max-height:70vh;overflow:auto;padding:12px;';
+              const close = document.createElement('button');
+              close.textContent = 'Cerrar';
+              close.style.cssText = 'float:right;margin-left:8px';
+              close.addEventListener('click', ()=>{ el.style.display = 'none'; });
+              const h = document.createElement('h3');
+              h.textContent = 'Planeamiento municipal';
+              h.style.margin = '0 0 8px 0';
+              const controls = document.createElement('div');
+              controls.id = 'planeamento-controls';
+              controls.style.cssText = 'display:flex;gap:6px;align-items:center;margin:0 0 8px 0';
+              controls.innerHTML = '<input id="planeam-muni" type="text" placeholder="Municipio" style="min-width:120px;padding:4px 6px" /> <button id="planeam-load" title="Cargar inventario del municipio">Cargar</button> <input id="planeam-filter" type="text" placeholder="Filtrar…" style="flex:1;padding:4px 6px" /> <button id="planeam-filter-clear" title="Limpiar filtro">Limpiar</button>';
+              const content = document.createElement('div');
+              content.id = 'planeamento-content';
+              el.appendChild(close); el.appendChild(h); el.appendChild(controls); el.appendChild(content);
+              document.body.appendChild(el);
+              return el;
+            };
+            const renderRowsPretty = (rows, muni) => {
+              const el = ensurePlaneamPanel();
+              const c = el.querySelector('#planeamento-content');
+              if (!Array.isArray(rows) || !rows.length) { c.innerHTML = `<div class="muted">Sin registros para ${muni||'—'}</div>`; return el; }
+              const escape = (s)=>String(s).replace(/[&<>]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
+              const colorForEstado = (s)=>{
+                const t = String(s||'').trim().toLowerCase();
+                if (!t) return '#6b7280';
+                if (t.includes('vigente') || t.includes('aprobación definitiva') || t.includes('aprobado definitivamente')) return '#16a34a';
+                if (t.includes('en tramit')) return '#f59e0b';
+                if (t.includes('suspend')) return '#dc2626';
+                return '#2563eb';
+              };
+              const normEstado = (s)=>{
+                if (!s) return '';
+                const t = String(s).trim().toLowerCase();
+                const map = { 'aprobado definitivamente':'Aprobado definitivamente', 'aprobación definitiva':'Aprobación definitiva', 'vigente':'Vigente', 'en tramitación':'En tramitación', 'en tramitacion':'En tramitación' };
+                return map[t] || (t.charAt(0).toUpperCase()+t.slice(1));
+              };
+              const parseFecha = (r)=>{
+                const cand = r['DATA_APROB DEFINITIVA']||r['DATA_APROBACION']||r['DATA']||r['FECHA']||'';
+                if (!cand) return null;
+                let d = Date.parse(cand);
+                if (!Number.isFinite(d)) {
+                  const m = String(cand).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+                  if (m) {
+                    const dd=m[1], mm=m[2], yy=m[3]; const Y = (yy.length===2?('20'+yy):yy);
+                    d = Date.parse(`${Y}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`);
+                  }
+                }
+                return Number.isFinite(d)? d : null;
+              };
+              const pickKeys = (obj)=>{
+                const keys = Object.keys(obj||{});
+                const pref = ['CONCELLO','Concello','NOME','NOME_PLANEAMENTO','DENOMINACION','ESTADO','DATA','DATA_APROBACION','DATA_APROB DEFINITIVA','APROBACION','ENLACE','LIGAZON','URL'];
+                const seen = new Set();
+                const out = [];
+                for (const k of pref) { if (keys.includes(k)) { out.push(k); seen.add(k); } }
+                for (const k of keys) { if (!seen.has(k) && out.length < 12) out.push(k); }
+                return out;
+              };
+              let html = '';
+              try { rows = [...rows].sort((a,b)=>{ const da=parseFecha(b), db=parseFecha(a); return ((da||0)-(db||0)); }); } catch{}
+              rows.slice(0, 12).forEach((r,i)=>{
+                const ks = pickKeys(r);
+                const title = r['NOME_PLANEAMENTO']||r['DENOMINACION']||r['NOME']||'Registro';
+                const estado = normEstado(r['ESTADO']||r['Estado']||r['SITUACION']||'');
+                const fecha = r['DATA_APROB DEFINITIVA']||r['DATA_APROBACION']||r['DATA']||r['FECHA']||'';
+                const url = r['ENLACE']||r['LIGAZON']||r['URL']||'';
+                html += `<div style="border:1px solid #eee;border-radius:6px;padding:8px;margin:6px 0">`;
+                html += `<div style="display:flex;align-items:center;gap:8px;justify-content:space-between">`
+                      + `<div style="font-weight:600;">${i+1}. ${escape(title)}</div>`
+                      + `${url?`<a href="${escape(url)}" target="_blank" rel="noopener" class="badge" style="text-decoration:none">Abrir ficha</a>`:''}`
+                      + `</div>`;
+                if (estado || fecha) {
+                  html += `<div class="hint" style="margin:4px 0">`
+                        + `${estado?`<span class="badge" title="Estado" style="background:${colorForEstado(estado)};color:#fff">${escape(estado)}</span>`:''} `
+                        + `${fecha?`<span class="badge" title="Fecha">${escape(fecha)}</span>`:''}`
+                        + `</div>`;
+                }
+                ks.forEach(k=>{
+                  if (k==='NOME_PLANEAMENTO'||k==='DENOMINACION'||k==='NOME'||k==='ESTADO'||k==='Estado'||k==='SITUACION'||k==='DATA'||k==='DATA_APROBACION'||k==='DATA_APROB DEFINITIVA'||k==='FECHA'||k==='ENLACE'||k==='LIGAZON'||k==='URL') return;
+                  const v = r[k]; if (v==null || String(v).trim()==='') return;
+                  const isUrl = /^https?:\/\//i.test(String(v));
+                  html += `<div><span class="muted">${escape(k)}:</span> ${isUrl?`<a href="${escape(v)}" target="_blank" rel="noopener">enlace</a>`:escape(v)}</div>`;
+                });
+                html += `</div>`;
+              });
+              c.innerHTML = `<div class="hint" style="margin-bottom:6px">Municipio: <b>${escape(muni||'—')}</b> · Registros: ${rows.length}</div>` + html;
+              el.style.display = 'block';
+              return el;
+            };
+            pbtn?.addEventListener('click', async ()=>{
+              const res = await renderPlaneam();
+              if (res) renderRowsPretty(res.rows, res.muni);
+              try {
+                const el = ensurePlaneamPanel();
+                // Prefill municipio con el activo del visor
+                try { const pref = (localStorage.getItem('viewer_zone_municipio')||'').trim(); const pm = el.querySelector('#planeam-muni'); if (pm && pref) pm.value = pref; } catch{}
+                const f = el.querySelector('#planeam-filter');
+                const fc = el.querySelector('#planeam-filter-clear');
+                const doFilter = ()=>{
+                  try {
+                    const term = String(f.value||'').toLowerCase().trim();
+                    const rows = (window.__planeam_rows||[]);
+                    const muni = (window.__planeam_muni||'');
+                    if (!term) { renderRowsPretty(rows, muni); return; }
+                    const filt = rows.filter(r=>{
+                      const txt = [r['NOME_PLANEAMENTO'], r['DENOMINACION'], r['NOME'], r['ESTADO'], r['SITUACION'], r['DATA'], r['DATA_APROBACION'], r['DATA_APROB DEFINITIVA']].filter(Boolean).join(' ').toLowerCase();
+                      return txt.indexOf(term) >= 0;
+                    });
+                    renderRowsPretty(filt, muni);
+                  } catch{}
+                };
+                f?.addEventListener('input', doFilter);
+                fc?.addEventListener('click', ()=>{ try { f.value=''; doFilter(); } catch{} });
+                // Cargar por municipio
+                const pm = el.querySelector('#planeam-muni');
+                const pl = el.querySelector('#planeam-load');
+                const doLoadMuni = async ()=>{
+                  try {
+                    const muni = String(pm?.value||'').trim();
+                    const url = muni ? `/planeamento/inventario?municipio=${encodeURIComponent(muni)}` : '/planeamento/inventario';
+                    const r = await fetch(url);
+                    if (!r.ok) throw new Error('HTTP '+r.status);
+                    const dat = await r.json();
+                    try { window.__planeam_rows = dat?.rows||[]; window.__planeam_muni = muni||''; } catch{}
+                    renderRowsPretty(window.__planeam_rows, window.__planeam_muni||muni);
+                    try { const pbadge = document.getElementById('planeamento-badge'); if (pbadge) { const n = Number(dat?.count||0)|0; pbadge.style.display='inline-block'; pbadge.textContent = `planeam:${(muni||'todos')} (${n})`; } } catch{}
+                  } catch(e) { showToast?.('Error cargando municipio: '+(e&&e.message?e.message:String(e))); }
+                };
+                pl?.addEventListener('click', doLoadMuni);
+                pm?.addEventListener('keydown', (ev)=>{ if (ev.key==='Enter') doLoadMuni(); });
+              } catch{}
+            });
+            renderPlaneam();
+          } catch{}
+          // Badge de normativa activa (altura/retranqueos)
+          try {
+            const nb = document.getElementById('norm-badge');
+            const readNum = (k)=>{ try { const v = parseFloat(localStorage.getItem(k)||'NaN'); return Number.isFinite(v)? v : null; } catch { return null; } };
+            const fmt = (v,unit='m')=> (v==null? null : (String(v).replace(/\.0+$/,'') + ' ' + unit));
+            const renderNormBadge = () => {
+              try {
+                if (!nb) return;
+                const alt = readNum('viewer_norm_altura_max_m');
+                const rmin = readNum('viewer_norm_retranqueo_min_m');
+                const sf = readNum('viewer_norm_setback_front_m');
+                const ss = readNum('viewer_norm_setback_side_m');
+                const sb = readNum('viewer_norm_setback_back_m');
+                const parts = [];
+                if (alt!=null) parts.push('H '+fmt(alt));
+                if (rmin!=null) parts.push('R '+fmt(rmin));
+                const dirs = [];
+                if (sf!=null) dirs.push('F '+fmt(sf));
+                if (ss!=null) dirs.push('L '+fmt(ss));
+                if (sb!=null) dirs.push('B '+fmt(sb));
+                const txt = parts.join(' · ') + (dirs.length? (' · '+dirs.join(' ')) : '');
+                nb.textContent = 'norma: ' + (txt || '—');
+              } catch{}
+            };
+            window.addEventListener('viewer:normativa:updated', renderNormBadge);
+            setInterval(renderNormBadge, 3000);
+            renderNormBadge();
+          } catch{}
           // Autoactivar SIEMPRE al cargar el estilo del mapa y forzar persistencia
           ensureMap();
           try { localStorage.setItem('viewer_buildings_on','1'); } catch {}
@@ -4090,6 +4782,127 @@
         } catch {}
       })();
 
+      // Asegurar repintado del mapa ante cambios de layout (paneles/diálogos)
+      (function ensureMapResizeOnLayout(){
+        try {
+          const m = (window.mapInstance || (typeof ensureMap==='function'?ensureMap():null));
+          if (!m) return;
+          let t = null;
+          const schedule = ()=>{ try { if (t) clearTimeout(t); } catch{}; t = setTimeout(()=>{ try { m.resize?.(); } catch{} }, 80); };
+          try { document.addEventListener('visibilitychange', schedule); } catch {}
+          try {
+            const obs = new MutationObserver(schedule);
+            obs.observe(document.body, { attributes:true, childList:true, subtree:true, attributeFilter:['style','class'] });
+            try { window.__map_resize_observer = obs; } catch{}
+          } catch {}
+          // Failsafe: si el contenedor del mapa queda oculto o con tamaño 0, re-mostrar y forzar resize
+          try {
+            setInterval(()=>{ try {
+              const el = document.getElementById('map');
+              const cw = el?.clientWidth||0, ch = el?.clientHeight||0;
+              const disp = el ? getComputedStyle(el).display : 'block';
+              if (el && (cw===0 || ch===0 || disp==='none')) {
+                el.style.display = 'block';
+                try { localStorage.setItem('viewer_map_on','1'); } catch{}
+                m.resize?.();
+              }
+            } catch{} }, 5000);
+          } catch {}
+        } catch {}
+      })();
+
+      // Watchdog de interacción: mantener mapa visible e interactivo
+      (function ensureMapInteractionStable(){
+        try {
+          const m = (window.mapInstance || (typeof ensureMap==='function'?ensureMap():null));
+          if (!m) return;
+          let healthyTicks = 0;
+          let lastState = { pe:false, drag:false, sz:0 };
+          const getSz = () => { try { const el=document.getElementById('map'); return (el?.clientWidth||0)*(el?.clientHeight||0); } catch { return 0; } };
+          const tick = () => {
+            try {
+              const mapEl = document.getElementById('map');
+              if (mapEl) {
+                if (getComputedStyle(mapEl).display==='none') mapEl.style.display = 'block';
+                if (getComputedStyle(mapEl).visibility!=='visible') mapEl.style.visibility = 'visible';
+                if (getComputedStyle(mapEl).pointerEvents!=='auto') mapEl.style.pointerEvents = 'auto';
+              }
+              const cvs = document.getElementById('canvas');
+              if (cvs) {
+                // Por defecto, no bloquear gestos del mapa
+                if (getComputedStyle(cvs).pointerEvents!=='none') cvs.style.pointerEvents = 'none';
+              }
+              try { if (m.dragPan && m.dragPan.isEnabled && !m.dragPan.isEnabled()) m.dragPan.enable(); } catch {}
+              try { if (m.scrollZoom && m.scrollZoom.isEnabled && !m.scrollZoom.isEnabled()) m.scrollZoom.enable(); } catch {}
+              try { m.boxZoom && m.boxZoom.enable && m.boxZoom.enable(); } catch {}
+              try { m.keyboard && m.keyboard.enable && m.keyboard.enable(); } catch {}
+              try { m.doubleClickZoom && m.doubleClickZoom.enable && m.doubleClickZoom.enable(); } catch {}
+              try { m.touchZoomRotate && m.touchZoomRotate.enable && m.touchZoomRotate.enable(); } catch {}
+              // Autoparada: si el estado se mantiene sano varias veces seguidas, dejar de vigilar
+              const nowState = { pe: getComputedStyle(document.getElementById('map')||document.body).pointerEvents==='auto', drag: (m.dragPan?.isEnabled?.()===true), sz: getSz() };
+              if (nowState.pe && nowState.drag && nowState.sz>0) {
+                healthyTicks++;
+              } else {
+                healthyTicks = 0;
+              }
+            } catch {}
+          };
+          tick();
+          try {
+            const iv = setInterval(()=>{
+              tick();
+              if (healthyTicks >= 8) { clearInterval(iv); }
+            }, 2500);
+          } catch {}
+        } catch {}
+      })();
+
+      // Botones: Modo seguro y Reset UI
+      (function ensureStabilityButtons(){
+        try {
+          const tb = document.getElementById('toolbar'); if (!tb) return;
+          // Reset UI
+          let resetBtn = document.getElementById('btn-reset-ui');
+          if (!resetBtn) {
+            resetBtn = document.createElement('button');
+            resetBtn.id = 'btn-reset-ui';
+            resetBtn.title = 'Borra preferencias viewer_* y recarga';
+            resetBtn.textContent = 'Reset UI';
+            tb.appendChild(resetBtn);
+          }
+          resetBtn.onclick = () => { try {
+            Object.keys(localStorage).filter(k=>k.startsWith('viewer_')).forEach(k=>localStorage.removeItem(k));
+            location.reload();
+          } catch {} };
+          // Modo seguro
+          let safeBtn = document.getElementById('btn-safe-mode');
+          if (!safeBtn) {
+            safeBtn = document.createElement('button');
+            safeBtn.id = 'btn-safe-mode';
+            safeBtn.title = 'Usa estilo ligero, desactiva relieve, limita concurrencia';
+            safeBtn.textContent = 'Modo seguro';
+            tb.appendChild(safeBtn);
+          }
+          safeBtn.onclick = () => { try {
+            // Estilo ligero
+            try { window.mapInstance?.setStyle('https://demotiles.maplibre.org/style.json'); } catch{}
+            // Desactivar relieve
+            try { window.disableTerrain?.(); localStorage.setItem('viewer_map_terrain','off'); } catch{}
+            // Reducir concurrencia Overpass de teselas
+            try { localStorage.setItem('viewer_bld_max_conc','2'); } catch{}
+            // Desactivar observador pesado de layout si existe
+            try { const obs = window.__map_resize_observer; if (obs && typeof obs.disconnect==='function') obs.disconnect(); } catch{}
+            // Asegurar interacciones
+            try {
+              const m = window.mapInstance || (typeof ensureMap==='function'?ensureMap():null);
+              m?.dragPan?.enable?.(); m?.scrollZoom?.enable?.(); m?.keyboard?.enable?.();
+              m?.boxZoom?.enable?.(); m?.doubleClickZoom?.enable?.(); m?.touchZoomRotate?.enable?.();
+              m?.resize?.();
+            } catch{}
+          } catch {} };
+        } catch {}
+      })();
+
       // Marcadores UI
       const markersBtn = document.getElementById('toggle-markers');
       let markersOn = (localStorage.getItem('viewer_markers') ?? '0') === '1';
@@ -4159,6 +4972,7 @@
         if (v == null) { localStorage.setItem('viewer_buildings_on', '1'); buildingsOn = true; }
         else { buildingsOn = (v === '1'); }
       } catch { buildingsOn = true; }
+      {
       let buildingsMoveHandler = null;
       let buildingsUpdateDebounced = null;
       // Intensidad de acoplamiento
@@ -4190,6 +5004,7 @@
         syncEaseMs = Math.min(500, Math.max(0, v));
         localStorage.setItem('viewer_sync_ease_ms', String(syncEaseMs));
       });
+      }
       // Origen geodésico del modelo (persistente)
       const modelOrgLonEl = document.getElementById('model-org-lon');
       const modelOrgLatEl = document.getElementById('model-org-lat');
@@ -4468,8 +5283,16 @@
           } catch {}
           // Forzar un resize tras creación por si CSS cambió altura
           try { setTimeout(()=>mapInstance.resize(), 100); } catch {}
-          // Reforzar base raster de respaldo tras creación
-          try { setTimeout(()=>{ try { window.addEsriRasterBase?.(); } catch {} }, 300); } catch {}
+          // Reforzar base raster de respaldo tras creación (desactivado por defecto)
+          // Solo activar si el usuario lo permite explícitamente
+          try {
+            setTimeout(()=>{
+              try {
+                const boot = (localStorage.getItem('viewer_raster_auto_boot')||'off')==='on';
+                if (boot) { window.addEsriRasterBase?.(); }
+              } catch {}
+            }, 300);
+          } catch {}
           // Fallback automático si el estilo falla (403/404 u otros)
           try {
             mapInstance.on('error', (e) => {
@@ -4482,14 +5305,14 @@
               } catch {}
             });
           } catch {}
-          // Cuando el estilo esté listo, reinyectar capas si tenemos body
+          // Cuando el estilo esté listo, reinyectar capas si tenemos body y activar edificios 3D
           try {
             const tryEnsure = () => { try { if (window.lastBodySent) { ensureMapLayers(window.lastBodySent); fitMapToParcel(); } } catch {} };
             mapInstance.on('load', tryEnsure);
             mapInstance.on('styledata', tryEnsure);
-            // Activar edificios automáticamente si están ON en preferencias
-            mapInstance.once('load', ()=>{ try { if (typeof buildingsOn !== 'undefined' && buildingsOn) { window.enableBuildings && window.enableBuildings(); } } catch{} });
-            mapInstance.once('styledata', ()=>{ try { if (typeof buildingsOn !== 'undefined' && buildingsOn) { window.enableBuildings && window.enableBuildings(); } } catch{} });
+            // Activar edificios automáticamente SIEMPRE al cargar o actualizar estilo
+            mapInstance.once('load', ()=>{ try { window.enableBuildings && window.enableBuildings(); } catch{} });
+            mapInstance.once('styledata', ()=>{ try { window.enableBuildings && window.enableBuildings(); } catch{} });
           } catch {}
           // Añadir control de presets (Ir a Galicia / ciudades)
           try {
