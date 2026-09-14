@@ -1,13 +1,13 @@
 from src.rules_engine import get_plan_params_dynamic
 from src.volume import VolumeParams, compute_building_envelope
 
-SUPPORTED_VOLUME_EXPORT_FORMATS = ('cityjson', 'gltf', 'glb')
+SUPPORTED_VOLUME_EXPORT_FORMATS = ('cityjson', 'gltf', 'glb', 'ifc')
 
 
 def normalize_volume_export_format(format: str | None) -> str:
     fmt = (format or 'cityjson').strip().lower()
     if fmt not in SUPPORTED_VOLUME_EXPORT_FORMATS:
-        raise ValueError("Formato no soportado: use 'cityjson', 'gltf' o 'glb'")
+        raise ValueError("Formato no soportado: use 'cityjson', 'gltf', 'glb' o 'ifc'")
     return fmt
 
 
@@ -323,3 +323,168 @@ def gltf_to_glb_bytes(gltf: dict) -> bytes:
     bin_header = _struct.pack('<II', len(bin_chunk), BIN_TYPE)
 
     return header + json_header + json_chunk + bin_header + bin_chunk
+
+
+def extrude_polygon_to_ifc(feature: dict) -> str:
+    """Convierte un Feature 2D (Polygon) en un archivo IFC 4 STEP mínimo sin dependencias externas.
+
+    Genera un IfcProject > IfcSite > IfcBuilding > IfcBuildingElementProxy con
+    geometría de extrusión lineal (IfcExtrudedAreaSolid) a partir del anillo exterior.
+
+    Limitaciones: solo Polygon, solo anillo exterior (sin huecos), coordenadas locales
+    centradas en el centroide del polígono.
+    """
+    if not feature or not isinstance(feature, dict):
+        raise ValueError("feature inválido")
+    geom = feature.get('geometry') or {}
+    if geom.get('type') != 'Polygon':
+        raise ValueError("Solo se soporta Polygon para exportación IFC")
+    coords = geom.get('coordinates') or []
+    if not coords:
+        raise ValueError("Coordenadas inválidas")
+    ring = coords[0]
+    if ring and ring[0] == ring[-1]:
+        ring = ring[:-1]
+    if len(ring) < 3:
+        raise ValueError("Anillo inválido")
+
+    h = float((feature.get('properties') or {}).get('height_m') or 0.0)
+    if h <= 0:
+        raise ValueError("height_m debe ser > 0")
+
+    # Centroid para coordenadas locales
+    cx = sum(float(p[0]) for p in ring) / len(ring)
+    cy = sum(float(p[1]) for p in ring) / len(ring)
+    local_pts = [(float(p[0]) - cx, float(p[1]) - cy) for p in ring]
+
+    lines: list[str] = []
+    eid = 1
+
+    def _next():
+        nonlocal eid
+        eid += 1
+        return eid
+
+    # --- Header ---
+    lines.append("ISO-10303-21;")
+    lines.append("HEADER;")
+    lines.append("FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'), '2;1');")
+    lines.append("FILE_NAME('building.ifc', '', ('NormativaGalicia'), ('NormativaGalicia'), 'manual', 'NormativaGalicia', '');")
+    lines.append("FILE_SCHEMA(('IFC4'));")
+    lines.append("ENDSEC;")
+    lines.append("DATA;")
+
+    # --- Units ---
+    id_len = _next()
+    id_area_unit = _next()
+    id_vol_unit = _next()
+    lines.append(f"#{id_len} = IFCSIUNIT(*, .LENGTHUNIT., $, .METRE.);")
+    lines.append(f"#{id_area_unit} = IFCSIUNIT(*, .AREAUNIT., $, .METRE.);")
+    lines.append(f"#{id_vol_unit} = IFCSIUNIT(*, .VOLUMEUNIT., $, .METRE.);")
+
+    id_unit_assignment = _next()
+    lines.append(f"#{id_unit_assignment} = IFCUNITASSIGNMENT((#{id_len}, #{id_area_unit}, #{id_vol_unit}));")
+
+    # --- Cartesian point origin ---
+    id_origin = _next()
+    lines.append(f"#{id_origin} = IFCCARTESIANPOINT((0.0, 0.0, 0.0));")
+
+    # --- Axis2D3D placement ---
+    id_axis3d = _next()
+    id_place3d = _next()
+    lines.append(f"#{id_axis3d} = IFCDIRECTION((0.0, 0.0, 1.0));")
+    lines.append(f"#{id_place3d} = IFCAXIS2PLACEMENT3D(#{id_origin}, #{id_axis3d}, $);")
+
+    # --- Geometric representation context ---
+    id_ctx = _next()
+    lines.append(f"#{id_ctx} = IFCGEOMETRICREPRESENTATIONCONTEXT($, 'Model', 3, 1.0E-5, #{id_place3d}, $);")
+
+    # --- Polygon profile (anillo exterior) ---
+    id_pts = []
+    for (px, py) in local_pts:
+        pid = _next()
+        lines.append(f"#{pid} = IFCCARTESIANPOINT(({px:.6f}, {py:.6f}));")
+        id_pts.append(pid)
+    # Cerrar el polígono repitiendo el primer punto
+    id_pts_closed = id_pts + [id_pts[0]]
+
+    id_polyline = _next()
+    pts_ref = ', '.join(f'#{p}' for p in id_pts_closed)
+    lines.append(f"#{id_polyline} = IFCPOLYLINE(({pts_ref}));")
+
+    id_profile = _next()
+    lines.append(f"#{id_profile} = IFCARBITRARYCLOSEDPROFILEDEF(.AREA., 'BuildingProfile', #{id_polyline});")
+
+    # --- Extruded area solid ---
+    id_extrude_dir = _next()
+    lines.append(f"#{id_extrude_dir} = IFCDIRECTION((0.0, 0.0, 1.0));")
+
+    id_extrude_origin = _next()
+    lines.append(f"#{id_extrude_origin} = IFCCARTESIANPOINT((0.0, 0.0, 0.0));")
+    id_extrude_axis = _next()
+    lines.append(f"#{id_extrude_axis} = IFCDIRECTION((0.0, 0.0, 1.0));")
+    id_extrude_ref_dir = _next()
+    lines.append(f"#{id_extrude_ref_dir} = IFCDIRECTION((1.0, 0.0, 0.0));")
+    id_extrude_place = _next()
+    lines.append(f"#{id_extrude_place} = IFCAXIS2PLACEMENT3D(#{id_extrude_origin}, #{id_extrude_axis}, #{id_extrude_ref_dir});")
+
+    id_solid = _next()
+    lines.append(f"#{id_solid} = IFCEXTRUDEDAREASOLID(#{id_profile}, #{id_extrude_place}, #{id_extrude_dir}, {h:.6f});")
+
+    # --- Shape representation ---
+    id_shape_rep = _next()
+    lines.append(f"#{id_shape_rep} = IFCSHAPEREPRESENTATION(#{id_ctx}, 'Body', 'SweptSolid', (#{id_solid}));")
+
+    id_product_def = _next()
+    lines.append(f"#{id_product_def} = IFCPRODUCTDEFINITIONSHAPE($, $, (#{id_shape_rep}));")
+
+    # --- Local placement for building element ---
+    id_elem_origin = _next()
+    lines.append(f"#{id_elem_origin} = IFCCARTESIANPOINT((0.0, 0.0, 0.0));")
+    id_elem_axis = _next()
+    lines.append(f"#{id_elem_axis} = IFCDIRECTION((0.0, 0.0, 1.0));")
+    id_elem_ref = _next()
+    lines.append(f"#{id_elem_ref} = IFCDIRECTION((1.0, 0.0, 0.0));")
+    id_elem_place = _next()
+    lines.append(f"#{id_elem_place} = IFCLOCALPLACEMENT($, IFCAXIS2PLACEMENT3D(#{id_elem_origin}, #{id_elem_axis}, #{id_elem_ref}));")
+
+    # --- Building element proxy ---
+    id_proxy = _next()
+    lines.append(f"#{id_proxy} = IFCBUILDINGELEMENTPROXY(#{id_proxy}, $, 'Building', $, $, #{id_elem_place}, #{id_product_def}, $, $);")
+
+    # --- Site placement ---
+    id_site_place = _next()
+    lines.append(f"#{id_site_place} = IFCLOCALPLACEMENT($, IFCAXIS2PLACEMENT3D(#{id_origin}, #{id_axis3d}, $));")
+
+    # --- Site ---
+    id_site = _next()
+    lines.append(f"#{id_site} = IFCSITE(#{id_site}, 'Site', $, $, #{id_site_place}, $, $, .ELEMENT., $, $, $, $, $);")
+
+    # --- Building placement ---
+    id_bld_place = _next()
+    lines.append(f"#{id_bld_place} = IFCLOCALPLACEMENT(#{id_site_place}, IFCAXIS2PLACEMENT3D(#{id_origin}, #{id_axis3d}, $));")
+
+    # --- Building ---
+    id_bld = _next()
+    lines.append(f"#{id_bld} = IFCBUILDING(#{id_bld}, 'Building', $, $, #{id_bld_place}, $, $, .ELEMENT., $, $, $);")
+
+    # --- Rel contained in spatial ---
+    id_rel_contained = _next()
+    lines.append(f"#{id_rel_contained} = ICRELCONTAINEDINSPATIALSTRUCTURE(#{id_rel_contained}, $, $, (#{id_proxy}), #{id_bld});")
+
+    # --- Rel aggregates site > building ---
+    id_rel_agg_site = _next()
+    lines.append(f"#{id_rel_agg_site} = IFCRELAGGREGATES(#{id_rel_agg_site}, $, $, #{id_site}, (#{id_bld}));")
+
+    # --- Project ---
+    id_proj = _next()
+    lines.append(f"#{id_proj} = IFCPROJECT(#{id_proj}, 'Project', $, $, $, $, $, (#{id_ctx}), #{id_unit_assignment});")
+
+    # --- Rel aggregates project > site ---
+    id_rel_agg_proj = _next()
+    lines.append(f"#{id_rel_agg_proj} = IFCRELAGGREGATES(#{id_rel_agg_proj}, $, $, #{id_proj}, (#{id_site}));")
+
+    lines.append("ENDSEC;")
+    lines.append("END-ISO-10303-21;")
+
+    return '\n'.join(lines) + '\n'

@@ -105,13 +105,18 @@ def render_svg_minimap(parcel_geom: dict | None, envelope_feat: dict | None, *, 
     return '\n'.join(svg_parts)
 
 
-def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = None, title: Optional[str] = None, client: Optional[str] = None, project: Optional[str] = None, snapshot_data_url: Optional[str] = None, brand_color: Optional[str] = None, signature: bool = False, sign_by: Optional[str] = None, sign_place: Optional[str] = None, notes: Optional[str] = None, source_ref: Optional[str] = None) -> str:
+def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = None, title: Optional[str] = None, client: Optional[str] = None, project: Optional[str] = None, snapshot_data_url: Optional[str] = None, brand_color: Optional[str] = None, signature: bool = False, sign_by: Optional[str] = None, sign_place: Optional[str] = None, notes: Optional[str] = None, source_ref: Optional[str] = None, official_context: Optional[dict] = None) -> str:
     import html as _html
     def esc(x: str) -> str:
         try:
             return _html.escape(x if isinstance(x, str) else str(x))
         except Exception:
             return str(x)
+    def _num(x):
+        try:
+            return None if x is None else float(x)
+        except Exception:
+            return None
     v = (res.viability or '').upper()
     color = {'APTO':'#2e7d32','CONDICIONADO':'#f57f17','NO APTO':'#c62828'}.get(v, (brand_color or '#37474f'))
     reasons = ''.join(f"<li>{esc(r)}</li>" for r in (res.reasons or []))
@@ -243,6 +248,329 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             )
     except Exception:
         carto_html = ''
+    surface_html = ''
+    try:
+        parcel_area = _num((res.geometry_summary or {}).get('area') or (res.geometry_summary or {}).get('area_m2'))
+        buildable_area = _num(((res.feature or {}) if hasattr(res, 'feature') else (res.get('feature') if isinstance(res, dict) else {})).get('properties', {}).get('area_m2'))
+        occ_ratio = _num(ocu)
+        occ_cap_area = parcel_area * occ_ratio if parcel_area is not None and occ_ratio is not None else None
+        occupied_area = buildable_area if buildable_area is not None else occ_cap_area
+        free_area = max(parcel_area - occupied_area, 0.0) if parcel_area is not None and occupied_area is not None else None
+        if any(v is not None for v in (parcel_area, buildable_area, occ_cap_area, free_area)):
+            surface_rows = ''.join([
+                f"<tr><td>Superficie de parcela</td><td>{_fmt(parcel_area)} m²</td></tr>",
+                f"<tr><td>Superficie ocupada estimada</td><td>{_fmt(occupied_area)} m²</td></tr>",
+                f"<tr><td>Superficie libre estimada</td><td>{_fmt(free_area)} m²</td></tr>",
+                f"<tr><td>Envolvente edificable</td><td>{_fmt(buildable_area)} m²</td></tr>",
+                f"<tr><td>Ocupación máxima teórica</td><td>{_fmt(occ_cap_area)} m²</td></tr>",
+            ])
+            surface_html = (
+                "<section>"
+                "<h2>Cuadro de superficies</h2>"
+                "<table><thead><tr><th>Concepto</th><th>Valor</th></tr></thead><tbody>"
+                f"{surface_rows}"
+                "</tbody></table>"
+                "<div class='muted' style='margin-top:8px'>"
+                "La superficie ocupada/libre es una estimación preliminar a partir de la envolvente calculada y de la ocupación máxima disponible.</div>"
+                "</section>"
+            )
+    except Exception:
+        surface_html = ''
+    # Diagnóstico comparativo edificio vs subzona
+    diagnostic_html = ''
+    try:
+        from src.subzones_service import find_subzone_by_name, find_subzone_for_point
+        diag_subzone = None
+        if subz and muni:
+            try:
+                diag_subzone = find_subzone_by_name(muni, subz)
+            except Exception:
+                pass
+        if diag_subzone is None and isinstance(body, dict) and body.get('geometry'):
+            try:
+                from app.main import centroid_lonlat_from_geojson
+                lon, lat = centroid_lonlat_from_geojson(body.get('geometry'))
+                diag_subzone = find_subzone_for_point(lon, lat)
+            except Exception:
+                pass
+        if diag_subzone:
+            altura_max = diag_subzone.get('altura_maxima_m')
+            ocupacion_max = diag_subzone.get('ocupacion_max')
+            edificabilidad_max = diag_subzone.get('edificabilidad_max_m2_m2')
+            retranqueo_min = diag_subzone.get('retranqueo_min_m')
+            # Valores del edificio/proyecto desde body
+            h = _num(body.get('height_m') or body.get('altura_m')) if isinstance(body, dict) else None
+            lv = body.get('levels') if isinstance(body, dict) else None
+            fp = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
+            diag_rows = ''
+            verdict = 'compatible'
+            issues = []
+            # Altura
+            if h is not None and altura_max is not None:
+                diff = round(h - float(altura_max), 2)
+                if diff <= 0:
+                    diag_rows += f"<tr><td>Altura</td><td>{h} m</td><td>{altura_max} m</td><td style='color:#2e7d32'>✓ {abs(diff)} m margen</td></tr>"
+                else:
+                    diag_rows += f"<tr><td>Altura</td><td>{h} m</td><td>{altura_max} m</td><td style='color:#c62828'>✗ {diff} m exceso</td></tr>"
+                    verdict = 'supera_altura'
+                    issues.append(f'Altura: exceso de {diff} m')
+            elif altura_max is not None:
+                diag_rows += f"<tr><td>Altura</td><td>—</td><td>{altura_max} m</td><td>—</td></tr>"
+            # Plantas
+            if altura_max is not None:
+                max_levels = int(float(altura_max) / 3.2)
+                if lv is not None:
+                    if int(lv) <= max_levels:
+                        diag_rows += f"<tr><td>Plantas</td><td>{lv}</td><td>≤ {max_levels}</td><td style='color:#2e7d32'>✓</td></tr>"
+                    else:
+                        diag_rows += f"<tr><td>Plantas</td><td>{lv}</td><td>≤ {max_levels}</td><td style='color:#c62828'>✗</td></tr>"
+                        if verdict == 'compatible':
+                            verdict = 'supera_altura'
+                        issues.append(f'Plantas: excede el máximo estimado')
+                else:
+                    diag_rows += f"<tr><td>Plantas</td><td>—</td><td>≤ {max_levels}</td><td>—</td></tr>"
+            # Ocupación
+            if ocupacion_max is not None:
+                pct = int(float(ocupacion_max) * 100) if float(ocupacion_max) <= 1 else int(float(ocupacion_max))
+                if fp is not None:
+                    # Sin superficie de parcela no podemos verificar
+                    diag_rows += f"<tr><td>Ocupación</td><td>{fp} m² (huella)</td><td>≤ {pct}%</td><td>—</td></tr>"
+                else:
+                    diag_rows += f"<tr><td>Ocupación</td><td>—</td><td>≤ {pct}%</td><td>—</td></tr>"
+            # Edificabilidad
+            if edificabilidad_max is not None:
+                diag_rows += f"<tr><td>Edificabilidad</td><td>—</td><td>≤ {edificabilidad_max} m²/m²</td><td>—</td></tr>"
+            # Retranqueo
+            if retranqueo_min is not None:
+                diag_rows += f"<tr><td>Retranqueo mín.</td><td>—</td><td>≥ {retranqueo_min} m</td><td>—</td></tr>"
+            verdict_label = {'compatible': 'Compatible', 'supera_altura': 'Supera parámetros', 'sin_dato': 'Sin datos'}.get(verdict, verdict)
+            verdict_color = '#2e7d32' if verdict == 'compatible' else '#c62828'
+            issues_html = ''.join(f"<li>{esc(i)}</li>" for i in issues) if issues else ''
+            diagnostic_html = (
+                "<section>"
+                "<h2>Diagnóstico comparativo edificio vs subzona</h2>"
+                f"<div class='muted' style='margin-bottom:8px'>Veredicto: <strong style='color:{verdict_color}'>{esc(verdict_label)}</strong></div>"
+                "<table><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>"
+                f"{diag_rows}"
+                "</tbody></table>"
+                f"{'<ul>' + issues_html + '</ul>' if issues_html else ''}"
+                "<div class='muted' style='margin-top:6px'>Nota: las alturas de edificios existentes pueden ser estimadas a partir de OSM y no sustituyen un levantamiento topográfico.</div>"
+                "</section>"
+            )
+    except Exception:
+        diagnostic_html = ''
+    economic_html = ''
+    try:
+        edi_ratio = _num(edi)
+        alt_m = _num(alt)
+        footprint = buildable_area if buildable_area is not None else occ_cap_area
+        total_buildable_m2 = None
+        if footprint is not None and alt_m is not None:
+            floors = max(int(round(alt_m / 3.0)), 1) if alt_m > 0 else 1
+            total_buildable_m2 = footprint * floors
+        elif edi_ratio is not None and parcel_area is not None:
+            total_buildable_m2 = parcel_area * edi_ratio
+        avg_dwelling_m2 = 90.0
+        dwellings = None
+        if total_buildable_m2 is not None:
+            dwellings = max(int(total_buildable_m2 / avg_dwelling_m2), 0)
+        if any(v is not None for v in (total_buildable_m2, dwellings, edi_ratio)):
+            econ_rows = ''.join([
+                f"<tr><td>Superficie edificable total estimada</td><td>{_fmt(total_buildable_m2)} m²</td></tr>",
+                f"<tr><td>Plantas estimadas (h/3m)</td><td>{_fmt(int(round(alt_m / 3.0)) if alt_m else None)}</td></tr>" if alt_m else '',
+                f"<tr><td>Edificabilidad (m²/m²)</td><td>{_fmt(edi_ratio)}</td></tr>" if edi_ratio is not None else '',
+                f"<tr><td>Viviendas potenciales (≈{int(avg_dwelling_m2)} m²/viv)</td><td>{_fmt(dwellings)}</td></tr>" if dwellings is not None else '',
+            ])
+            economic_html = (
+                "<section>"
+                "<h2>Estimación económica preliminar</h2>"
+                "<table><thead><tr><th>Concepto</th><th>Valor</th></tr></thead><tbody>"
+                f"{econ_rows}"
+                "</tbody></table>"
+                "<div class='muted' style='margin-top:8px'>"
+                "Estimación orientativa basada en la envolvente, altura y edificabilidad. "
+                "No sustituye un estudio económico ni de mercado. La superficie media por vivienda es una hipótesis por defecto.</div>"
+                "</section>"
+            )
+    except Exception:
+        economic_html = ''
+    shadow_html = ''
+    try:
+        from src.shadow_service import shadow_analysis_multi_hour
+        import datetime as _sdt
+        parcel_geom = body.get('geometry') if isinstance(body, dict) else None
+        env_feat = None
+        if hasattr(res, 'feature') and res.feature:
+            env_feat = res.feature
+        elif isinstance(res, dict) and res.get('feature'):
+            env_feat = res.get('feature')
+        shadow_geom = None
+        if env_feat and isinstance(env_feat, dict):
+            shadow_geom = env_feat.get('geometry')
+        if shadow_geom is None and parcel_geom:
+            shadow_geom = parcel_geom
+        if shadow_geom and alt:
+            centroid_lon = None
+            centroid_lat = None
+            try:
+                from src.zoning_assess import centroid_lonlat_from_geojson
+                centroid_lon, centroid_lat = centroid_lonlat_from_geojson(shadow_geom)
+            except Exception:
+                pass
+            if centroid_lon is not None and centroid_lat is not None:
+                winter = _sdt.date(_sdt.date.today().year, 12, 21)
+                shadow_res = shadow_analysis_multi_hour(
+                    shadow_geom, float(alt), centroid_lat, centroid_lon, winter,
+                    hours=[8, 10, 12, 14, 16, 18],
+                )
+                shadow_rows = ''
+                for r in shadow_res.get('results', []):
+                    hour = r.get('hour_utc', '?')
+                    solar = r.get('solar', {})
+                    elev = solar.get('elevation_deg', '—')
+                    azim = solar.get('azimuth_deg', '—')
+                    slen = r.get('shadow_length_m', 0)
+                    has_shadow = 'Sí' if r.get('has_shadow') else 'No'
+                    shadow_rows += (
+                        f"<tr><td>{hour}:00 UTC</td><td>{elev}°</td><td>{azim}°</td>"
+                        f"<td>{slen} m</td><td>{has_shadow}</td></tr>"
+                    )
+                shadow_html = (
+                    "<section>"
+                    "<h2>Análisis de sombras (solsticio de invierno)</h2>"
+                    "<table><thead><tr><th>Hora</th><th>Elevación solar</th><th>Azimut solar</th><th>Longitud sombra</th><th>Sombra</th></tr></thead><tbody>"
+                    f"{shadow_rows}"
+                    "</tbody></table>"
+                    f"<div class='muted' style='margin-top:8px'>Sombra máxima: {shadow_res.get('max_shadow_length_m', '—')} m. "
+                    "Análisis preliminar basado en modelo solar simplificado; no considera sombras entre edificios ni relieve. "
+                    "No sustituye un estudio de soleamiento oficial.</div>"
+                    "</section>"
+                )
+    except Exception:
+        shadow_html = ''
+    official_html = ''
+    if official_context:
+        try:
+            cat = official_context.get('catastro') or {}
+            pl = official_context.get('planeamiento') or {}
+            si = official_context.get('siotuga') or {}
+            af = official_context.get('afecciones_preliminares') or {}
+            cat_rows = ''.join([
+                f"<tr><td>Referencia catastral</td><td>{esc(cat.get('refcat') or '—')}</td></tr>",
+                f"<tr><td>Dirección catastral</td><td>{esc(cat.get('direccion') or '—')}</td></tr>",
+                f"<tr><td>Coordenadas consulta</td><td>{esc(cat.get('query_lon'))}, {esc(cat.get('query_lat'))}</td></tr>" if cat.get('query_lon') is not None and cat.get('query_lat') is not None else '',
+                f"<tr><td>Superficie terreno</td><td>{esc(cat.get('superficie_terreno_m2') or '—')} m²</td></tr>" if cat.get('superficie_terreno_m2') else '',
+                f"<tr><td>Superficie construida</td><td>{esc(cat.get('superficie_construida_m2') or '—')} m²</td></tr>" if cat.get('superficie_construida_m2') else '',
+                f"<tr><td>Uso principal</td><td>{esc(cat.get('uso_principal') or '—')}</td></tr>" if cat.get('uso_principal') else '',
+                f"<tr><td>Año construcción</td><td>{esc(cat.get('anio_construccion') or '—')}</td></tr>" if cat.get('anio_construccion') else '',
+                f"<tr><td>Valor catastral</td><td>{esc(cat.get('valor_catastral') or '—')} €</td></tr>" if cat.get('valor_catastral') else '',
+                f"<tr><td>Municipio catastral</td><td>{esc(cat.get('municipio_catastral') or '—')}</td></tr>" if cat.get('municipio_catastral') else '',
+                f"<tr><td>Consistencia coordenadas</td><td>{esc(cat.get('coord_consistency') or '—')}</td></tr>" if cat.get('coord_consistency') else '',
+                f"<tr><td>Consistencia municipio</td><td>{esc(cat.get('municipio_consistency') or '—')}</td></tr>" if cat.get('municipio_consistency') else '',
+            ])
+            inv_rows = pl.get('rows') or []
+            planeamiento_items = ''.join(
+                f"<li>{esc(r.get('CONCELLO') or r.get('Concello') or r.get('municipio') or '')} · {esc(r.get('FIGURA') or r.get('Figura') or r.get('figura') or 'Planeamiento')} · {esc(r.get('ESTADO') or r.get('Estado') or r.get('estado') or '—')}</li>"
+                for r in inv_rows[:5]
+            ) or '<li>Sin filas de inventario municipal disponibles</li>'
+            afecciones_items = ''.join(f"<li>{esc(x)}</li>" for x in (af.get('alerts') or [])) or '<li>Sin alertas preliminares detectadas</li>'
+            coberturas_items = ''.join(f"<li>{esc(x)}</li>" for x in (af.get('land_cover_labels') or [])) or '<li>Sin coberturas resumidas</li>'
+            # Enlaces a fuentes oficiales con contexto específico
+            official_links = (official_context or {}).get('official_links') or []
+            if official_links:
+                fuentes_links = ''.join([
+                    f"<li><a href=\"{esc(link.get('url') or '')}\" target=\"_blank\" rel=\"noopener\">{esc(link.get('name') or '')}: {esc(link.get('label') or '')}</a></li>"
+                    for link in official_links
+                ])
+            else:
+                # Fallback si no hay official_links
+                qlon = cat.get('query_lon')
+                qlat = cat.get('query_lat')
+                if qlon is not None and qlat is not None:
+                    catastro_link = (
+                        f"https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx"
+                        f"?pest=coordenadas&latitud={qlat}&longitud={qlon}"
+                        f"&tipoCoordenadas=2&TipUR=Coor&from=OVCBusqueda&final="
+                    )
+                    catastro_label = f"Catastro — Ver parcela ({qlon:.4f}, {qlat:.4f})"
+                else:
+                    catastro_link = "https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCBusqueda.aspx"
+                    catastro_label = "Catastro — Buscador de inmuebles"
+                siotuga_link = "https://siotuga.xunta.gal/siotuga/inventario?lang=es_ES"
+                siotuga_label = f"SIOTUGA — Inventario de planeamiento de {muni or 'Galicia'}"
+                if qlon is not None and qlat is not None:
+                    siose_link = (
+                        f"https://servicios.idee.es/wms-inspire/ocupacion-suelo"
+                        f"?service=WMS&request=GetFeatureInfo&version=1.3.0"
+                        f"&layers=LC.LandCoverSurfaces&query_layers=LC.LandCoverSurfaces"
+                        f"&crs=CRS:84&bbox={qlon-0.001},{qlat-0.001},{qlon+0.001},{qlat+0.001}"
+                        f"&width=101&height=101&i=50&j=50&info_format=text/html"
+                    )
+                    siose_label = "SIOSE — Ver ocupación del suelo en esta parcela"
+                else:
+                    siose_link = "https://servicios.idee.es/wms-inspire/ocupacion-suelo?service=WMS&request=GetCapabilities&version=1.3.0"
+                    siose_label = "SIOSE — Servicio de ocupación del suelo (IDEE/INSPIRE)"
+                fuentes_links = ''.join([
+                    f"<li><a href=\"{catastro_link}\" target=\"_blank\" rel=\"noopener\">{esc(catastro_label)}</a></li>",
+                    f"<li><a href=\"{siotuga_link}\" target=\"_blank\" rel=\"noopener\">{esc(siotuga_label)}</a></li>",
+                    f"<li><a href=\"{siose_link}\" target=\"_blank\" rel=\"noopener\">{esc(siose_label)}</a></li>",
+                ])
+            official_html = (
+                "<section>"
+                "<h2>Datos oficiales y contexto</h2>"
+                f"<div class='muted' style='margin-bottom:8px'>Calidad de datos: <strong>{esc(official_context.get('data_quality') or '—')}</strong></div>"
+                "<table><tbody>"
+                f"<tr><td>Catastro disponible</td><td>{esc(cat.get('available'))}</td></tr>"
+                f"<tr><td>Planeamiento inventario</td><td>{esc(pl.get('count') or 0)} registros</td></tr>"
+                f"<tr><td>Contexto SIOTUGA</td><td>{esc(si.get('note') or '—')}</td></tr>"
+                f"<tr><td>Afecciones preliminares</td><td>{esc(af.get('available'))}</td></tr>"
+                f"{cat_rows}"
+                "</tbody></table>"
+                "<div class='muted' style='margin-top:8px'>"
+                "Referencia rápida de inventario/planeamiento municipal:</div>"
+                f"<ul>{planeamiento_items}</ul>"
+                "<div class='muted' style='margin-top:8px'>Coberturas SIOSE próximas:</div>"
+                f"<ul>{coberturas_items}</ul>"
+                "<div class='muted' style='margin-top:8px'>Afecciones preliminares a revisar:</div>"
+                f"<ul>{afecciones_items}</ul>"
+                f"<div class='muted' style='margin-top:8px'>{esc(af.get('disclaimer') or '')}</div>"
+                "<div class='muted' style='margin-top:10px'>Fuentes oficiales consultadas:</div>"
+                f"<ul>{fuentes_links}</ul>"
+                "</section>"
+            )
+        except Exception:
+            official_html = ''
+    provenance_html = ''
+    try:
+        prov = (official_context or {}).get('provenance') or {}
+        if prov:
+            prov_rows = ''.join([
+                f"<tr><td>Fecha de consulta</td><td>{esc(prov.get('query_timestamp') or '—')}</td></tr>",
+                f"<tr><td>Versión de la API</td><td>{esc(prov.get('api_version') or '—')}</td></tr>",
+            ])
+            sources_items = ''
+            for s in (prov.get('sources') or []):
+                name = esc(s.get('name') or '—')
+                url = s.get('url') or ''
+                stype = esc(s.get('type') or '—')
+                if url:
+                    sources_items += f"<li>{name} ({stype}) — <a href=\"{esc(url)}\" target=\"_blank\" rel=\"noopener\">{esc(url)}</a></li>"
+                else:
+                    sources_items += f"<li>{name} ({stype})</li>"
+            provenance_html = (
+                "<section>"
+                "<h2>Proveniencia de los datos</h2>"
+                "<table><tbody>"
+                f"{prov_rows}"
+                "</tbody></table>"
+                "<div class='muted' style='margin-top:8px'>Fuentes consultadas y su tipo:</div>"
+                f"<ul>{sources_items}</ul>"
+                "<div class='muted' style='margin-top:8px'>"
+                "Los datos oficiales se consultan en tiempo real. La disponibilidad depende del servicio externo en el momento de la consulta.</div>"
+                "</section>"
+            )
+    except Exception:
+        provenance_html = ''
     html = f"""
 <!doctype html>
 <html lang=es>
@@ -272,6 +600,17 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     .toolbar button{{padding:6px 10px;border:1px solid #4a4a4a;background:#1f1f1f;color:#eee;border-radius:6px;cursor:pointer}}
     .toolbar button:hover{{background:#2a2a2a}}
     footer{{margin-top:18px;color:var(--muted);font-size:12px}}
+    .cover{{text-align:center;padding:40px 20px 30px;border-bottom:2px solid var(--accent);margin-bottom:24px}}
+    .cover h1{{font-size:28px;margin:0 0 8px;border:none;padding:0}}
+    .cover .subtitle{{font-size:15px;color:var(--muted);margin:4px 0}}
+    .cover .badge-large{{display:inline-block;padding:8px 20px;border-radius:24px;border:2px solid {color};color:{color};font-weight:700;font-size:16px;margin:12px 0}}
+    .toc{{background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:8px;padding:16px 20px;margin-bottom:20px}}
+    .toc h2{{margin-top:0;font-size:15px;border:none;padding:0}}
+    .toc ol{{margin:6px 0 0 18px;padding:0}}
+    .toc li{{margin:4px 0;font-size:13px}}
+    .toc a{{color:var(--accent);text-decoration:none}}
+    .toc a:hover{{text-decoration:underline}}
+    .section-num{{display:inline-block;background:var(--accent);color:#fff;border-radius:4px;padding:2px 8px;font-size:12px;font-weight:700;margin-right:8px}}
     @media print{{
       body{{background:#fff;color:#000;margin:0;font-family:"Georgia", "Times New Roman", Times, serif;}}
       .card{{border:none;border-radius:0;padding:0 2mm;}}
@@ -280,6 +619,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
       h1{{font-size:22px}}
       h2{{font-size:16px}}
       h3{{font-size:14px}}
+      .cover{{page-break-after:always;border-bottom:2px solid #333}}
+      .toc{{page-break-after:always}}
       @page{{margin:14mm}}
     }}
   </style>
@@ -292,21 +633,68 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     <button onclick="window.close()">Cerrar</button>
   </div>
   <div class="card">
-    <header style="display:flex;align-items:flex-start;gap:12px;justify-content:space-between">
-      <div style="display:flex;align-items:center;gap:12px">{logo_html}<h1 style="margin:0">{ttl}</h1></div>
-      <div class="muted">Generado: {esc(gen_date)}</div>
-    </header>
-    <div class="meta">
-      <span class="badge">{v}</span>
+    <div class="cover">
+      {logo_html}
+      <h1>{ttl}</h1>
+      <div class="subtitle">Informe de viabilidad urbanística preliminar</div>
+      <div class="subtitle">Normativa Galicia 3D · {esc(gen_date)}</div>
+      <div class="badge-large">{v or '—'}</div>
       {loc_txt}
       {client_proj}
       {area_txt}
     </div>
-    {resumen_html}
+    <div class="toc">
+      <h2>Índice</h2>
+      <ol>
+        <li><a href="#sec-1">Resumen ejecutivo</a></li>
+        {f'<li><a href="#sec-2">Composición cartográfica</a></li>' if carto_html else ''}
+        {f'<li><a href="#sec-3">Cuadro de superficies</a></li>' if surface_html else ''}
+        {f'<li><a href="#sec-3b">Diagnóstico comparativo</a></li>' if diagnostic_html else ''}
+        {f'<li><a href="#sec-4">Estimación económica preliminar</a></li>' if economic_html else ''}
+        {f'<li><a href="#sec-5">Análisis de sombras</a></li>' if shadow_html else ''}
+        {f'<li><a href="#sec-6">Datos oficiales y contexto</a></li>' if official_html else ''}
+        <li><a href="#sec-7">Parámetros efectivos</a></li>
+        <li><a href="#sec-8">Ficha técnica</a></li>
+        <li><a href="#sec-9">Viabilidad y motivos</a></li>
+        {f'<li><a href="#sec-10">Observaciones</a></li>' if notes_html else ''}
+        <li><a href="#sec-11">Firma</a></li>
+      </ol>
+    </div>
+    <section id="sec-1">
+      <h2><span class="section-num">1</span>Resumen ejecutivo</h2>
+      {resumen_html}
+    </section>
     {snap_html}
-    {carto_html}
-    <section>
-      <h2>Parámetros efectivos</h2>
+    <section id="sec-2">
+      <h2><span class="section-num">2</span>Composición cartográfica</h2>
+      {carto_html or '<div class="muted">Sin geometría para mostrar.</div>'}
+    </section>
+    <section id="sec-3">
+      <h2><span class="section-num">3</span>Cuadro de superficies</h2>
+      {surface_html or '<div class="muted">Sin datos de superficie disponibles.</div>'}
+    </section>
+    <section id="sec-3b">
+      <h2><span class="section-num">3.1</span>Diagnóstico comparativo edificio vs subzona</h2>
+      {diagnostic_html or '<div class="muted">Sin datos de subzona o edificio para el diagnóstico.</div>'}
+    </section>
+    <section id="sec-4">
+      <h2><span class="section-num">4</span>Estimación económica preliminar</h2>
+      {economic_html or '<div class="muted">Sin datos suficientes para la estimación.</div>'}
+    </section>
+    <section id="sec-5">
+      <h2><span class="section-num">5</span>Análisis de sombras</h2>
+      {shadow_html or '<div class="muted">Sin datos de altura o geometría para el análisis de sombras.</div>'}
+    </section>
+    <section id="sec-6">
+      <h2><span class="section-num">6</span>Datos oficiales y contexto</h2>
+      {official_html or '<div class="muted">Sin contexto oficial disponible.</div>'}
+    </section>
+    <section id="sec-6b">
+      <h2><span class="section-num">6.1</span>Proveniencia de los datos</h2>
+      {provenance_html or '<div class="muted">Sin metadatos de proveniencia.</div>'}
+    </section>
+    <section id="sec-7">
+      <h2><span class="section-num">7</span>Parámetros efectivos</h2>
       <table>
         <thead><tr><th>Parámetro</th><th>Valor</th></tr></thead>
         <tbody>
@@ -314,8 +702,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         </tbody>
       </table>
     </section>
-    <section>
-      <h2>Ficha técnica</h2>
+    <section id="sec-8">
+      <h2><span class="section-num">8</span>Ficha técnica</h2>
       <table>
         <tbody>
           {ficha_rows}
@@ -323,9 +711,9 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         </tbody>
       </table>
     </section>
-    <section class="grid2">
+    <section id="sec-9" class="grid2">
       <div>
-        <h2>Viabilidad</h2>
+        <h2><span class="section-num">9</span>Viabilidad</h2>
         <div class="muted">Resultado: {v or '—'}</div>
       </div>
       <div>
@@ -333,8 +721,11 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         <ul>{reasons or '<li>—</li>'}</ul>
       </div>
     </section>
-    {notes_html}
-    <section style="margin-top:14px;">
+    <section id="sec-10">
+      {notes_html}
+    </section>
+    <section id="sec-11" style="margin-top:14px;">
+      <h2><span class="section-num">11</span>Firma</h2>
       {sig_html}
     </section>
     <footer style="margin-top:14px;">

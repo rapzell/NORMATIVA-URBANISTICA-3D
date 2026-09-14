@@ -21,12 +21,19 @@ from src.export_service import (
     build_volume_export_feature,
     extrude_polygon_to_cityjson as _extrude_polygon_to_cityjson,
     extrude_polygon_to_gltf as _extrude_polygon_to_gltf,
+    extrude_polygon_to_ifc as _extrude_polygon_to_ifc,
     gltf_to_glb_bytes as _gltf_to_glb_bytes,
     is_exhausted_feature,
     normalize_volume_export_format,
 )
 from src.report_service import render_assess_report_html as _render_assess_report_html
-from src.subzones_service import get_subzones, list_municipios_with_subzones, find_subzone_for_point
+from src.shadow_service import shadow_analysis, shadow_analysis_multi_hour, solar_position
+from src.subzones_service import (
+    find_subzone_for_point,
+    get_osm_buildings_geojson,
+    get_subzones,
+    list_municipios_with_subzones,
+)
 
 # ------------------------------
 # Endpoint de depuración de planes
@@ -52,6 +59,8 @@ from collections import OrderedDict
 import time
 from urllib.parse import urlencode
 from urllib.request import urlopen, Request
+from urllib.error import HTTPError, URLError
+import xml.etree.ElementTree as ET
 import json as _json
 import csv
 
@@ -1371,7 +1380,8 @@ async def zoning_assess_report_get(body_b64: Optional[str] = None, logo: Optiona
 
     # Ejecutar evaluación reutilizando el endpoint
     res = await zoning_assess(req)  # AssessResponse
-    html = _render_assess_report_html(body, res, logo=logo, title=title, client=client, project=project, snapshot_data_url=snap, brand_color=brand_color, signature=bool(signature or False), sign_by=sign_by, sign_place=sign_place, notes=notes, source_ref=source_ref)
+    official_ctx = _build_official_context(municipio=body.get('municipio'), subzona=body.get('subzona'), geometry=body.get('geometry'))
+    html = _render_assess_report_html(body, res, logo=logo, title=title, client=client, project=project, snapshot_data_url=snap, brand_color=brand_color, signature=bool(signature or False), sign_by=sign_by, sign_place=sign_place, notes=notes, source_ref=source_ref, official_context=official_ctx)
     return Response(content=html, media_type='text/html; charset=utf-8')
 
 
@@ -1397,7 +1407,8 @@ async def zoning_assess_report_pdf_get(body_b64: Optional[str] = None, logo: Opt
 
     # Ejecutar evaluación y renderizar HTML
     res = await zoning_assess(req)
-    html = _render_assess_report_html(body, res, logo=logo, title=title, client=client, project=project, snapshot_data_url=snap, brand_color=brand_color, signature=bool(signature or False), sign_by=sign_by, sign_place=sign_place)
+    official_ctx = _build_official_context(municipio=body.get('municipio'), subzona=body.get('subzona'), geometry=body.get('geometry'))
+    html = _render_assess_report_html(body, res, logo=logo, title=title, client=client, project=project, snapshot_data_url=snap, brand_color=brand_color, signature=bool(signature or False), sign_by=sign_by, sign_place=sign_place, official_context=official_ctx)
 
     # Intentar generar PDF con WeasyPrint
     try:
@@ -1436,7 +1447,8 @@ async def zoning_assess_report_post(req: AssessReportRequest):
         body = req.body.model_dump()
     except Exception:
         body = req.body.dict() if hasattr(req.body, 'dict') else dict(req.body)
-    html = _render_assess_report_html(body, res, logo=req.logo, title=req.title, client=req.client, project=req.project, snapshot_data_url=req.snapshot_data_url, brand_color=req.brand_color, signature=bool(req.signature or False), sign_by=req.sign_by, sign_place=req.sign_place, notes=req.notes, source_ref=req.source_ref)
+    official_ctx = _build_official_context(municipio=body.get('municipio'), subzona=body.get('subzona'), geometry=body.get('geometry'))
+    html = _render_assess_report_html(body, res, logo=req.logo, title=req.title, client=req.client, project=req.project, snapshot_data_url=req.snapshot_data_url, brand_color=req.brand_color, signature=bool(req.signature or False), sign_by=req.sign_by, sign_place=req.sign_place, notes=req.notes, source_ref=req.source_ref, official_context=official_ctx)
     return Response(content=html, media_type='text/html; charset=utf-8')
 
 
@@ -1449,8 +1461,8 @@ async def zoning_volume_export_get(format: Optional[str] = 'cityjson', body_b64:
     """
     # Validate format early to keep error symmetry
     fmt = (format or 'cityjson').strip().lower()
-    if fmt not in ('cityjson', 'gltf', 'glb'):
-        raise HTTPException(status_code=400, detail="Formato no soportado: use 'cityjson', 'gltf' o 'glb'")
+    if fmt not in ('cityjson', 'gltf', 'glb', 'ifc'):
+        raise HTTPException(status_code=400, detail="Formato no soportado: use 'cityjson', 'gltf', 'glb' o 'ifc'")
     if not body_b64 or not isinstance(body_b64, str):
         raise HTTPException(status_code=400, detail="Parámetro 'body_b64' requerido en la query")
     # Decode URL-safe base64 with proper padding
@@ -1788,6 +1800,18 @@ async def zoning_volume_export(req: VolumeExportRequest, download: bool = False,
                 return Response(content=content, media_type='application/city+json', headers={"Content-Disposition": "attachment; filename=\"building.city.json\""})
             return payload
         else:
+            if fmt == 'ifc':
+                ifc_content = _extrude_polygon_to_ifc(feature)
+                try:
+                    size_bytes = len(ifc_content.encode('utf-8'))
+                    if _metrics_env_enabled and _metrics_ready:
+                        _EXP_COUNT.labels(format=fmt, status='200').inc()
+                        _EXP_SIZE.labels(format=fmt, status='200').observe(size_bytes)
+                except Exception:
+                    pass
+                media = 'application/ifc'
+                fname = 'building.ifc'
+                return Response(content=ifc_content, media_type=media, headers={"Content-Disposition": f"attachment; filename=\"{fname}\""} if download else {})
             import json as _json
             if fmt == 'gltf':
                 payload = _extrude_polygon_to_gltf(feature)
@@ -1905,6 +1929,1073 @@ def planeamento_inventario(municipio: Optional[str] = None):
   return {'count': len(rows), 'rows': rows[:5000]}
 
 
+def _norm_text(s: str) -> str:
+  try:
+    import unicodedata as _ud
+    return ''.join(ch for ch in _ud.normalize('NFD', (s or '').lower()) if _ud.category(ch) != 'Mn').strip()
+  except Exception:
+    return (s or '').lower().strip()
+
+
+def _parse_catastro_rccoor_xml(raw: bytes) -> dict:
+  """Parsea la respuesta XML de Consulta_RCCOOR del Catastro.
+  Maneja diferentes esquemas y namespaces del OVC.
+  """
+  try:
+    root = ET.fromstring(raw)
+  except Exception:
+    return {'found': False, 'error': 'XML inválido'}
+  # Buscar el nodo coord en cualquier namespace
+  coord = root.find('.//coord')
+  if coord is None:
+    # Intentar con namespace común del Catastro
+    for elem in root.iter():
+      if elem.tag.endswith('coord') and elem.find('.//pc') is not None:
+        coord = elem
+        break
+  if coord is None:
+    # Verificar si hay un mensaje de error
+    err = root.findtext('.//error') or root.findtext('.//desError') or root.findtext('.//message')
+    return {'found': False, 'error': err or 'No se encontró parcela'}
+  # Referencia catastral: pc1 + pc2 (14 caracteres)
+  pc1 = coord.findtext('./pc/pc1') or ''
+  pc2 = coord.findtext('./pc/pc2') or ''
+  pc = (pc1 + pc2).strip()
+  # Validar formato: 14 caracteres alfanuméricos
+  if pc and len(pc) != 14:
+    # Intentar extraer de otros campos
+    pc = coord.findtext('./rc') or coord.findtext('./refcat') or pc
+  # Datos adicionales del nodo dt
+  dt = coord.find('.//dt')
+  municipio = None
+  via = None
+  npolicia = None
+  if dt is not None:
+    municipio = dt.findtext('./municipi/nm') or dt.findtext('./nm') or dt.findtext('.//nm')
+    via_el = dt.find('.//via')
+    if via_el is not None:
+      via = via_el.findtext('./tv') or None
+      npolicia = via_el.findtext('./pnp') or None
+  # Coordenadas
+  x = coord.findtext('./geo/xcen') or coord.findtext('./xcen') or coord.findtext('.//xcen')
+  y = coord.findtext('./geo/ycen') or coord.findtext('./ycen') or coord.findtext('.//ycen')
+  srs = coord.findtext('./geo/srs') or coord.findtext('./srs') or coord.findtext('.//srs')
+  # Validar que el refcat tiene formato válido (7 dígitos + 7 alfanuméricos)
+  refcat_valid = bool(pc) and len(pc) == 14 and pc[:7].isdigit()
+  return {
+    'found': refcat_valid,
+    'refcat': pc if refcat_valid else None,
+    'refcat_raw': pc or None,
+    'direccion': coord.findtext('./ldt') or None,
+    'srs': srs or 'EPSG:4326',
+    'x': x,
+    'y': y,
+    'municipio_catastral': municipio,
+    'via': via,
+    'numero_policia': npolicia,
+  }
+
+
+# Bounding box aproximado de Galicia para validación
+_GALICIA_BBOX = {
+  'lon_min': -9.30, 'lon_max': -6.70,
+  'lat_min': 41.80, 'lat_max': 44.10,
+}
+
+# Mapeo de municipios a códigos INE para SIOTUGA
+_MUNICIPIO_INE: dict[str, str] = {
+  'vigo': '36057',
+  'a coruna': '15030',
+  'a coruña': '15030',
+  'coruna': '15030',
+  'coruña': '15030',
+  'santiago de compostela': '27059',
+  'santiago': '27059',
+  'lugo': '27028',
+  'ourense': '32054',
+  'pontevedra': '36042',
+  'ferrol': '15027',
+  'vilagarcia de arousa': '36062',
+  'vilanova de arousa': '36063',
+  'redondela': '36042',
+  'porrino': '36041',
+  'poio': '36040',
+  'marin': '36027',
+  'nigran': '36031',
+  'baiona': '36005',
+  'cangas': '36012',
+  'moana': '36029',
+  'arteixo': '15006',
+  'culleredo': '15025',
+  'ames': '15002',
+  'bertamirans': '15002',
+  'padron': '36038',
+  'rois': '36045',
+  'teo': '36053',
+  'valga': '36057',
+  'dodro': '36014',
+  'lousame': '36024',
+  'noia': '36033',
+  'boiro': '36009',
+  'ribeira': '36043',
+  'portodo son': '36042',
+  'muros': '36030',
+  'muxia': '36031',
+  'carnota': '36012',
+  'fisterra': '36017',
+  'corcubion': '36013',
+  'cee': '36011',
+  'camarinas': '36010',
+  'malpica': '36026',
+  'ponteceso': '36039',
+  'carballo': '36011',
+  'coristanco': '36013',
+  'laxe': '36022',
+  'vimianzo': '36058',
+  'zas': '36059',
+}
+
+
+def _get_ine_for_municipio(municipio: str | None) -> str | None:
+  if not municipio:
+    return None
+  key = _norm_text(municipio)
+  return _MUNICIPIO_INE.get(key)
+
+
+# Caché para la capa WMS actual del planeamiento de cada municipio
+_SIOTUGA_WMS_CACHE: dict[str, dict] = {}
+
+
+def _fetch_siotuga_wms_layer(ine_code: str) -> dict:
+  """Obtiene la capa WMS del planeamiento vigente de un municipio desde SIOTUGA.
+  Devuelve {layer_name, plan_title, approval_date, wms_url} o {error: ...}.
+  """
+  import time
+  cache_key = ine_code
+  cached = _SIOTUGA_WMS_CACHE.get(cache_key)
+  if cached and (time.time() - cached.get('_ts', 0)) < 3600:
+    return {k: v for k, v in cached.items() if k != '_ts'}
+  wms_base = f'https://siotuga.xunta.gal/siotuga/ws?codine={ine_code}'
+  try:
+    import urllib.request
+    url = f'{wms_base}&SERVICE=WMS&REQUEST=GetCapabilities&version=1.3.0'
+    req = urllib.request.Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+      xml = resp.read().decode('utf-8', errors='replace')
+    # Buscar capas de clasificación (3CLAS) del plan vigente (no Histórico, no MP)
+    # Las capas tienen formato: _{INE}_{TIPO}_{FECHA}_AD_3CLAS_{IDDOC}
+    import re
+    # Buscar todos los Name> de capas que contienen _AD_3CLAS_
+    layer_matches = re.findall(
+      r'<Name>([^<]*_AD_3CLAS_\d+)</Name>', xml
+    )
+    # Buscar títulos para identificar el plan vigente (no Hco:, no MP)
+    title_matches = re.findall(
+      r'<Title>([^<]*Clasificaci[oó]n[^<]*)</Title>', xml
+    )
+    # Encontrar la capa del plan vigente: la que tiene "PXOM" o "Plan Xeral" en el título
+    # y NO tiene "Hco:" ni "Modificación Puntual"
+    best_layer = None
+    best_title = None
+    best_date = None
+    # Buscar bloques Name+Title juntos
+    blocks = re.findall(
+      r'<Name>([^<]*_AD_3CLAS_\d+)</Name>\s*<Title>([^<]*)</Title>', xml
+    )
+    for layer_name, title in blocks:
+      # Saltar históricos y modificaciones puntuales
+      if 'Hco:' in title or 'Hco.' in title:
+        continue
+      if 'Modificación Puntual' in title:
+        continue
+      # Preferir PXOM (plan vigente)
+      if 'PXOM' in layer_name or 'Plan Xeral' in title or 'PLAN XERAL' in title:
+        best_layer = layer_name
+        best_title = title
+        # Extraer fecha del nombre: _36057_PXOM_202505_AD_3CLAS_28719
+        date_match = re.search(r'_(\d{6})_AD_', layer_name)
+        if date_match:
+          ym = date_match.group(1)
+          best_date = f'{ym[:4]}-{ym[4:6]}'
+        break
+    # Si no encontramos PXOM, usar la primera capa no histórica
+    if not best_layer and layer_matches:
+      best_layer = layer_matches[0]
+      if title_matches:
+        best_title = title_matches[0]
+    if best_layer:
+      result = {
+        'layer_name': best_layer,
+        'plan_title': best_title or 'Plan vigente',
+        'approval_date': best_date,
+        'wms_base': wms_base,
+      }
+      _SIOTUGA_WMS_CACHE[cache_key] = {**result, '_ts': time.time()}
+      return result
+    return {'error': 'No se encontró capa de clasificación vigente'}
+  except Exception as e:
+    return {'error': str(e)}
+
+
+def _build_siotuga_wms_getmap_url(ine_code: str, lon: float, lat: float, layer_name: str, wms_base: str) -> str:
+  """Construye una URL GetMap del WMS de SIOTUGA centrada en unas coordenadas."""
+  delta = 0.005  # ~500m
+  bbox = f'{lon-delta},{lat-delta},{lon+delta},{lat+delta}'
+  return (
+    f'{wms_base}&SERVICE=WMS&REQUEST=GetMap&version=1.3.0'
+    f'&layers={layer_name}&styles=&crs=EPSG:4326'
+    f'&bbox={bbox}&width=400&height=400&format=image/png&transparent=true'
+  )
+
+
+def _is_in_galicia(lon: float, lat: float) -> bool:
+  """Valida si unas coordenadas están dentro del bounding box de Galicia."""
+  return (
+    _GALICIA_BBOX['lon_min'] <= lon <= _GALICIA_BBOX['lon_max'] and
+    _GALICIA_BBOX['lat_min'] <= lat <= _GALICIA_BBOX['lat_max']
+  )
+
+
+# Caché con TTL para datos oficiales
+_OFFICIAL_CACHE: dict[tuple, tuple[float, Any]] = {}
+_OFFICIAL_CACHE_TTL = 300  # 5 minutos
+
+
+def _official_cache_get(key: tuple) -> Any | None:
+  import time as _t
+  entry = _OFFICIAL_CACHE.get(key)
+  if entry is None:
+    return None
+  ts, val = entry
+  if _t.time() - ts > _OFFICIAL_CACHE_TTL:
+    _OFFICIAL_CACHE.pop(key, None)
+    return None
+  return val
+
+
+def _official_cache_set(key: tuple, val: Any) -> None:
+  import time as _t
+  _OFFICIAL_CACHE[key] = (_t.time(), val)
+
+
+def _fetch_catastro_by_coords(lon: float, lat: float, srs: str = 'EPSG:4326') -> dict:
+  # Validar que las coordenadas están en Galicia
+  if srs == 'EPSG:4326' and not _is_in_galicia(lon, lat):
+    return {'found': False, 'error': 'Coordenadas fuera de Galicia', 'available': False}
+  cache_key = ('catastro', 'coords', round(lon, 6), round(lat, 6), srs)
+  cached = _official_cache_get(cache_key)
+  if cached is not None:
+    return cached
+  base = 'https://ovc.catastro.meh.es/ovcservweb/ovcswlocalizacionrc/ovccoordenadas.asmx/Consulta_RCCOOR'
+  url = f"{base}?{urlencode({'SRS': srs, 'Coordenada_X': lon, 'Coordenada_Y': lat})}"
+  req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+  with urlopen(req, timeout=10) as resp:
+    result = _parse_catastro_rccoor_xml(resp.read())
+  _official_cache_set(cache_key, result)
+  return result
+
+
+def _fetch_catastro_by_ref(refcat: str) -> dict:
+  rc = ''.join(ch for ch in (refcat or '') if ch.isalnum()).upper()
+  if len(rc) < 14:
+    return {'found': False, 'refcat': rc or None}
+  base = 'https://ovc.catastro.meh.es/ovcservweb/ovcswlocalizacionrc/ovccoordenadas.asmx/Consulta_CPMRC'
+  url = f"{base}?{urlencode({'Provincia': '', 'Municipio': '', 'SRS': 'EPSG:4326', 'RC': rc[:14]})}"
+  req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+  with urlopen(req, timeout=20) as resp:
+    raw = resp.read()
+  root = ET.fromstring(raw)
+  coord = root.find('.//coord')
+  if coord is None:
+    return {'found': False, 'refcat': rc}
+  x = coord.findtext('./geo/xcen') or coord.findtext('./xcen')
+  y = coord.findtext('./geo/ycen') or coord.findtext('./ycen')
+  return {
+    'found': True,
+    'refcat': coord.findtext('./pc/pc1') and ((coord.findtext('./pc/pc1') or '') + (coord.findtext('./pc/pc2') or '')) or rc,
+    'direccion': coord.findtext('./ldt') or None,
+    'srs': coord.findtext('./geo/srs') or coord.findtext('./srs') or 'EPSG:4326',
+    'x': x,
+    'y': y,
+  }
+
+
+def _fetch_siose_precheck(lon: float, lat: float, delta: float = 0.0015) -> dict:
+  bb = f"{lon-delta},{lat-delta},{lon+delta},{lat+delta},EPSG:4326"
+  cache_key = ('siose', bb)
+  cached = _official_cache_get(cache_key)
+  if cached is not None:
+    return cached
+  wfs_cache_key = (bb, 'elu:LandCoverUnit', 'EPSG:4326', '2.0.0')
+  data = _siose_cache_get(wfs_cache_key, max_age=120)
+  if data is None:
+    params = {
+      'service': 'WFS',
+      'request': 'GetFeature',
+      'version': '2.0.0',
+      'typeNames': 'elu:LandCoverUnit',
+      'srsName': 'EPSG:4326',
+      'bbox': bb,
+      'outputFormat': 'application/json',
+    }
+    url = f"{SIOSE_WFS_URL}?{urlencode(params)}"
+    req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+    with urlopen(req, timeout=15) as resp:
+      data = _json.loads(resp.read().decode('utf-8', 'ignore'))
+    _siose_cache_set(cache_key, data)
+  feats = data.get('features') or []
+  labels: list[str] = []
+  alerts: list[str] = []
+  for feat in feats[:8]:
+    props = feat.get('properties') or {}
+    label = None
+    for k in ('label', 'legend', 'clasificacion', 'desc_', 'descripcion', 'cover', 'LC_Value', 'LU_Value', 'landcover', 'land_cover'):
+      v = props.get(k)
+      if isinstance(v, str) and v.strip():
+        label = v.strip()
+        break
+    if not label:
+      for v in props.values():
+        if isinstance(v, str) and v.strip() and len(v.strip()) > 2:
+          label = v.strip()
+          break
+    if label:
+      labels.append(label)
+      low = _norm_text(label)
+      # Agua y zonas húmedas
+      if any(t in low for t in ('agua', 'wetland', 'humedal', 'marisma', 'costa', 'playa', 'rivera', 'rio', 'cauce', 'lago', 'embalse', 'canal')):
+        alerts.append(f'Entorno potencialmente sensible por presencia de {label} — revisar afección a dominio público hidráulico, costas o zonas húmedas')
+      # Espacios naturales y forestales
+      elif any(t in low for t in ('forest', 'bosque', 'arbolado', 'natural', 'vegetacion', 'matorral', 'pasto', 'pradera')):
+        alerts.append(f'Revisar afección ambiental/paisajística por cobertura natural: {label}')
+      # Zonas protegidas
+      elif any(t in low for t in ('protegido', 'proteccion', 'red natura', 'zepa', 'lic', 'reserva', 'parque')):
+        alerts.append(f'Posible espacio protegido detectado: {label} — verificar figura de protección')
+      # Agrícola
+      elif any(t in low for t in ('agricol', 'cultivo', 'regadio', 'secano', 'viña', 'viñedo', 'huerta')):
+        alerts.append(f'Uso agrícola detectado: {label} — verificar compatibilidad con uso urbanístico propuesto')
+      # Industrial
+      elif any(t in low for t in ('industrial', 'almacen', 'taller', 'fabrica', 'cantera', 'mineria')):
+        alerts.append(f'Uso industrial detectado: {label} — verificar compatibilidad y posibles afecciones')
+  result = {
+    'available': True,
+    'bbox': bb,
+    'sample_count': len(feats),
+    'land_cover_labels': list(dict.fromkeys(labels))[:5],
+    'alerts': list(dict.fromkeys(alerts))[:6],
+    'disclaimer': 'Prechequeo preliminar basado en SIOSE; no sustituye verificación sectorial oficial.',
+  }
+  _official_cache_set(cache_key, result)
+  return result
+
+
+def _safe_fetch_catastro(lon: float, lat: float) -> dict:
+  try:
+    result = _fetch_catastro_by_coords(lon, lat)
+    # Si encontramos refcat, intentar obtener datos ampliados
+    refcat = result.get('refcat')
+    if refcat and len(refcat) >= 14:
+      try:
+        details = _fetch_catastro_details_by_ref(refcat)
+        if details:
+          result.update(details)
+      except Exception:
+        pass
+    return result
+  except Exception as e:
+    return {'available': False, 'error': str(e)}
+
+
+def _safe_fetch_siose(lon: float, lat: float) -> dict:
+  try:
+    return _fetch_siose_precheck(lon, lat)
+  except Exception as e:
+    return {'available': False, 'alerts': [], 'error': str(e)}
+
+
+def _fetch_catastro_details_by_ref(refcat: str) -> dict:
+  """Obtiene datos ampliados de una parcela por referencia catastral.
+  Usa Consulta_DNPRC del OVC que devuelve datos no protegidos.
+  Maneja diferentes esquemas XML del Catastro.
+  """
+  cache_key = ('catastro', 'details', refcat[:14])
+  cached = _official_cache_get(cache_key)
+  if cached is not None:
+    return cached
+  rc = ''.join(ch for ch in (refcat or '') if ch.isalnum()).upper()[:14]
+  if len(rc) < 14:
+    return {}
+  base = 'https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCSoporteWS.asmx/Consulta_DNPRC'
+  url = f"{base}?{urlencode({'Provincia': '', 'Municipio': '', 'RC': rc, 'Localizador': ''})}"
+  req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+  with urlopen(req, timeout=10) as resp:
+    raw = resp.read()
+  try:
+    root = ET.fromstring(raw)
+  except Exception:
+    return {}
+  result: dict = {}
+  # Buscar el nodo bi (bien inmueble) en cualquier posición
+  bi = root.find('.//bico/bi')
+  if bi is None:
+    # Intentar buscar directamente bi
+    for elem in root.iter():
+      if elem.tag.endswith('bi'):
+        bi = elem
+        break
+  if bi is not None:
+    # Superficie construida — buscar en múltiples ubicaciones posibles
+    for path in ['.//lscons/dcons/scon', './/dcons/scon', './/scon', './/cons/scon']:
+      scon = bi.findtext(path)
+      if scon:
+        val = _try_float(scon)
+        if val and val > 0:
+          result['superficie_construida_m2'] = val
+          break
+    # Superficie del terreno — buscar en múltiples ubicaciones
+    for path in ['.//sfterreno', './/stf', './/dt/sfterreno', './/dt/stf', './/superficie']:
+      sf = bi.findtext(path)
+      if sf:
+        val = _try_float(sf)
+        if val and val > 0:
+          result['superficie_terreno_m2'] = val
+          break
+    # Uso principal — buscar en múltiples ubicaciones
+    for path in ['.//luso/fpu', './/luso/cuo', './/luso', './/fpu', './/uso']:
+      uso = bi.findtext(path)
+      if uso and uso.strip():
+        result['uso_principal'] = uso.strip()
+        break
+    # Año de construcción
+    for path in ['.//ant/e1', './/ant', './/e1', './/anio', './/ano']:
+      año = bi.findtext(path)
+      if año:
+        val = _try_int(año)
+        if val and 1800 < val < 2100:
+          result['anio_construccion'] = val
+          break
+  # También buscar en el nodo ctrl para datos del control
+  ctrl = root.find('.//ctrl')
+  if ctrl is not None:
+    val = ctrl.findtext('.//val')
+    if val:
+      result.setdefault('valor_catastral', _try_float(val))
+  _official_cache_set(cache_key, result)
+  return result
+
+
+def _try_float(s: str):
+  try:
+    return float(s)
+  except Exception:
+    return None
+
+
+def _try_int(s: str):
+  try:
+    return int(s)
+  except Exception:
+    return None
+
+
+def _build_official_context(municipio: str | None = None, subzona: str | None = None, geometry: dict | None = None, lon: float | None = None, lat: float | None = None) -> dict:
+  import datetime as _pdt
+  query_ts = _pdt.datetime.now(_pdt.timezone.utc).isoformat()
+  ctx: dict = {
+    'municipio': municipio,
+    'subzona': subzona,
+    'catastro': {'available': False},
+    'planeamiento': {'available': False},
+    'siotuga': {'available': True, 'note': 'Contexto apoyado en inventario municipal y servicios WMS/WFS/proxy ya integrados'},
+    'afecciones_preliminares': {'available': False, 'alerts': []},
+    'provenance': {
+      'query_timestamp': query_ts,
+      'api_version': API_VERSION,
+      'sources': [
+        {'name': 'Catastro (OVC)', 'url': 'https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCBusqueda.aspx', 'type': 'coordenadas/referencia'},
+        {'name': 'SIOTUGA', 'url': 'https://siotuga.xunta.gal/siotuga/inventario', 'type': 'planeamiento territorial'},
+        {'name': 'SIOSE (IDEE)', 'url': 'https://servicios.idee.es/wfs-inspire/ocupacion-suelo', 'type': 'ocupación del suelo'},
+        {'name': 'Inventario municipal', 'url': '', 'type': 'planeamiento vigente'},
+      ],
+    },
+  }
+  # Construir enlaces específicos a fuentes oficiales con datos de la parcela
+  cat_refcat = None
+  cat_lon = None
+  cat_lat = None
+  if municipio:
+    inv = planeamento_inventario(municipio)
+    rows = inv.get('rows') or []
+    ctx['planeamiento'] = {
+      'available': bool(rows),
+      'count': len(rows),
+      'rows': rows[:5],
+    }
+  if lon is None or lat is None:
+    if geometry:
+      try:
+        lon, lat = centroid_lonlat_from_geojson(geometry)
+      except Exception as e:
+        ctx['catastro'] = {'available': False, 'error': str(e)}
+        return ctx
+  if lon is not None and lat is not None:
+    # Paralelizar consultas a Catastro y SIOSE para reducir tiempo total
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    results: dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+      futures = {
+        'catastro': pool.submit(_safe_fetch_catastro, lon, lat),
+        'siose': pool.submit(_safe_fetch_siose, lon, lat),
+      }
+      for name, fut in futures.items():
+        try:
+          results[name] = fut.result(timeout=15)
+        except Exception as e:
+          results[name] = {'available': False, 'error': str(e)}
+    cat = results.get('catastro') or {}
+    if cat.get('found') or cat.get('available'):
+      cat.update({'available': True, 'query_lon': lon, 'query_lat': lat})
+      # Validación de consistencia: coordenadas del catastro vs consulta
+      cat_x = _try_float(cat.get('x') or '')
+      cat_y = _try_float(cat.get('y') or '')
+      if cat_x is not None and cat_y is not None:
+        dist = ((cat_x - lon) ** 2 + (cat_y - lat) ** 2) ** 0.5
+        cat['coord_consistency'] = 'ok' if dist < 0.01 else 'mismatch'
+      # Validación de municipio
+      cat_muni = _norm_text(cat.get('municipio_catastral') or '')
+      query_muni = _norm_text(municipio or '')
+      if cat_muni and query_muni:
+        cat['municipio_consistency'] = 'ok' if cat_muni == query_muni else 'mismatch'
+      ctx['catastro'] = cat
+    else:
+      ctx['catastro'] = cat
+    siose = results.get('siose') or {}
+    ctx['afecciones_preliminares'] = siose
+    # Indicador de calidad de datos
+    sources_ok = sum([
+      1 if cat.get('found') else 0,
+      1 if siose.get('available') else 0,
+      1 if ctx.get('planeamiento', {}).get('available') else 0,
+    ])
+    ctx['data_quality'] = 'alta' if sources_ok >= 2 else ('media' if sources_ok == 1 else 'baja')
+    # Construir enlaces específicos a fuentes oficiales con datos de la parcela
+    links: list[dict] = []
+    # Catastro: URL directa a la ficha de la parcela por coordenadas
+    cat_qlon = cat.get('query_lon') or lon
+    cat_qlat = cat.get('query_lat') or lat
+    if cat_qlon is not None and cat_qlat is not None:
+      # URL que busca automáticamente por coordenadas y muestra la parcela
+      cat_url = (
+        f"https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx"
+        f"?pest=coordenadas&latitud={cat_qlat}&longitud={cat_qlon}"
+        f"&tipoCoordenadas=2&TipUR=Coor&from=OVCBusqueda&final="
+      )
+      cat_label = f'Ver parcela en Catastro ({cat_qlon:.4f}, {cat_qlat:.4f})'
+      links.append({
+        'name': 'Catastro',
+        'url': cat_url,
+        'label': cat_label,
+      })
+    # SIOTUGA: enlace al WMS GetMap centrado en la parcela + inventario
+    ine = _get_ine_for_municipio(municipio)
+    if ine:
+      # Obtener capa WMS del planeamiento vigente
+      wms_info = _fetch_siotuga_wms_layer(ine)
+      if wms_info.get('layer_name') and cat_qlon is not None and cat_qlat is not None:
+        getmap_url = _build_siotuga_wms_getmap_url(
+          ine, cat_qlon, cat_qlat,
+          wms_info['layer_name'], wms_info['wms_base']
+        )
+        links.append({
+          'name': 'SIOTUGA',
+          'url': getmap_url,
+          'label': f'Ver zonificación del planeamiento de {municipio} (mapa)',
+        })
+        # También añadir el plan vigente al contexto
+        ctx.setdefault('siotuga', {}).update({
+          'plan_title': wms_info.get('plan_title'),
+          'approval_date': wms_info.get('approval_date'),
+          'wms_layer': wms_info.get('layer_name'),
+        })
+      # Enlace al inventario para descargar documentos
+      links.append({
+        'name': 'SIOTUGA (documentos)',
+        'url': f'https://siotuga.xunta.gal/siotuga/inventario?concello={ine}&lang=es_ES',
+        'label': f'Documentos del planeamiento de {municipio}',
+      })
+    else:
+      links.append({
+        'name': 'SIOTUGA',
+        'url': 'https://siotuga.xunta.gal/siotuga/inventario?lang=es_ES',
+        'label': 'Inventario de planeamiento',
+      })
+    # SIOSE: enlace GetFeatureInfo del WMS que devuelve los datos de la parcela
+    if cat_qlon is not None and cat_qlat is not None:
+      siose_bbox = f"{cat_qlon-0.001},{cat_qlat-0.001},{cat_qlon+0.001},{cat_qlat+0.001}"
+      siose_url = (
+        f"https://servicios.idee.es/wms-inspire/ocupacion-suelo"
+        f"?service=WMS&request=GetFeatureInfo&version=1.3.0"
+        f"&layers=LC.LandCoverSurfaces&query_layers=LC.LandCoverSurfaces"
+        f"&crs=CRS:84&bbox={siose_bbox}&width=101&height=101&i=50&j=50"
+        f"&info_format=text/html"
+      )
+      links.append({
+        'name': 'SIOSE',
+        'url': siose_url,
+        'label': 'Ver ocupación del suelo en esta parcela',
+      })
+    ctx['official_links'] = links
+  return ctx
+
+
+@app.get('/zoning/building-diagnostic')
+def zoning_building_diagnostic(
+  height_m: float | None = None,
+  levels: int | None = None,
+  footprint_m2: float | None = None,
+  subzona: str | None = None,
+  municipio: str | None = None,
+  lon: float | None = None,
+  lat: float | None = None,
+):
+  """Diagnóstico comparativo entre un edificio y los parámetros normativos de su subzona.
+  Devuelve una tabla comparativa detallada con veredicto y margen/exceso.
+  """
+  # Buscar subzona por nombre o por coordenadas
+  subzone_props = None
+  if subzona and municipio:
+    try:
+      from src.subzones_service import find_subzone_by_name
+      subzone_props = find_subzone_by_name(municipio, subzona)
+    except Exception:
+      pass
+  if subzone_props is None and lon is not None and lat is not None:
+    try:
+      from src.subzones_service import find_subzone_for_point
+      subzone_props = find_subzone_for_point(lon, lat)
+    except Exception:
+      pass
+
+  if not subzone_props:
+    return {
+      'available': False,
+      'error': 'No se encontró subzona normativa para los parámetros proporcionados',
+      'comparisons': [],
+      'verdict': 'sin_dato',
+    }
+
+  altura_max = subzone_props.get('altura_maxima_m')
+  ocupacion_max = subzone_props.get('ocupacion_max')
+  edificabilidad_max = subzone_props.get('edificabilidad_max_m2_m2')
+  retranqueo_min = subzone_props.get('retranqueo_min_m')
+
+  comparisons: list[dict] = []
+  verdict = 'compatible'
+  issues: list[str] = []
+
+  # Comparación de altura
+  if height_m is not None and altura_max is not None:
+    try:
+      h = float(height_m)
+      lim = float(altura_max)
+      diff = round(h - lim, 2)
+      if diff <= 0:
+        comparisons.append({
+          'parametro': 'Altura',
+          'valor_edificio': f'{h} m',
+          'valor_normativo': f'{lim} m',
+          'diferencia': f'{abs(diff)} m margen',
+          'cumple': True,
+          'detalle': f'El edificio está {abs(diff)} m por debajo del máximo permitido',
+        })
+      else:
+        comparisons.append({
+          'parametro': 'Altura',
+          'valor_edificio': f'{h} m',
+          'valor_normativo': f'{lim} m',
+          'diferencia': f'{diff} m exceso',
+          'cumple': False,
+          'detalle': f'El edificio supera el máximo en {diff} m',
+        })
+        verdict = 'supera_altura'
+        issues.append(f'Altura: exceso de {diff} m')
+    except (ValueError, TypeError):
+      comparisons.append({
+        'parametro': 'Altura',
+        'valor_edificio': '—',
+        'valor_normativo': f'{altura_max} m',
+        'diferencia': '—',
+        'cumple': None,
+        'detalle': 'No se pudo comparar la altura',
+      })
+  elif altura_max is not None:
+    comparisons.append({
+      'parametro': 'Altura',
+      'valor_edificio': '—',
+      'valor_normativo': f'{altura_max} m',
+      'diferencia': '—',
+      'cumple': None,
+      'detalle': 'Altura del edificio no proporcionada',
+    })
+
+  # Comparación de plantas
+  if levels is not None and altura_max is not None:
+    try:
+      allowed_floors = max(1, int(float(altura_max) / 3.0))
+      actual_floors = int(levels)
+      if actual_floors <= allowed_floors:
+        comparisons.append({
+          'parametro': 'Plantas',
+          'valor_edificio': f'{actual_floors}',
+          'valor_normativo': f'≤ {allowed_floors}',
+          'diferencia': f'{allowed_floors - actual_floors} margen',
+          'cumple': True,
+          'detalle': f'{actual_floors} plantas dentro del máximo de {allowed_floors}',
+        })
+      else:
+        comparisons.append({
+          'parametro': 'Plantas',
+          'valor_edificio': f'{actual_floors}',
+          'valor_normativo': f'≤ {allowed_floors}',
+          'diferencia': f'{actual_floors - allowed_floors} exceso',
+          'cumple': False,
+          'detalle': f'{actual_floors} plantas superan el máximo de {allowed_floors}',
+        })
+        if verdict == 'compatible':
+          verdict = 'supera_altura'
+        issues.append(f'Plantas: {actual_floors - allowed_floors} de exceso')
+    except (ValueError, TypeError):
+      pass
+
+  # Comparación de ocupación (si tenemos footprint)
+  if footprint_m2 is not None and ocupacion_max is not None:
+    try:
+      occ_limit = float(ocupacion_max)
+      # Necesitaríamos el área de la parcela para comparar
+      comparisons.append({
+        'parametro': 'Ocupación',
+        'valor_edificio': f'{footprint_m2} m² (huella)',
+        'valor_normativo': f'{occ_limit * 100}% máx.',
+        'diferencia': '—',
+        'cumple': None,
+        'detalle': 'Se necesita el área de la parcela para verificar la ocupación',
+      })
+    except (ValueError, TypeError):
+      pass
+
+  # Parámetros normativos sin comparación (informativos)
+  if edificabilidad_max is not None:
+    comparisons.append({
+      'parametro': 'Edificabilidad',
+      'valor_edificio': '—',
+      'valor_normativo': f'{edificabilidad_max} m²/m²',
+      'diferencia': '—',
+      'cumple': None,
+      'detalle': 'Edificabilidad máxima de la subzona',
+    })
+  if retranqueo_min is not None:
+    comparisons.append({
+      'parametro': 'Retranqueo mín.',
+      'valor_edificio': '—',
+      'valor_normativo': f'{retranqueo_min} m',
+      'diferencia': '—',
+      'cumple': None,
+      'detalle': 'Retranqueo mínimo a linderos',
+    })
+
+  return {
+    'available': True,
+    'subzona': subzone_props.get('subzona'),
+    'municipio': subzone_props.get('municipio') or municipio,
+    'comparisons': comparisons,
+    'verdict': verdict,
+    'issues': issues,
+    'summary': 'Todos los parámetros cumplen' if verdict == 'compatible' else f'{len(issues)} parámetro(s) no cumplen',
+  }
+
+
+@app.get('/official/catastro/by-coords')
+def official_catastro_by_coords(lon: float, lat: float, srs: str = 'EPSG:4326'):
+  try:
+    return _fetch_catastro_by_coords(lon, lat, srs=srs)
+  except HTTPError as e:
+    raise HTTPException(status_code=502, detail=f'Catastro upstream error: {getattr(e, "code", 0)}')
+  except URLError as e:
+    raise HTTPException(status_code=502, detail=f'Catastro network error: {e}')
+  except Exception as e:
+    raise HTTPException(status_code=502, detail=f'Catastro error: {e}')
+
+
+@app.get('/official/catastro/by-ref')
+def official_catastro_by_ref(refcat: str):
+  try:
+    return _fetch_catastro_by_ref(refcat)
+  except HTTPError as e:
+    raise HTTPException(status_code=502, detail=f'Catastro upstream error: {getattr(e, "code", 0)}')
+  except URLError as e:
+    raise HTTPException(status_code=502, detail=f'Catastro network error: {e}')
+  except Exception as e:
+    raise HTTPException(status_code=502, detail=f'Catastro error: {e}')
+
+
+@app.get('/official/context')
+def official_context(municipio: Optional[str] = None, subzona: Optional[str] = None, lon: Optional[float] = None, lat: Optional[float] = None):
+  return _build_official_context(municipio=municipio, subzona=subzona, lon=lon, lat=lat)
+
+
+def _classify_land_cover(label: str) -> str:
+  low = _norm_text(label)
+  if any(t in low for t in ('agua', 'wetland', 'humedal', 'marisma', 'costa', 'playa', 'rivera', 'rio', 'cauce', 'lago')):
+    return 'sensible_agua'
+  if any(t in low for t in ('forest', 'bosque', 'arbolado', 'natural', 'vegetacion', 'matorral', 'pasto')):
+    return 'sensible_natural'
+  if any(t in low for t in ('artificial', 'constru', 'urban', 'industrial', 'via', 'carretera', 'infraestructura')):
+    return 'artificial'
+  return 'otros'
+
+
+def _fetch_siose_afecciones_geojson(bbox: str) -> dict:
+  bb = bbox.strip()
+  if bb.count(',') == 3:
+    bb = f"{bb},EPSG:4326"
+  cache_key = (bb, 'elu:LandCoverUnit', 'EPSG:4326', '2.0.0')
+  data = _siose_cache_get(cache_key, max_age=120)
+  if data is None:
+    params = {
+      'service': 'WFS',
+      'request': 'GetFeature',
+      'version': '2.0.0',
+      'typeNames': 'elu:LandCoverUnit',
+      'srsName': 'EPSG:4326',
+      'bbox': bb,
+      'outputFormat': 'application/json',
+    }
+    url = f"{SIOSE_WFS_URL}?{urlencode(params)}"
+    req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+    with urlopen(req, timeout=20) as resp:
+      data = _json.loads(resp.read().decode('utf-8', 'ignore'))
+    _siose_cache_set(cache_key, data)
+  out_features = []
+  for feat in data.get('features') or []:
+    props = feat.get('properties') or {}
+    label = None
+    for k in ('label', 'legend', 'clasificacion', 'desc_', 'descripcion', 'cover', 'LC_Value', 'LU_Value'):
+      v = props.get(k)
+      if isinstance(v, str) and v.strip():
+        label = v.strip()
+        break
+    if not label:
+      for v in props.values():
+        if isinstance(v, str) and v.strip():
+          label = v.strip()
+          break
+    if not label:
+      label = 'Sin clasificar'
+    clase = _classify_land_cover(label)
+    alerta = None
+    if clase == 'sensible_agua':
+      alerta = f'Entorno potencialmente sensible por presencia de {label}'
+    elif clase == 'sensible_natural':
+      alerta = f'Revisar afección ambiental/paisajística por cobertura {label}'
+    out_features.append({
+      'type': 'Feature',
+      'geometry': feat.get('geometry'),
+      'properties': {
+        'label': label,
+        'clase': clase,
+        'alerta': alerta,
+        'source': 'SIOSE (IDEE)',
+      },
+    })
+  return {'type': 'FeatureCollection', 'features': out_features}
+
+
+@app.get('/official/afecciones')
+def official_afecciones(bbox: str):
+  """Devuelve GeoJSON de coberturas SIOSE clasificadas por tipo de afección preliminar.
+  Parámetros:
+    bbox: minx,miny,maxx,maxy en EPSG:4326
+  """
+  try:
+    return _fetch_siose_afecciones_geojson(bbox)
+  except HTTPError as e:
+    raise HTTPException(status_code=502, detail=f'SIOSE upstream error: {getattr(e, "code", 0)}')
+  except URLError as e:
+    raise HTTPException(status_code=502, detail=f'SIOSE network error: {e}')
+  except Exception as e:
+    raise HTTPException(status_code=502, detail=f'Afecciones error: {e}')
+
+
+@app.get('/official/siotuga-wms')
+def official_siotuga_wms(municipio: Optional[str] = None):
+  """Devuelve la URL del WMS de SIOTUGA para el planeamiento vigente del municipio.
+  Usado por el visor para mostrar la zonificación oficial como capa de fondo.
+  """
+  ine = _get_ine_for_municipio(municipio) if municipio else None
+  if not ine:
+    return {'available': False, 'error': 'Municipio no encontrado en el mapeo INE'}
+  wms_info = _fetch_siotuga_wms_layer(ine)
+  if wms_info.get('layer_name'):
+    return {
+      'available': True,
+      'ine': ine,
+      'layer_name': wms_info['layer_name'],
+      'plan_title': wms_info.get('plan_title'),
+      'approval_date': wms_info.get('approval_date'),
+      'wms_base': wms_info['wms_base'],
+      'proxy_url': f'/official/siotuga-wms/proxy?ine={ine}&layer={wms_info["layer_name"]}&bbox={{bbox}}',
+    }
+  return {'available': False, 'error': wms_info.get('error', 'No se pudo obtener el WMS')}
+
+
+@app.get('/official/siotuga-wms/proxy')
+def official_siotuga_wms_proxy(
+  ine: str,
+  layer: str,
+  bbox: str,
+  width: int = 512,
+  height: int = 512,
+):
+  """Proxy WMS para SIOTUGA. Evita problemas de CORS y arregla el orden de coordenadas.
+  MapLibre envía bbox como lon,min,lat,min,lon,max,lat,max (EPSG:4326).
+  WMS 1.3.0 con CRS:EPSG:4326 espera lat,min,lon,min,lat,max,lon,max.
+  Usamos WMS 1.1.0 con SRS=EPSG:4326 que usa lon,lat order.
+  """
+  from fastapi.responses import Response
+  parts = bbox.split(',')
+  if len(parts) != 4:
+    raise HTTPException(status_code=400, detail='bbox debe tener 4 valores')
+  wms_base = f'https://siotuga.xunta.gal/siotuga/ws?codine={ine}'
+  # WMS 1.1.0 usa SRS y bbox en lon,lat order (igual que MapLibre)
+  url = (
+    f'{wms_base}&SERVICE=WMS&REQUEST=GetMap&version=1.1.0'
+    f'&layers={layer}&styles=&SRS=EPSG:4326'
+    f'&bbox={bbox}&width={width}&height={height}'
+    f'&format=image/png&transparent=true'
+  )
+  try:
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+      img_data = resp.read()
+    return Response(content=img_data, media_type='image/png')
+  except Exception as e:
+    raise HTTPException(status_code=502, detail=f'Error proxy WMS SIOTUGA: {e}')
+
+
+@app.get('/official/siotuga-wms/tile/{z}/{x}/{y}')
+def official_siotuga_wms_tile(z: int, x: int, y: int, ine: str, layer: str):
+  """Proxy XYZ→WMS para SIOTUGA. Convierte tiles XYZ (estilo Google/OSM)
+  a peticiones WMS GetMap con el bbox correspondiente en EPSG:4326.
+  Esto permite usar la capa WMS como source raster en MapLibre.
+  """
+  from fastapi.responses import Response
+  import math
+  # Convertir tile XYZ a bbox en EPSG:4326 (lon,lat)
+  n = 2 ** z
+  lon_min = x / n * 360.0 - 180.0
+  lon_max = (x + 1) / n * 360.0 - 180.0
+  # Latitud en proyección Web Mercator
+  lat_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
+  lat_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))
+  bbox = f'{lon_min},{lat_min},{lon_max},{lat_max}'
+  wms_base = f'https://siotuga.xunta.gal/siotuga/ws?codine={ine}'
+  url = (
+    f'{wms_base}&SERVICE=WMS&REQUEST=GetMap&version=1.1.0'
+    f'&layers={layer}&styles=&SRS=EPSG:4326'
+    f'&bbox={bbox}&width=512&height=512'
+    f'&format=image/png&transparent=true'
+  )
+  try:
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+      img_data = resp.read()
+    return Response(content=img_data, media_type='image/png')
+  except Exception as e:
+    raise HTTPException(status_code=502, detail=f'Error proxy WMS SIOTUGA: {e}')
+
+
+# ------------------------------
+# Análisis de sombras
+# ------------------------------
+class ShadowAnalysisRequest(BaseModel):
+  geometry: dict
+  height_m: float
+  lat: float
+  lon: float
+  date: Optional[str] = None
+  hour_utc: Optional[int] = None
+
+
+@app.post('/zoning/shadow-analysis')
+def zoning_shadow_analysis(req: ShadowAnalysisRequest):
+  """Analiza la sombra proyectada por un edificio en un momento dado.
+
+  Si no se especifica fecha/hora, usa el solsticio de invierno (21 dic) al mediodía solar.
+  """
+  import datetime as _dt
+  if req.date:
+    try:
+      parts = req.date.split('-')
+      date = _dt.date(int(parts[0]), int(parts[1]), int(parts[2]))
+    except Exception:
+      date = _dt.date(2025, 12, 21)
+  else:
+    date = _dt.date(2025, 12, 21)
+  if req.hour_utc is not None:
+    hours = [req.hour_utc]
+  else:
+    hours = [8, 10, 12, 14, 16, 18]
+  return shadow_analysis_multi_hour(req.geometry, req.height_m, req.lat, req.lon, date, hours=hours)
+
+
+@app.get('/zoning/shadow-analysis')
+def zoning_shadow_analysis_get(
+  lon: float,
+  lat: float,
+  height_m: float = 12.0,
+  geometry: Optional[str] = None,
+  date: Optional[str] = None,
+  hour_utc: Optional[int] = None,
+):
+  """GET simplificado: analiza sombras para un punto y altura dados.
+
+  Si no se pasa geometry, usa un cuadrado de 10x10 m centrado en (lon, lat).
+  """
+  import datetime as _dt
+  import json as _json
+  if geometry:
+    try:
+      geom = _json.loads(geometry)
+    except Exception:
+      geom = None
+  else:
+    d = 0.00005
+    geom = {
+      'type': 'Polygon',
+      'coordinates': [[
+        [lon - d, lat - d], [lon + d, lat - d],
+        [lon + d, lat + d], [lon - d, lat + d],
+        [lon - d, lat - d],
+      ]],
+    }
+  if date:
+    try:
+      parts = date.split('-')
+      dt_date = _dt.date(int(parts[0]), int(parts[1]), int(parts[2]))
+    except Exception:
+      dt_date = _dt.date(2025, 12, 21)
+  else:
+    dt_date = _dt.date(2025, 12, 21)
+  if hour_utc is not None:
+    hours = [hour_utc]
+  else:
+    hours = [8, 10, 12, 14, 16, 18]
+  return shadow_analysis_multi_hour(geom, height_m, lat, lon, dt_date, hours=hours)
+
+
 # ------------------------------
 # Subzonas espaciales (Fase 2 GeoLibre)
 # ------------------------------
@@ -1930,3 +3021,12 @@ def planeamento_subzonas_lookup(lon: float, lat: float):
   if props is None:
     return {"found": False, "subzona": None}
   return {"found": True, "subzona": props}
+
+
+@app.get("/proxy/osm-buildings")
+def proxy_osm_buildings(municipio: str, limit: int = 800):
+  """Devuelve edificios OSM en GeoJSON listos para extrusión 3D."""
+  try:
+    return get_osm_buildings_geojson(municipio, limit=limit)
+  except Exception:
+    return {"type": "FeatureCollection", "features": []}

@@ -3,304 +3,1148 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NORMATIVA GALICIA 3D - Vista GIS (GeoLibre)</title>
+<title>NORMATIVA GALICIA 3D</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0d1117; color: #e6edf3; overflow: hidden; }
   #app { display: flex; height: 100vh; }
+
+  /* Sidebar */
   #sidebar {
-    width: 340px; background: #16213e; padding: 16px; overflow-y: auto;
-    border-right: 1px solid #0f3460; flex-shrink: 0;
+    width: 320px; background: #161b22; padding: 0; overflow-y: auto;
+    border-right: 1px solid #30363d; flex-shrink: 0; display: flex; flex-direction: column;
   }
-  #sidebar h1 { font-size: 18px; margin-bottom: 4px; color: #e94560; }
-  #sidebar .subtitle { font-size: 12px; color: #888; margin-bottom: 16px; }
+  #sidebar-header {
+    padding: 20px 16px 12px; border-bottom: 1px solid #30363d;
+  }
+  #sidebar-header h1 { font-size: 18px; color: #58a6ff; margin-bottom: 2px; }
+  #sidebar-header p { font-size: 12px; color: #8b949e; }
+
+  /* Botones de municipios */
+  .zone-buttons { padding: 12px 16px; border-bottom: 1px solid #30363d; }
+  .zone-buttons h2 { font-size: 13px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .zone-btn {
+    display: block; width: 100%; padding: 12px 14px; margin-bottom: 6px;
+    background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+    border-radius: 8px; cursor: pointer; font-size: 14px; text-align: left;
+    transition: all 0.15s;
+  }
+  .zone-btn:hover { background: #30363d; border-color: #58a6ff; }
+  .zone-btn.active { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+  .zone-btn .zone-sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
+  .zone-btn.active .zone-sub { color: #c9d1d9; }
+
+  /* Panel de info */
+  #info-panel { flex: 1; padding: 16px; overflow-y: auto; }
+  #info-panel h2 { font-size: 15px; color: #58a6ff; margin-bottom: 10px; }
+  .info-card {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 12px; margin-bottom: 10px;
+  }
+  .info-row {
+    display: flex; justify-content: space-between; padding: 4px 0;
+    border-bottom: 1px solid #21262d; font-size: 13px;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-row .key { color: #8b949e; }
+  .info-row .val { color: #e6edf3; font-weight: 600; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 700;
+  }
+  .badge.apto { background: #238636; color: #fff; }
+  .badge.condicionado { background: #d29922; color: #fff; }
+  .badge.no_apto { background: #da3633; color: #fff; }
+  .hint { font-size: 12px; color: #8b949e; padding: 8px 0; }
+  .loading { color: #58a6ff; font-size: 13px; padding: 8px 0; }
+  .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .filter-btn {
+    padding: 8px 10px; background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+    border-radius: 8px; cursor: pointer; font-size: 12px;
+  }
+  .filter-btn.active { background: #1f6feb; border-color: #58a6ff; }
+
+  /* Botón evaluar */
+  .eval-btn {
+    width: 100%; padding: 10px; background: #238636; color: #fff;
+    border: none; border-radius: 8px; cursor: pointer; font-size: 14px;
+    margin-top: 10px; font-weight: 600;
+  }
+  .eval-btn:hover { background: #2ea043; }
+
+  /* Mapa */
   #map { flex: 1; height: 100%; }
-  .panel { background: #1a1a2e; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-  .panel h2 { font-size: 14px; margin-bottom: 8px; color: #e94560; }
-  .panel label { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
-  .panel select, .panel input { width: 100%; padding: 6px 8px; background: #0f3460; border: 1px solid #533483; color: #e0e0e0; border-radius: 4px; font-size: 13px; }
-  .panel button { width: 100%; padding: 8px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px; }
-  .panel button:hover { background: #c73650; }
-  .panel button.secondary { background: #533483; }
-  .panel button.secondary:hover { background: #6a4499; }
-  .panel button.danger { background: #e74c3c; }
-  .panel button.danger:hover { background: #c0392b; }
-  .panel button.success { background: #2ecc71; }
-  .panel button.success:hover { background: #27ae60; }
-  #subzone-info { font-size: 12px; line-height: 1.6; }
-  #subzone-info .prop { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid #0f3460; }
-  #subzone-info .prop .key { color: #888; }
-  #subzone-info .prop .val { color: #e0e0e0; font-weight: bold; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
-  .badge.apto { background: #2ecc71; color: #fff; }
-  .badge.condicionado { background: #f39c12; color: #fff; }
-  .badge.no_apto { background: #e74c3c; color: #fff; }
-  #assess-result { display: none; }
-  #assess-result .viability { font-size: 16px; margin: 8px 0; }
-  #assess-result .reasons { font-size: 12px; color: #aaa; margin-top: 8px; }
-  #assess-result .reasons li { margin-left: 16px; margin-bottom: 4px; }
-  .loading { color: #e94560; font-size: 12px; }
-  .hint { font-size: 11px; color: #666; margin-top: 4px; }
-  .draw-active { background: #e94560 !important; }
-  .draw-hint { font-size: 12px; color: #f39c12; margin-top: 6px; padding: 6px; background: rgba(243,156,18,0.1); border-radius: 4px; display: none; }
-  .draw-hint.visible { display: block; }
-  .btn-row { display: flex; gap: 6px; }
-  .btn-row button { margin-top: 0; }
-  #draw-panel { display: none; }
+
+  /* Toggle 3D */
+  #toggle-3d {
+    position: absolute; top: 12px; right: 12px; z-index: 10;
+    padding: 8px 14px; background: #161b22; border: 1px solid #58a6ff;
+    color: #58a6ff; border-radius: 8px; cursor: pointer; font-size: 13px;
+    font-weight: 600;
+  }
+  #toggle-3d:hover { background: #21262d; }
+  #toggle-3d.active { background: #1f6feb; color: #fff; }
+
+  #toggle-afecciones {
+    position: absolute; top: 12px; right: 100px; z-index: 10;
+    padding: 8px 14px; background: #161b22; border: 1px solid #f39c12;
+    color: #f39c12; border-radius: 8px; cursor: pointer; font-size: 13px;
+    font-weight: 600;
+  }
+  #toggle-afecciones:hover { background: #21262d; }
+  #toggle-afecciones.active { background: #d68910; color: #fff; }
+
+  #toggle-shadows {
+    position: absolute; top: 12px; right: 200px; z-index: 10;
+    padding: 8px 14px; background: #161b22; border: 1px solid #9b59b6;
+    color: #9b59b6; border-radius: 8px; cursor: pointer; font-size: 13px;
+    font-weight: 600;
+  }
+  #toggle-shadows:hover { background: #21262d; }
+  #toggle-shadows.active { background: #8e44ad; color: #fff; }
+
+  #building-tooltip {
+    position: absolute; z-index: 20; pointer-events: none; display: none;
+    min-width: 180px; max-width: 280px; padding: 10px 12px;
+    background: rgba(13, 17, 23, 0.96); color: #e6edf3;
+    border: 1px solid #30363d; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35); font-size: 12px; line-height: 1.35;
+  }
+  #building-tooltip .tt-title { color: #58a6ff; font-weight: 700; margin-bottom: 6px; }
+  #building-tooltip .tt-row { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
+  #building-tooltip .tt-key { color: #8b949e; }
+  #building-tooltip .tt-badge { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 12px; font-weight: 700; }
+  #building-tooltip .tt-badge.compatible { background: #238636; color: #fff; }
+  #building-tooltip .tt-badge.supera_altura { background: #da3633; color: #fff; }
+  #building-tooltip .tt-badge.sin_dato { background: #1f6feb; color: #fff; }
+
+  #map-summary {
+    position: absolute; left: 12px; bottom: 12px; z-index: 15;
+    min-width: 250px; max-width: 320px; padding: 10px 12px;
+    background: rgba(13, 17, 23, 0.94); color: #e6edf3;
+    border: 1px solid #30363d; border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3); font-size: 12px;
+  }
+  #map-summary .sum-title { color: #58a6ff; font-weight: 700; margin-bottom: 6px; }
+  #map-summary .sum-row { display: flex; justify-content: space-between; margin: 2px 0; gap: 10px; }
+  #map-summary .sum-key { color: #8b949e; }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="sidebar">
-    <h1>NORMATIVA GALICIA 3D</h1>
-    <div class="subtitle">Vista GIS - GeoLibre (MapLibre GL JS)</div>
-
-    <div class="panel">
-      <h2>Capas</h2>
-      <label>Municipio</label>
-      <select id="municipio-select">
-        <option value="">Todos</option>
-      </select>
-      <button id="btn-load" onclick="loadSubzones()">Cargar subzonas</button>
-      <button class="secondary" id="btn-clear" onclick="clearSubzones()">Limpiar</button>
+    <div id="sidebar-header">
+      <h1>NORMATIVA GALICIA 3D</h1>
+      <p>Selecciona un municipio para ver su planeamiento en 3D</p>
     </div>
 
-    <div class="panel">
-      <h2>Subzona seleccionada</h2>
-      <div id="subzone-info">
-        <span class="hint">Haz clic en una subzona del mapa</span>
-      </div>
+    <div class="zone-buttons" id="zone-buttons">
+      <h2>Municipios disponibles</h2>
+      <div id="zone-list">Cargando...</div>
     </div>
 
-    <div class="panel" id="assess-panel" style="display:none">
-      <h2>Evaluar parcela</h2>
-      <label>Altura maxima (m)</label>
-      <input type="number" id="assess-altura" step="0.5" placeholder="Ej: 12" />
-      <label>Retranqueo min (m)</label>
-      <input type="number" id="assess-retranqueo" step="0.5" placeholder="Ej: 3" />
-      <button onclick="assessParcel()">Evaluar viabilidad</button>
-      <div id="assess-result"></div>
-    </div>
-
-    <div class="panel" id="draw-panel">
-      <h2>Dibujar parcela</h2>
-      <div class="btn-row">
-        <button id="btn-draw" onclick="toggleDrawMode()">Dibujar parcela</button>
-        <button class="danger" id="btn-draw-cancel" onclick="cancelDraw()" style="display:none">Cancelar</button>
-      </div>
-      <div class="draw-hint" id="draw-hint">
-        Haz clic en el mapa para anadir vertices. Doble clic o clic en "Terminar" para cerrar el poligono.
-      </div>
-      <button class="success" id="btn-draw-finish" onclick="finishDraw()" style="display:none">Terminar poligono</button>
-      <button class="secondary" id="btn-draw-clear" onclick="clearDrawnParcel()" style="display:none">Borrar parcela</button>
-      <div id="draw-assess-result"></div>
-    </div>
-
-    <div class="panel">
-      <h2>Ayuda</h2>
+    <div id="info-panel">
       <div class="hint">
-        1. Carga subzonas con el boton superior.<br>
-        2. Haz clic en una subzona para ver sus parametros.<br>
-        3. Si la subzona tiene geometria, podras evaluar viabilidad.<br>
-        4. O dibuja una parcela con el boton "Dibujar parcela".<br>
-        5. La decision oficial viene del backend FastAPI.
+        Pulsa un municipio para volar hasta alli, cargar edificios 3D y ver las subzonas.
+        Haz clic en una subzona o en un edificio para ver su informacion.
+      </div>
+      <div class="info-card">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda edificios 3D</div>
+        <div class="info-row"><span class="key" style="background:#2e7d32;color:#fff">Verde</span><span class="val">compatible con altura</span></div>
+        <div class="info-row"><span class="key" style="background:#c62828;color:#fff">Rojo</span><span class="val">supera altura de subzona</span></div>
+        <div class="info-row"><span class="key" style="background:#1976d2;color:#fff">Azul</span><span class="val">sin dato normativo</span></div>
+      </div>
+      <div class="info-card">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda afecciones (SIOSE)</div>
+        <div class="info-row"><span class="key" style="background:#1a5276;color:#fff">Azul oscuro</span><span class="val">sensible por agua</span></div>
+        <div class="info-row"><span class="key" style="background:#1e8449;color:#fff">Verde</span><span class="val">sensible natural</span></div>
+        <div class="info-row"><span class="key" style="background:#7f8c8d;color:#fff">Gris</span><span class="val">artificial</span></div>
+      </div>
+      <div class="info-card">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda sombras</div>
+        <div class="info-row"><span class="key" style="background:#2c2c3e;color:#fff">Morado oscuro</span><span class="val">sombra proyectada</span></div>
+        <div class="hint" style="margin-top:4px">Solsticio de invierno (21 dic)</div>
+      </div>
+      <div class="info-card">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Zonificación oficial</div>
+        <div class="hint" style="margin-top:4px">La zonificación del planeamiento vigente se carga automáticamente desde SIOTUGA (Xunta de Galicia) al seleccionar un municipio.</div>
       </div>
     </div>
   </div>
 
-  <div id="map"></div>
+  <div style="position: relative; flex: 1;">
+    <button id="toggle-3d" class="active" onclick="toggle3D()">3D: ON</button>
+    <button id="toggle-afecciones" onclick="toggleAfecciones()">Afecciones: OFF</button>
+    <button id="toggle-shadows" onclick="toggleShadows()">Sombras: OFF</button>
+    <div id="shadow-controls" style="display:none;position:absolute;top:50px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
+      <div style="font-weight:600;margin-bottom:6px;color:#9b59b6">Hora del día (UTC)</div>
+      <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
+      <div id="shadow-slider-info" style="margin-top:6px;color:#8b949e">Hora: 12:00 UTC</div>
+    </div>
+    <div id="building-tooltip"></div>
+    <div id="map-summary" style="display:none"></div>
+    <div id="map"></div>
+  </div>
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"></script>
 <script>
-const API_BASE = window.location.origin;
+const API = window.location.origin;
 let map = null;
-let subzoneLayer = null;
-let subzoneData = null;
-let selectedFeature = null;
+let show3D = true;
+let allSubzones = null;
+let activeMunicipio = null;
+let tooltipEl = null;
+let selectedBuildingId = null;
+let selectedBuildingsGeojson = { type: 'FeatureCollection', features: [] };
+let currentBuildingFilter = 'all';
+let showAfecciones = false;
+let afeccionesLoaded = false;
+let showShadows = false;
+let shadowsLoaded = false;
+let showSiotugaWMS = false;
+let siotugaWMSLayer = null;
+let showSubzonasPiloto = true;
+
+// Coordenadas de municipios para vuelo inicial
+const MUNI_CENTERS = {
+  'Vigo': { center: [-8.722, 42.232], zoom: 15 },
+  'A Coruna': { center: [-8.400, 43.370], zoom: 15 },
+  'Santiago': { center: [-8.540, 42.880], zoom: 15 },
+};
 
 function initMap() {
+  tooltipEl = document.getElementById('building-tooltip');
   map = new maplibregl.Map({
     container: 'map',
     style: {
       version: 8,
       sources: {
-        'osm-tiles': {
+        'osm': {
           type: 'raster',
           tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
           tileSize: 256,
-          attribution: '&copy; OpenStreetMap contributors'
+          attribution: '&copy; OpenStreetMap'
         }
       },
-      layers: [{ id: 'osm', type: 'raster', source: 'osm-tiles' }]
+      layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
     },
     center: [-8.5, 42.8],
-    zoom: 8
+    zoom: 7,
+    pitch: 60,
+    bearing: -20
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
-  map.on('click', 'subzones-fill', (e) => {
-    if (e.features && e.features.length > 0) {
-      selectSubzone(e.features[0]);
-    }
-  });
-  map.on('mouseenter', 'subzones-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
-  map.on('mouseleave', 'subzones-fill', () => { map.getCanvas().style.cursor = ''; });
 }
 
 async function loadMunicipios() {
   try {
-    const resp = await fetch(`${API_BASE}/planeamiento/subzonas/municipios`);
+    const resp = await fetch(`${API}/planeamiento/subzonas/municipios`);
     const data = await resp.json();
-    const sel = document.getElementById('municipio-select');
+    const list = document.getElementById('zone-list');
+    list.innerHTML = '';
     (data.municipios || []).forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m; opt.textContent = m;
-      sel.appendChild(opt);
+      const btn = document.createElement('button');
+      btn.className = 'zone-btn';
+      btn.id = `btn-${m.replace(/\s+/g, '-')}`;
+      btn.innerHTML = `${m}<div class="zone-sub">Ver subzonas en 3D</div>`;
+      btn.onclick = () => goToMunicipio(m);
+      list.appendChild(btn);
     });
   } catch (e) {
-    console.error('Error cargando municipios', e);
+    document.getElementById('zone-list').innerHTML = '<div class="hint">Error cargando municipios</div>';
   }
 }
 
-async function loadSubzones() {
-  const muni = document.getElementById('municipio-select').value;
-  const url = muni
-    ? `${API_BASE}/planeamiento/subzonas?municipio=${encodeURIComponent(muni)}`
-    : `${API_BASE}/planeamiento/subzonas`;
+async function goToMunicipio(municipio) {
+  activeMunicipio = municipio;
+  updateSelectedBuilding(null);
+
+  // Marcar boton activo
+  document.querySelectorAll('.zone-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById(`btn-${municipio.replace(/\s+/g, '-')}`);
+  if (btn) btn.classList.add('active');
+
+  // Volar al municipio
+  const center = MUNI_CENTERS[municipio] || MUNI_CENTERS['Vigo'];
+  map.flyTo({ center: center.center, zoom: center.zoom, pitch: 60, bearing: -20, duration: 2000 });
+
+  // Cargar subzonas
   try {
-    document.getElementById('btn-load').textContent = 'Cargando...';
-    const resp = await fetch(url);
-    subzoneData = await resp.json();
-    renderSubzones();
-    document.getElementById('btn-load').textContent = 'Cargar subzonas';
+    const resp = await fetch(`${API}/planeamiento/subzonas?municipio=${encodeURIComponent(municipio)}`);
+    const data = await resp.json();
+    allSubzones = data;
+    // No mostramos las subzonas piloto en el mapa (cuadrados inventados)
+    // renderSubzones3D(data) — desactivado
+
+    // Cargar zonificación oficial de SIOTUGA automáticamente
+    loadSiotugaWMS(municipio);
+
+    // Cargar edificios reales de OpenStreetMap
+    loadBuildings(municipio);
+
+    // Mostrar info del municipio
+    const panel = document.getElementById('info-panel');
+    panel.innerHTML = `<h2>${municipio}</h2>
+      <div class="info-card">
+        <div class="info-row"><span class="key">Zonificación</span><span class="val">Oficial SIOTUGA</span></div>
+        <div class="info-row"><span class="key">Edificios</span><span class="val">OpenStreetMap 3D</span></div>
+      </div>
+      <div class="hint">Cargando zonificación oficial y edificios 3D...<br>Haz clic en un edificio para ver su información.</div>`;
   } catch (e) {
-    console.error('Error cargando subzonas', e);
-    document.getElementById('btn-load').textContent = 'Cargar subzonas';
-    alert('Error al cargar subzonas');
+    document.getElementById('info-panel').innerHTML = '<div class="hint">Error cargando datos</div>';
   }
 }
 
-function renderSubzones() {
-  if (!subzoneData || !subzoneData.features || subzoneData.features.length === 0) {
-    alert('No hay subzonas para mostrar');
+async function loadSiotugaWMS(municipio) {
+  try {
+    const resp = await fetch(`${API}/official/siotuga-wms?municipio=${encodeURIComponent(municipio)}`);
+    const data = await resp.json();
+    if (!data.available) {
+      console.warn('WMS SIOTUGA no disponible:', data.error);
+      return;
+    }
+    const sourceId = 'siotuga-wms';
+    if (map.getSource(sourceId)) {
+      if (map.getLayer('siotuga-wms-layer')) map.removeLayer('siotuga-wms-layer');
+      map.removeSource(sourceId);
+    }
+    map.addSource(sourceId, {
+      type: 'raster',
+      tiles: [
+        `${API}/official/siotuga-wms/tile/{z}/{x}/{y}?ine=${data.ine}&layer=${encodeURIComponent(data.layer_name)}`
+      ],
+      tileSize: 512,
+      attribution: 'SIOTUGA - Xunta de Galicia'
+    });
+    map.addLayer({
+      id: 'siotuga-wms-layer',
+      type: 'raster',
+      source: sourceId,
+      paint: { 'raster-opacity': 0.75 }
+    });
+    console.log('WMS SIOTUGA cargado:', data.plan_title);
+  } catch (e) {
+    console.warn('Error cargando WMS SIOTUGA:', e);
+  }
+}
+
+function renderSubzones3D(data) {
+  if (map.getSource('subzones')) {
+    map.getSource('subzones').setData(data);
     return;
   }
 
-  if (map.getSource('subzones')) {
-    map.getSource('subzones').setData(subzoneData);
-  } else {
-    map.addSource('subzones', { type: 'geojson', data: subzoneData });
+  map.addSource('subzones', { type: 'geojson', data });
 
-    map.addLayer({
-      id: 'subzones-fill',
-      type: 'fill',
-      source: 'subzones',
-      paint: {
-        'fill-color': [
-          'match', ['get', 'subzona'],
-          'R-1', '#2ecc71',
-          'R-2', '#3498db',
-          'UC-1', '#e94560',
-          'NR-TRAD', '#f39c12',
-          '#9b59b6'
-        ],
-        'fill-opacity': 0.3
-      }
-    });
-
-    map.addLayer({
-      id: 'subzones-line',
-      type: 'line',
-      source: 'subzones',
-      paint: {
-        'line-color': '#e94560',
-        'line-width': 2
-      }
-    });
-  }
-
-  // Ajustar vista a las subzonas
-  try {
-    const bbox = turf.bbox(subzoneData);
-    map.fitBounds(bbox, { padding: 40 });
-  } catch (e) {
-    console.warn('No se pudo ajustar bbox', e);
-  }
-}
-
-function clearSubzones() {
-  if (map.getSource('subzones')) {
-    map.removeLayer('subzones-fill');
-    map.removeLayer('subzones-line');
-    map.removeSource('subzones');
-  }
-  subzoneData = null;
-  selectedFeature = null;
-  document.getElementById('subzone-info').innerHTML = '<span class="hint">Haz clic en una subzona del mapa</span>';
-  document.getElementById('assess-panel').style.display = 'none';
-}
-
-function selectSubzone(feature) {
-  selectedFeature = feature;
-  const props = feature.properties || {};
-  const info = document.getElementById('subzone-info');
-  info.innerHTML = '';
-
-  const fields = [
-    ['municipio', 'Municipio'],
-    ['subzona', 'Subzona'],
-    ['altura_maxima_m', 'Altura max (m)'],
-    ['retranqueo_min_m', 'Retranqueo min (m)'],
-    ['setback_front_m', 'Retranq. frente (m)'],
-    ['setback_side_m', 'Retranq. lateral (m)'],
-    ['setback_back_m', 'Retranq. trasero (m)'],
-    ['front_direction_default', 'Frente por defecto'],
-    ['ocupacion_max', 'Ocupacion max'],
-    ['edificabilidad_max_m2_m2', 'Edificabilidad (m2/m2)'],
-    ['parcela_min_m2', 'Parcela min (m2)'],
-    ['frente_min_m', 'Frente min (m)'],
-    ['fuente', 'Fuente'],
-    ['articulo', 'Articulo'],
-    ['version', 'Version']
-  ];
-
-  fields.forEach(([key, label]) => {
-    const val = props[key];
-    if (val !== undefined && val !== null && val !== '') {
-      const div = document.createElement('div');
-      div.className = 'prop';
-      div.innerHTML = `<span class="key">${label}</span><span class="val">${val}</span>`;
-      info.appendChild(div);
+  map.addLayer({
+    id: 'subzones-flat',
+    type: 'fill',
+    source: 'subzones',
+    paint: {
+      'fill-color': [
+        'interpolate', ['linear'], ['get', 'altura_maxima_m'],
+        0, '#1a1a2e',
+        9, '#f39c12',
+        12, '#e94560',
+        16, '#e74c3c',
+        20, '#c0392b'
+      ],
+      'fill-opacity': 0.18
     }
   });
 
-  // Mostrar panel de evaluacion
-  document.getElementById('assess-panel').style.display = 'block';
-  if (props.altura_maxima_m) {
-    document.getElementById('assess-altura').value = props.altura_maxima_m;
-  }
-  if (props.retranqueo_min_m) {
-    document.getElementById('assess-retranqueo').value = props.retranqueo_min_m;
+  map.addLayer({
+    id: 'subzones-line',
+    type: 'line',
+    source: 'subzones',
+    paint: { 'line-color': '#58a6ff', 'line-width': 2 }
+  });
+
+  map.addLayer({
+    id: 'subzones-labels',
+    type: 'symbol',
+    source: 'subzones',
+    layout: {
+      'text-field': ['get', 'subzona'],
+      'text-size': 12,
+      'text-anchor': 'center'
+    },
+    paint: {
+      'text-color': '#ffffff',
+      'text-halo-color': '#000000',
+      'text-halo-width': 2
+    }
+  });
+
+  map.on('click', 'subzones-flat', (e) => {
+    if (e.features && e.features.length > 0) selectSubzone(e.features[0]);
+  });
+  map.on('mouseenter', 'subzones-flat', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mousemove', 'subzones-flat', (e) => {
+    if (e.features && e.features.length > 0) showSubzoneTooltip(e.features[0], e.point);
+  });
+  map.on('mouseleave', 'subzones-flat', () => {
+    map.getCanvas().style.cursor = '';
+    hideBuildingTooltip();
+  });
+}
+
+function toggle3D() {
+  show3D = !show3D;
+  const btn = document.getElementById('toggle-3d');
+  if (show3D) {
+    btn.textContent = '3D: ON';
+    btn.classList.add('active');
+    if (map.getLayer('buildings-3d')) map.setLayoutProperty('buildings-3d', 'visibility', 'visible');
+    map.easeTo({ pitch: 60, duration: 500 });
+  } else {
+    btn.textContent = '3D: OFF';
+    btn.classList.remove('active');
+    if (map.getLayer('buildings-3d')) map.setLayoutProperty('buildings-3d', 'visibility', 'none');
+    map.easeTo({ pitch: 0, duration: 500 });
   }
 }
 
-async function assessParcel() {
-  if (!selectedFeature) {
+async function loadAfecciones() {
+  if (!allSubzones || !allSubzones.features || allSubzones.features.length === 0) return;
+  try {
+    const bbox = turf.bbox(allSubzones);
+    const bboxStr = `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}`;
+    const resp = await fetch(`${API}/official/afecciones?bbox=${encodeURIComponent(bboxStr)}`);
+    const geojson = await resp.json();
+    if (!geojson.features || geojson.features.length === 0) {
+      console.log('Sin coberturas SIOSE para esta zona');
+      return;
+    }
+    if (map.getSource('afecciones')) {
+      map.getSource('afecciones').setData(geojson);
+    } else {
+      map.addSource('afecciones', { type: 'geojson', data: geojson });
+      map.addLayer({
+        id: 'afecciones-fill',
+        type: 'fill',
+        source: 'afecciones',
+        paint: {
+          'fill-color': [
+            'match', ['get', 'clase'],
+            'sensible_agua', '#1a5276',
+            'sensible_natural', '#1e8449',
+            'artificial', '#7f8c8d',
+            '#5d6d7e'
+          ],
+          'fill-opacity': 0.35
+        }
+      });
+      map.addLayer({
+        id: 'afecciones-line',
+        type: 'line',
+        source: 'afecciones',
+        paint: { 'line-color': '#34495e', 'line-width': 0.5 }
+      });
+      map.on('click', 'afecciones-fill', (e) => {
+        if (e.features && e.features.length > 0) {
+          const props = e.features[0].properties || {};
+          const panel = document.getElementById('info-panel');
+          let html = '<h2>Cobertura SIOSE</h2>';
+          html += '<div class="info-card">';
+          html += `<div class="info-row"><span class="key">Cobertura</span><span class="val">${props.label || '—'}</span></div>`;
+          html += `<div class="info-row"><span class="key">Clase</span><span class="val">${props.clase || '—'}</span></div>`;
+          html += `<div class="info-row"><span class="key">Fuente</span><span class="val">${props.source || 'SIOSE'}</span></div>`;
+          html += '</div>';
+          if (props.alerta) {
+            html += `<div class="hint">• ${props.alerta}</div>`;
+          }
+          html += '<div class="hint">Prechequeo preliminar basado en SIOSE; no sustituye verificación sectorial oficial.</div>';
+          panel.innerHTML = html;
+        }
+      });
+      map.on('mouseenter', 'afecciones-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'afecciones-fill', () => { map.getCanvas().style.cursor = ''; });
+    }
+    afeccionesLoaded = true;
+    console.log(`Cargadas ${geojson.features.length} coberturas SIOSE`);
+  } catch (e) {
+    console.error('Error cargando afecciones:', e);
+  }
+}
+
+function toggleAfecciones() {
+  showAfecciones = !showAfecciones;
+  const btn = document.getElementById('toggle-afecciones');
+  if (showAfecciones) {
+    btn.textContent = 'Afecciones: ON';
+    btn.classList.add('active');
+    if (!afeccionesLoaded) {
+      loadAfecciones();
+    } else {
+      if (map.getLayer('afecciones-fill')) map.setLayoutProperty('afecciones-fill', 'visibility', 'visible');
+      if (map.getLayer('afecciones-line')) map.setLayoutProperty('afecciones-line', 'visibility', 'visible');
+    }
+  } else {
+    btn.textContent = 'Afecciones: OFF';
+    btn.classList.remove('active');
+    if (map.getLayer('afecciones-fill')) map.setLayoutProperty('afecciones-fill', 'visibility', 'none');
+    if (map.getLayer('afecciones-line')) map.setLayoutProperty('afecciones-line', 'visibility', 'none');
+  }
+}
+
+let currentShadowHour = 12;
+
+async function loadShadows(hour) {
+  if (!allSubzones || !allSubzones.features || allSubzones.features.length === 0) return;
+  const h = hour != null ? hour : currentShadowHour;
+  currentShadowHour = h;
+  try {
+    const center = turf.centerOfMass(allSubzones);
+    const coords = center.geometry.coordinates;
+    const resp = await fetch(`${API}/zoning/shadow-analysis?lon=${coords[0]}&lat=${coords[1]}&height_m=12&hour_utc=${h}`);
+    const data = await resp.json();
+    const features = [];
+    for (const r of (data.results || [])) {
+      if (r.shadow_polygon) {
+        features.push({
+          type: 'Feature',
+          geometry: r.shadow_polygon,
+          properties: {
+            hour: r.hour_utc,
+            elevation: r.solar.elevation_deg,
+            azimuth: r.solar.azimuth_deg,
+            length: r.shadow_length_m,
+          },
+        });
+      }
+    }
+    updateShadowSliderInfo(h, data.results && data.results[0] ? data.results[0] : null);
+    if (features.length === 0) {
+      if (map.getSource('shadows')) {
+        map.getSource('shadows').setData({ type: 'FeatureCollection', features: [] });
+      }
+      console.log('Sin sombras para mostrar (sol bajo el horizonte)');
+      return;
+    }
+    const geojson = { type: 'FeatureCollection', features };
+    if (map.getSource('shadows')) {
+      map.getSource('shadows').setData(geojson);
+    } else {
+      map.addSource('shadows', { type: 'geojson', data: geojson });
+      map.addLayer({
+        id: 'shadows-fill',
+        type: 'fill',
+        source: 'shadows',
+        paint: {
+          'fill-color': '#2c2c3e',
+          'fill-opacity': 0.35
+        }
+      });
+      map.addLayer({
+        id: 'shadows-line',
+        type: 'line',
+        source: 'shadows',
+        paint: { 'line-color': '#9b59b6', 'line-width': 0.5 }
+      });
+      map.on('click', 'shadows-fill', (e) => {
+        if (e.features && e.features.length > 0) {
+          const props = e.features[0].properties || {};
+          const panel = document.getElementById('info-panel');
+          let html = '<h2>Sombra proyectada</h2>';
+          html += '<div class="info-card">';
+          html += `<div class="info-row"><span class="key">Hora UTC</span><span class="val">${props.hour}:00</span></div>`;
+          html += `<div class="info-row"><span class="key">Elevación solar</span><span class="val">${props.elevation}°</span></div>`;
+          html += `<div class="info-row"><span class="key">Azimut solar</span><span class="val">${props.azimuth}°</span></div>`;
+          html += `<div class="info-row"><span class="key">Longitud sombra</span><span class="val">${props.length} m</span></div>`;
+          html += '</div>';
+          html += '<div class="hint">Análisis preliminar de sombras (solsticio de invierno). No sustituye un estudio de soleamiento oficial.</div>';
+          panel.innerHTML = html;
+        }
+      });
+      map.on('mouseenter', 'shadows-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'shadows-fill', () => { map.getCanvas().style.cursor = ''; });
+    }
+    shadowsLoaded = true;
+    console.log(`Cargadas ${features.length} sombras para hora ${h}:00`);
+  } catch (e) {
+    console.error('Error cargando sombras:', e);
+  }
+}
+
+function updateShadowSliderInfo(hour, result) {
+  const info = document.getElementById('shadow-slider-info');
+  if (!info) return;
+  if (result && result.solar) {
+    const elev = result.solar.elevation_deg;
+    const azim = result.solar.azimuth_deg;
+    const len = result.shadow_length_m;
+    const has = result.has_shadow;
+    info.innerHTML = `Hora: ${hour}:00 UTC · Elev: ${elev}° · Azim: ${azim}° · Sombra: ${has ? len + ' m' : 'No'}`;
+  } else {
+    info.innerHTML = `Hora: ${hour}:00 UTC · Sol bajo el horizonte`;
+  }
+}
+
+function onShadowSliderChange(val) {
+  currentShadowHour = parseInt(val);
+  if (showShadows) {
+    loadShadows(currentShadowHour);
+  }
+}
+
+function toggleShadows() {
+  showShadows = !showShadows;
+  const btn = document.getElementById('toggle-shadows');
+  const controls = document.getElementById('shadow-controls');
+  if (showShadows) {
+    btn.textContent = 'Sombras: ON';
+    btn.classList.add('active');
+    if (controls) controls.style.display = 'block';
+    if (!shadowsLoaded) {
+      loadShadows(currentShadowHour);
+    } else {
+      loadShadows(currentShadowHour);
+      if (map.getLayer('shadows-fill')) map.setLayoutProperty('shadows-fill', 'visibility', 'visible');
+      if (map.getLayer('shadows-line')) map.setLayoutProperty('shadows-line', 'visibility', 'visible');
+    }
+  } else {
+    btn.textContent = 'Sombras: OFF';
+    btn.classList.remove('active');
+    if (controls) controls.style.display = 'none';
+    if (map.getLayer('shadows-fill')) map.setLayoutProperty('shadows-fill', 'visibility', 'none');
+    if (map.getLayer('shadows-line')) map.setLayoutProperty('shadows-line', 'visibility', 'none');
+  }
+}
+
+// ------------------------------
+// Edificios reales de OpenStreetMap (Overpass API)
+// ------------------------------
+let buildingsLoaded = false;
+
+function showBuildingTooltip(feature, point) {
+  if (!tooltipEl || !feature) return;
+  const props = feature.properties || {};
+  const status = props.cumplimiento_altura || 'sin_dato';
+  const statusTxt = status === 'compatible' ? 'Compatible' : status === 'supera_altura' ? 'Supera altura' : 'Sin dato';
+  tooltipEl.innerHTML = `
+    <div class="tt-title">${props.name || ('Edificio #' + (props.osm_id || 'OSM'))}</div>
+    <div class="tt-row"><span class="tt-key">Altura</span><span>${props.height || '—'} m</span></div>
+    <div class="tt-row"><span class="tt-key">Subzona</span><span>${props.subzona || '—'}</span></div>
+    <div class="tt-row"><span class="tt-key">Máx. subzona</span><span>${props.altura_maxima_subzona_m || '—'} m</span></div>
+    <div class="tt-badge ${status}">${statusTxt}</div>
+  `;
+  tooltipEl.style.display = 'block';
+  tooltipEl.style.left = `${point.x + 14}px`;
+  tooltipEl.style.top = `${point.y + 14}px`;
+}
+
+function hideBuildingTooltip() {
+  if (!tooltipEl) return;
+  tooltipEl.style.display = 'none';
+}
+
+function showSubzoneTooltip(feature, point) {
+  if (!tooltipEl || !feature) return;
+  const props = feature.properties || {};
+  tooltipEl.innerHTML = `
+    <div class="tt-title">Subzona ${props.subzona || '—'}</div>
+    <div class="tt-row"><span class="tt-key">Municipio</span><span>${props.municipio || '—'}</span></div>
+    <div class="tt-row"><span class="tt-key">Altura máx.</span><span>${props.altura_maxima_m || '—'} m</span></div>
+    <div class="tt-row"><span class="tt-key">Ocupación</span><span>${props.ocupacion_max != null ? Math.round(props.ocupacion_max * 100) : '—'}%</span></div>
+    <div class="tt-row"><span class="tt-key">Edificabilidad</span><span>${props.edificabilidad_max_m2_m2 || '—'} m2/m2</span></div>
+  `;
+  tooltipEl.style.display = 'block';
+  tooltipEl.style.left = `${point.x + 14}px`;
+  tooltipEl.style.top = `${point.y + 14}px`;
+}
+
+function updateMapSummary(features) {
+  const el = document.getElementById('map-summary');
+  if (!el || !activeMunicipio) return;
+  const stats = { compatible: 0, supera_altura: 0, sin_dato: 0 };
+  for (const f of (features || [])) {
+    const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
+    stats[s] = (stats[s] || 0) + 1;
+  }
+  el.innerHTML = `
+    <div class="sum-title">${activeMunicipio}</div>
+    <div class="sum-row"><span class="sum-key">Subzonas</span><span>${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
+    <div class="sum-row"><span class="sum-key">Edificios 3D</span><span>${(features || []).length}</span></div>
+    <div class="sum-row"><span class="sum-key">Compatibles</span><span>${stats.compatible}</span></div>
+    <div class="sum-row"><span class="sum-key">Superan</span><span>${stats.supera_altura}</span></div>
+    <div class="sum-row"><span class="sum-key">Sin dato</span><span>${stats.sin_dato}</span></div>
+  `;
+  el.style.display = 'block';
+}
+
+function updateSelectedBuilding(feature) {
+  selectedBuildingId = (feature && feature.properties) ? feature.properties.osm_id : null;
+  selectedBuildingsGeojson = {
+    type: 'FeatureCollection',
+    features: feature ? [feature] : []
+  };
+  if (map.getSource('selected-building')) {
+    map.getSource('selected-building').setData(selectedBuildingsGeojson);
+  }
+}
+
+async function fetchOfficialContext({ municipio=null, subzona=null, lon=null, lat=null } = {}) {
+  const params = new URLSearchParams();
+  if (municipio) params.set('municipio', municipio);
+  if (subzona) params.set('subzona', subzona);
+  if (lon != null) params.set('lon', lon);
+  if (lat != null) params.set('lat', lat);
+  const resp = await fetch(`${API}/official/context?${params.toString()}`);
+  return await resp.json();
+}
+
+function renderOfficialContext(ctx) {
+  const cat = (ctx && ctx.catastro) || {};
+  const plan = (ctx && ctx.planeamiento) || {};
+  const aff = (ctx && ctx.afecciones_preliminares) || {};
+  const rows = plan.rows || [];
+  let html = '<div class="info-card">';
+  html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Contexto oficial</div>';
+  // Indicador de calidad de datos
+  const quality = ctx.data_quality;
+  if (quality) {
+    const qColor = quality === 'alta' ? '#2da44e' : (quality === 'media' ? '#d29922' : '#f85149');
+    const qLabel = quality === 'alta' ? 'Alta' : (quality === 'media' ? 'Media' : 'Baja');
+    html += `<div class="info-row"><span class="key">Calidad datos</span><span class="val" style="color:${qColor};font-weight:600">${qLabel}</span></div>`;
+  }
+  html += `<div class="info-row"><span class="key">Ref. catastral</span><span class="val">${cat.refcat || '—'}</span></div>`;
+  html += `<div class="info-row"><span class="key">Dirección</span><span class="val">${cat.direccion || '—'}</span></div>`;
+  if (cat.superficie_terreno_m2) html += `<div class="info-row"><span class="key">Sup. terreno</span><span class="val">${cat.superficie_terreno_m2} m²</span></div>`;
+  if (cat.superficie_construida_m2) html += `<div class="info-row"><span class="key">Sup. construida</span><span class="val">${cat.superficie_construida_m2} m²</span></div>`;
+  if (cat.uso_principal) html += `<div class="info-row"><span class="key">Uso</span><span class="val">${cat.uso_principal}</span></div>`;
+  if (cat.anio_construccion) html += `<div class="info-row"><span class="key">Año construc.</span><span class="val">${cat.anio_construccion}</span></div>`;
+  if (cat.valor_catastral) html += `<div class="info-row"><span class="key">Valor catastral</span><span class="val">${cat.valor_catastral} €</span></div>`;
+  if (cat.coord_consistency) html += `<div class="info-row"><span class="key">Coord. consistentes</span><span class="val">${cat.coord_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
+  if (cat.municipio_consistency) html += `<div class="info-row"><span class="key">Muni. consistente</span><span class="val">${cat.municipio_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
+  html += '</div>';
+  // Planeamiento vigente destacado
+  const siotuga = (ctx && ctx.siotuga) || {};
+  if (rows.length || siotuga.plan_title) {
+    html += '<div class="info-card">';
+    html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Planeamiento vigente</div>';
+    if (siotuga.plan_title) {
+      html += `<div class="info-row"><span class="key">Plan</span><span class="val">${siotuga.plan_title}</span></div>`;
+    }
+    if (siotuga.approval_date) {
+      html += `<div class="info-row"><span class="key">Aprobación</span><span class="val">${siotuga.approval_date}</span></div>`;
+    }
+    rows.slice(0, 3).forEach(r => {
+      const figura = r.FIGURA || r.Figura || r.figura || 'Planeamiento';
+      const estado = r.ESTADO || r.Estado || r.estado || '—';
+      const fecha = r.FECHA_APROBACION || r.Fecha || r.fecha || '';
+      html += `<div class="info-row"><span class="key">${figura}</span><span class="val">${estado}${fecha ? ' (' + fecha + ')' : ''}</span></div>`;
+    });
+    html += '</div>';
+  }
+  // Afecciones preliminares
+  if ((aff.land_cover_labels || []).length || (aff.alerts || []).length) {
+    html += '<div class="info-card">';
+    html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Afecciones preliminares</div>';
+    (aff.land_cover_labels || []).slice(0, 3).forEach(v => {
+      html += `<div class="info-row"><span class="key">Cobertura</span><span class="val">${v}</span></div>`;
+    });
+    (aff.alerts || []).slice(0, 3).forEach(v => {
+      html += `<div class="hint">• ${v}</div>`;
+    });
+    html += aff.disclaimer ? `<div class="hint">${aff.disclaimer}</div>` : '';
+    html += '</div>';
+  }
+  // Enlaces a fuentes oficiales con datos específicos
+  const links = (ctx && ctx.official_links) || [];
+  if (links.length > 0) {
+    html += '<div class="info-card">';
+    html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Verificar en fuente oficial</div>';
+    for (const link of links) {
+      html += `<div class="info-row"><span class="key">${link.name}</span><span class="val"><a href="${link.url}" target="_blank" rel="noopener">${link.label}</a></span></div>`;
+    }
+    html += '</div>';
+  }
+  // Proveniencia
+  const prov = (ctx && ctx.provenance) || {};
+  if (prov.query_timestamp || prov.api_version) {
+    html += '<div class="info-card">';
+    html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Proveniencia</div>';
+    if (prov.query_timestamp) html += `<div class="info-row"><span class="key">Consulta</span><span class="val">${prov.query_timestamp}</span></div>`;
+    if (prov.api_version) html += `<div class="info-row"><span class="key">API</span><span class="val">v${prov.api_version}</span></div>`;
+    html += '</div>';
+  }
+  return html;
+}
+
+function renderMunicipioStats(features) {
+  const stats = { compatible: 0, supera_altura: 0, sin_dato: 0 };
+  for (const f of (features || [])) {
+    const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
+    stats[s] = (stats[s] || 0) + 1;
+  }
+  return `
+    <div class="info-card">
+      <div class="info-row"><span class="key">Compatibles</span><span class="val">${stats.compatible}</span></div>
+      <div class="info-row"><span class="key">Superan altura</span><span class="val">${stats.supera_altura}</span></div>
+      <div class="info-row"><span class="key">Sin dato</span><span class="val">${stats.sin_dato}</span></div>
+    </div>`;
+}
+
+function renderBuildingFilters() {
+  return `
+    <div class="info-card">
+      <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Filtro de edificios</div>
+      <div class="filter-row">
+        <button class="filter-btn ${currentBuildingFilter === 'all' ? 'active' : ''}" onclick="setBuildingFilter('all')">Todos</button>
+        <button class="filter-btn ${currentBuildingFilter === 'compatible' ? 'active' : ''}" onclick="setBuildingFilter('compatible')">Compatibles</button>
+        <button class="filter-btn ${currentBuildingFilter === 'supera_altura' ? 'active' : ''}" onclick="setBuildingFilter('supera_altura')">Superan</button>
+        <button class="filter-btn ${currentBuildingFilter === 'sin_dato' ? 'active' : ''}" onclick="setBuildingFilter('sin_dato')">Sin dato</button>
+      </div>
+    </div>`;
+}
+
+function applyBuildingFilter() {
+  if (!map || !map.getLayer('buildings-3d')) return;
+  if (currentBuildingFilter === 'all') {
+    map.setFilter('buildings-3d', null);
+    if (map.getLayer('buildings-line')) map.setFilter('buildings-line', null);
+    return;
+  }
+  const filter = ['==', ['get', 'cumplimiento_altura'], currentBuildingFilter];
+  map.setFilter('buildings-3d', filter);
+  if (map.getLayer('buildings-line')) map.setFilter('buildings-line', filter);
+}
+
+function setBuildingFilter(nextFilter) {
+  currentBuildingFilter = nextFilter;
+  applyBuildingFilter();
+  const panel = document.getElementById('info-panel');
+  if (panel && window._lastMunicipioPanelHtml) {
+    panel.innerHTML = window._lastMunicipioPanelHtml();
+  }
+}
+
+async function loadBuildings(municipio) {
+  const panel = document.getElementById('info-panel');
+  const loadingMsg = document.createElement('div');
+  loadingMsg.className = 'loading';
+  loadingMsg.id = 'buildings-loading';
+  loadingMsg.textContent = 'Cargando edificios 3D de OpenStreetMap…';
+  if (panel) panel.appendChild(loadingMsg);
+  try {
+    const resp = await fetch(`${API}/proxy/osm-buildings?municipio=${encodeURIComponent(municipio)}&limit=3000`);
+    const geojson = await resp.json();
+    const features = geojson.features || [];
+    const loadingEl = document.getElementById('buildings-loading');
+    if (loadingEl) loadingEl.remove();
+
+    if (features.length === 0) {
+      console.log('No se encontraron edificios en esta zona');
+      return;
+    }
+
+    if (map.getSource('buildings')) {
+      map.getSource('buildings').setData(geojson);
+    } else {
+      map.addSource('buildings', { type: 'geojson', data: geojson });
+      map.addLayer({
+        id: 'buildings-3d',
+        type: 'fill-extrusion',
+        source: 'buildings',
+        paint: {
+          'fill-extrusion-color': [
+            'match', ['get', 'cumplimiento_altura'],
+            'compatible', '#2da44e',
+            'supera_altura', '#f85149',
+            '#58a6ff'
+          ],
+          'fill-extrusion-height': ['get', '_altura_visual'],
+          'fill-extrusion-base': 0,
+          'fill-extrusion-opacity': 0.95
+        }
+      });
+      map.addLayer({
+        id: 'buildings-line',
+        type: 'line',
+        source: 'buildings',
+        paint: { 'line-color': '#1f2328', 'line-width': 0.4 }
+      });
+
+      map.addSource('selected-building', { type: 'geojson', data: selectedBuildingsGeojson });
+      map.addLayer({
+        id: 'selected-building-line',
+        type: 'line',
+        source: 'selected-building',
+        paint: { 'line-color': '#ffd866', 'line-width': 4 }
+      });
+      map.addLayer({
+        id: 'selected-building-fill',
+        type: 'fill',
+        source: 'selected-building',
+        paint: { 'fill-color': '#ffd866', 'fill-opacity': 0.18 }
+      });
+
+      map.on('click', 'buildings-3d', (e) => {
+        if (e.features && e.features.length > 0) {
+          updateSelectedBuilding(e.features[0]);
+          selectBuilding(e.features[0]);
+        }
+      });
+      map.on('mouseenter', 'buildings-3d', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mousemove', 'buildings-3d', (e) => {
+        if (e.features && e.features.length > 0) showBuildingTooltip(e.features[0], e.point);
+      });
+      map.on('mouseleave', 'buildings-3d', () => {
+        map.getCanvas().style.cursor = '';
+        hideBuildingTooltip();
+      });
+    }
+
+    try {
+      const bbox = turf.bbox(geojson);
+      map.fitBounds(bbox, { padding: { top: 60, right: 60, bottom: 60, left: 360 }, duration: 1200, maxZoom: 16 });
+    } catch (e) {
+      console.warn('No se pudo ajustar edificios', e);
+    }
+
+    const panel = document.getElementById('info-panel');
+    if (panel && activeMunicipio) {
+      window._lastMunicipioPanelHtml = () => `<h2>${activeMunicipio}</h2>
+        <div class="info-card">
+          <div class="info-row"><span class="key">Subzonas</span><span class="val">${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
+          <div class="info-row"><span class="key">Edificios 3D</span><span class="val">${features.length}</span></div>
+          <div class="info-row"><span class="key">Vista</span><span class="val">Normativa + edificios</span></div>
+          <div class="info-row"><span class="key">Filtro activo</span><span class="val">${currentBuildingFilter}</span></div>
+        </div>
+        ${renderMunicipioStats(features)}
+        ${renderBuildingFilters()}
+        <div class="hint">Verde = compatible con altura de subzona. Rojo = supera altura. Azul = sin dato normativo. Haz clic en un edificio o subzona.</div>`;
+      panel.innerHTML = window._lastMunicipioPanelHtml();
+    }
+
+    updateMapSummary(features);
+    buildingsLoaded = true;
+    applyBuildingFilter();
+    console.log(`Cargados ${features.length} edificios`);
+  } catch (e) {
+    const loadingEl = document.getElementById('buildings-loading');
+    if (loadingEl) loadingEl.remove();
+    console.error('Error cargando edificios:', e);
+    if (panel) {
+      const errDiv = document.createElement('div');
+      errDiv.className = 'hint';
+      errDiv.textContent = 'No se pudieron cargar edificios 3D (OpenStreetMap no respondió). Inténtalo de nuevo.';
+      panel.appendChild(errDiv);
+    }
+  }
+}
+
+async function selectBuilding(feature) {
+  const props = feature.properties || {};
+  const panel = document.getElementById('info-panel');
+  const h = props.height != null ? `${props.height} m` : '—';
+  const levels = props.levels || '—';
+  const btype = props.building || '—';
+  const subzona = props.subzona || '—';
+  const alturaSubzona = props.altura_maxima_subzona_m != null ? `${props.altura_maxima_subzona_m} m` : '—';
+  const status = props.cumplimiento_altura || 'sin_dato';
+  const statusTxt = status === 'compatible' ? 'Compatible' : status === 'supera_altura' ? 'Supera altura' : 'Sin dato';
+  const statusClass = status === 'compatible' ? 'apto' : status === 'supera_altura' ? 'no_apto' : 'condicionado';
+
+  let html = `<h2>Edificio ${props.name || '#' + (props.osm_id || 'OSM')}</h2>`;
+  html += `<div style="margin-bottom:8px"><span class="badge ${statusClass}">${statusTxt}</span></div>`;
+  html += '<div class="info-card">';
+  html += `<div class="info-row"><span class="key">Tipo</span><span class="val">${btype}</span></div>`;
+  html += `<div class="info-row"><span class="key">Altura estimada</span><span class="val">${h}</span></div>`;
+  html += `<div class="info-row"><span class="key">Plantas</span><span class="val">${levels}</span></div>`;
+  html += `<div class="info-row"><span class="key">Subzona</span><span class="val">${subzona}</span></div>`;
+  html += `<div class="info-row"><span class="key">Altura máx. subzona</span><span class="val">${alturaSubzona}</span></div>`;
+  html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${props.osm_id || '—'}</span></div>`;
+  html += '</div>';
+  // Botón exportar IFC
+  if (props.height && props.height > 0) {
+    html += `<button class="eval-btn" onclick="exportBuildingIFC(${props.height})">Exportar IFC (BIM)</button>`;
+  }
+  html += `<div class="hint">${props.cumplimiento_detalle || props.color_semantica || 'Sin evaluación normativa disponible para este edificio.'}</div>`;
+  panel.innerHTML = html + '<div class="loading">Cargando diagnóstico y contexto oficial…</div>';
+  window._selectedBuildingFeature = feature;
+  try {
+    const center = turf.centerOfMass(feature);
+    const coords = center.geometry.coordinates;
+    // Cargar diagnóstico comparativo y contexto oficial en paralelo
+    const [diagResp, ctx] = await Promise.all([
+      fetch(`${API}/zoning/building-diagnostic?height_m=${props.height || ''}&levels=${props.levels || ''}&subzona=${encodeURIComponent(props.subzona || '')}&municipio=${encodeURIComponent(props.municipio || activeMunicipio || '')}&lon=${coords[0]}&lat=${coords[1]}`).then(r => r.json()).catch(() => null),
+      fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
+    ]);
+    let diagHtml = '';
+    if (diagResp && diagResp.available && diagResp.comparisons && diagResp.comparisons.length > 0) {
+      diagHtml = '<div class="info-card">';
+      diagHtml += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Diagnóstico comparativo</div>';
+      diagHtml += '<table style="width:100%;font-size:12px"><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>';
+      for (const c of diagResp.comparisons) {
+        const cumpleIcon = c.cumple === true ? '✓' : c.cumple === false ? '✗' : '—';
+        const cumpleColor = c.cumple === true ? '#2da44e' : c.cumple === false ? '#f85149' : '#8b949e';
+        diagHtml += `<tr><td>${c.parametro}</td><td>${c.valor_edificio}</td><td>${c.valor_normativo}</td><td style="color:${cumpleColor};font-weight:600">${cumpleIcon}</td></tr>`;
+        if (c.detalle) diagHtml += `<tr><td colspan="4" style="font-size:11px;color:#8b949e;padding-left:12px">${c.detalle}</td></tr>`;
+      }
+      diagHtml += '</tbody></table>';
+      if (diagResp.issues && diagResp.issues.length > 0) {
+        diagHtml += `<div style="margin-top:6px;color:#f85149;font-size:12px">⚠ ${diagResp.issues.join('; ')}</div>`;
+      } else if (diagResp.verdict === 'compatible') {
+        diagHtml += `<div style="margin-top:6px;color:#2da44e;font-size:12px">✓ Todos los parámetros cumplen</div>`;
+      }
+      diagHtml += '</div>';
+    }
+    panel.innerHTML = html + diagHtml + renderOfficialContext(ctx);
+  } catch (e) {
+    panel.innerHTML = html + '<div class="hint">No se pudo cargar el contexto oficial.</div>';
+  }
+}
+
+async function selectSubzone(feature) {
+  const props = feature.properties || {};
+  const panel = document.getElementById('info-panel');
+
+  let html = `<h2>Subzona ${props.subzona || '—'}</h2>`;
+  html += '<div class="info-card">';
+  html += '<div class="hint" style="color:#d29922;margin-bottom:8px">⚠ Subzona piloto: los parámetros normativos son orientativos y la geometría no coincide con las zonas reales del planeamiento. Activa "Zonificación oficial" para ver la clasificación real del suelo.</div>';
+
+  const fields = [
+    ['Municipio', props.municipio],
+    ['Subzona', props.subzona],
+    ['Altura maxima', props.altura_maxima_m != null ? props.altura_maxima_m + ' m' : '—'],
+    ['Retranqueo min', props.retranqueo_min_m != null ? props.retranqueo_min_m + ' m' : '—'],
+    ['Retranq. frente', props.setback_front_m != null ? props.setback_front_m + ' m' : '—'],
+    ['Retranq. lateral', props.setback_side_m != null ? props.setback_side_m + ' m' : '—'],
+    ['Retranq. trasero', props.setback_back_m != null ? props.setback_back_m + ' m' : '—'],
+    ['Frente por defecto', props.front_direction_default || '—'],
+    ['Ocupacion max', props.ocupacion_max != null ? (props.ocupacion_max * 100) + '%' : '—'],
+    ['Edificabilidad', props.edificabilidad_max_m2_m2 != null ? props.edificabilidad_max_m2_m2 + ' m2/m2' : '—'],
+    ['Parcela min', props.parcela_min_m2 != null ? props.parcela_min_m2 + ' m2' : '—'],
+    ['Frente min', props.frente_min_m != null ? props.frente_min_m + ' m' : '—'],
+    ['Fuente', props.fuente || '—'],
+  ];
+
+  fields.forEach(([label, val]) => {
+    if (val !== undefined && val !== null && val !== '—') {
+      html += `<div class="info-row"><span class="key">${label}</span><span class="val">${val}</span></div>`;
+    }
+  });
+  html += '</div>';
+
+  // Boton evaluar viabilidad
+  html += `<button class="eval-btn" onclick="assessSubzone()">Evaluar viabilidad</button>`;
+  // Botón exportar IFC
+  if (props.altura_maxima_m && props.altura_maxima_m > 0) {
+    html += `<button class="eval-btn" onclick="exportSubzoneIFC()">Exportar IFC (BIM)</button>`;
+  }
+  html += '<div id="assess-result"></div>';
+
+  panel.innerHTML = html + '<div class="loading">Cargando contexto oficial…</div>';
+  window._selectedFeature = feature;
+  try {
+    const center = turf.centerOfMass(feature);
+    const coords = center.geometry.coordinates;
+    const ctx = await fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] });
+    panel.innerHTML = html + renderOfficialContext(ctx);
+  } catch (e) {
+    panel.innerHTML = html + '<div class="hint">No se pudo cargar el contexto oficial.</div>';
+  }
+}
+
+async function exportBuildingIFC(heightM) {
+  const feature = window._selectedBuildingFeature;
+  if (!feature || !feature.geometry) {
+    alert('Selecciona un edificio primero');
+    return;
+  }
+  const body = {
+    geometry: feature.geometry,
+    altura_maxima_m: heightM,
+    retranqueo_min_m: 0.0,
+    format: 'ifc',
+    crs: 'EPSG:4326',
+  };
+  try {
+    const resp = await fetch(`${API}/zoning/volume-export?download=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      alert('Error exportando IFC: ' + txt);
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'building.ifc';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Error exportando IFC: ' + e.message);
+  }
+}
+
+async function exportSubzoneIFC() {
+  const feature = window._selectedFeature;
+  if (!feature || !feature.geometry) {
     alert('Selecciona una subzona primero');
     return;
   }
+  const props = feature.properties || {};
+  const body = {
+    geometry: feature.geometry,
+    altura_maxima_m: props.altura_maxima_m || 12.0,
+    retranqueo_min_m: props.retranqueo_min_m || 0.0,
+    municipio: props.municipio || null,
+    subzona: props.subzona || null,
+    setback_front_m: props.setback_front_m || null,
+    setback_side_m: props.setback_side_m || null,
+    setback_back_m: props.setback_back_m || null,
+    front_direction: props.front_direction_default || null,
+    format: 'ifc',
+    crs: 'EPSG:4326',
+  };
+  try {
+    const resp = await fetch(`${API}/zoning/volume-export?download=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      alert('Error exportando IFC: ' + txt);
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `subzona_${props.subzona || 'building'}.ifc`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Error exportando IFC: ' + e.message);
+  }
+}
 
-  const altura = parseFloat(document.getElementById('assess-altura').value);
-  const retranqueo = parseFloat(document.getElementById('assess-retranqueo').value);
-  const props = selectedFeature.properties || {};
+async function assessSubzone() {
+  const feature = window._selectedFeature;
+  if (!feature) return;
+  const props = feature.properties || {};
+  const resultDiv = document.getElementById('assess-result');
+  resultDiv.innerHTML = '<div class="loading">Evaluando...</div>';
 
   const body = {
-    geometry: selectedFeature.geometry,
-    altura_maxima_m: isNaN(altura) ? null : altura,
-    retranqueo_min_m: isNaN(retranqueo) ? null : retranqueo,
+    geometry: feature.geometry,
+    altura_maxima_m: props.altura_maxima_m || null,
+    retranqueo_min_m: props.retranqueo_min_m || null,
     municipio: props.municipio || null,
     subzona: props.subzona || null,
     setback_front_m: props.setback_front_m || null,
@@ -310,356 +1154,35 @@ async function assessParcel() {
     crs: 'EPSG:4326'
   };
 
-  const resultDiv = document.getElementById('assess-result');
-  resultDiv.style.display = 'block';
-  resultDiv.innerHTML = '<span class="loading">Evaluando...</span>';
-
   try {
-    const resp = await fetch(`${API_BASE}/zoning/assess`, {
+    const resp = await fetch(`${API}/zoning/assess`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     const data = await resp.json();
 
-    let badgeClass = data.viability === 'apto' ? 'apto' :
-                     data.viability === 'condicionado' ? 'condicionado' : 'no_apto';
-    let badgeText = data.viability === 'apto' ? 'APTO' :
-                    data.viability === 'condicionado' ? 'CONDICIONADO' : 'NO APTO';
+    const badgeClass = data.viability === 'apto' ? 'apto' :
+                       data.viability === 'condicionado' ? 'condicionado' : 'no_apto';
+    const badgeText = data.viability === 'apto' ? 'APTO' :
+                      data.viability === 'condicionado' ? 'CONDICIONADO' : 'NO APTO';
 
-    let html = `<div class="viability">Viabilidad: <span class="badge ${badgeClass}">${badgeText}</span></div>`;
+    let html = `<div style="margin-top:10px"><span class="badge ${badgeClass}">${badgeText}</span></div>`;
     if (data.reasons && data.reasons.length > 0) {
-      html += '<ul class="reasons">';
-      data.reasons.forEach(r => { html += `<li>${r}</li>`; });
-      html += '</ul>';
+      html += '<div style="margin-top:8px;font-size:12px;color:#8b949e;">';
+      data.reasons.forEach(r => { html += `<div style="margin-top:4px;">• ${r}</div>`; });
+      html += '</div>';
     }
     resultDiv.innerHTML = html;
   } catch (e) {
-    resultDiv.innerHTML = `<span class="loading">Error: ${e.message}</span>`;
+    resultDiv.innerHTML = `<div class="loading">Error: ${e.message}</div>`;
   }
 }
 
-// Init
 window.addEventListener('load', () => {
   initMap();
   loadMunicipios();
-  // Mostrar panel de dibujo siempre (no requiere subzona seleccionada)
-  document.getElementById('draw-panel').style.display = 'block';
 });
-
-// ------------------------------
-// Dibujo de parcelas (Fase 4)
-// ------------------------------
-let drawMode = false;
-let drawPoints = [];
-let drawMarkers = [];
-let drawnParcel = null;
-let drawnResultLayer = null;
-
-function toggleDrawMode() {
-  drawMode = !drawMode;
-  const btn = document.getElementById('btn-draw');
-  const btnCancel = document.getElementById('btn-draw-cancel');
-  const btnFinish = document.getElementById('btn-draw-finish');
-  const hint = document.getElementById('draw-hint');
-
-  if (drawMode) {
-    btn.classList.add('draw-active');
-    btn.textContent = 'Dibujando...';
-    btnCancel.style.display = 'block';
-    btnFinish.style.display = drawPoints.length >= 3 ? 'block' : 'none';
-    hint.classList.add('visible');
-    map.getCanvas().style.cursor = 'crosshair';
-    map.on('click', onDrawClick);
-    map.on('dblclick', onDrawDblClick);
-  } else {
-    btn.classList.remove('draw-active');
-    btn.textContent = 'Dibujar parcela';
-    btnCancel.style.display = 'none';
-    btnFinish.style.display = 'none';
-    hint.classList.remove('visible');
-    map.getCanvas().style.cursor = '';
-    map.off('click', onDrawClick);
-    map.off('dblclick', onDrawDblClick);
-  }
-}
-
-function onDrawClick(e) {
-  if (!drawMode) return;
-  const { lng, lat } = e.lngLat;
-  drawPoints.push([lng, lat]);
-
-  // Anadir marcador visual del vertice
-  const marker = new maplibregl.Marker({ color: '#e94560', scale: 0.6 })
-    .setLngLat([lng, lat])
-    .addTo(map);
-  drawMarkers.push(marker);
-
-  // Mostrar boton terminar si hay >= 3 puntos
-  if (drawPoints.length >= 3) {
-    document.getElementById('btn-draw-finish').style.display = 'block';
-  }
-
-  // Dibujar linea temporal
-  updateDrawPreview();
-}
-
-function onDrawDblClick(e) {
-  e.preventDefault();
-  if (drawPoints.length >= 3) {
-    finishDraw();
-  }
-  return false;
-}
-
-function updateDrawPreview() {
-  if (drawPoints.length < 2) return;
-
-  // Linea temporal entre vertices
-  const lineData = {
-    type: 'Feature',
-    geometry: {
-      type: 'LineString',
-      coordinates: drawPoints
-    }
-  };
-
-  if (map.getSource('draw-preview')) {
-    map.getSource('draw-preview').setData(lineData);
-  } else {
-    map.addSource('draw-preview', { type: 'geojson', data: lineData });
-    map.addLayer({
-      id: 'draw-preview-line',
-      type: 'line',
-      source: 'draw-preview',
-      paint: {
-        'line-color': '#e94560',
-        'line-width': 2,
-        'line-dasharray': [4, 2]
-      }
-    });
-  }
-}
-
-function finishDraw() {
-  if (drawPoints.length < 3) {
-    alert('Necesitas al menos 3 vertices para formar un poligono');
-    return;
-  }
-
-  // Cerrar el poligono (repetir primer punto)
-  const coords = [...drawPoints, drawPoints[0]];
-  drawnParcel = {
-    type: 'Polygon',
-    coordinates: [coords]
-  };
-
-  // Limpiar preview
-  if (map.getSource('draw-preview')) {
-    map.removeLayer('draw-preview-line');
-    map.removeSource('draw-preview');
-  }
-
-  // Limpiar marcadores
-  drawMarkers.forEach(m => m.remove());
-  drawMarkers = [];
-
-  // Anadir capa de parcela dibujada
-  const parcelData = {
-    type: 'Feature',
-    properties: { source: 'drawn' },
-    geometry: drawnParcel
-  };
-
-  if (map.getSource('drawn-parcel')) {
-    map.getSource('drawn-parcel').setData(parcelData);
-  } else {
-    map.addSource('drawn-parcel', { type: 'geojson', data: parcelData });
-    map.addLayer({
-      id: 'drawn-parcel-fill',
-      type: 'fill',
-      source: 'drawn-parcel',
-      paint: {
-        'fill-color': '#2ecc71',
-        'fill-opacity': 0.2
-      }
-    });
-    map.addLayer({
-      id: 'drawn-parcel-line',
-      type: 'line',
-      source: 'drawn-parcel',
-      paint: {
-        'line-color': '#2ecc71',
-        'line-width': 2
-      }
-    });
-  }
-
-  // Salir del modo dibujo
-  drawMode = false;
-  drawPoints = [];
-  toggleDrawModeUI(false);
-  document.getElementById('btn-draw-clear').style.display = 'block';
-
-  // Auto-evaluar la parcela dibujada
-  assessDrawnParcel();
-}
-
-function toggleDrawModeUI(active) {
-  const btn = document.getElementById('btn-draw');
-  const btnCancel = document.getElementById('btn-draw-cancel');
-  const btnFinish = document.getElementById('btn-draw-finish');
-  const hint = document.getElementById('draw-hint');
-
-  if (active) {
-    btn.classList.add('draw-active');
-    btn.textContent = 'Dibujando...';
-    btnCancel.style.display = 'block';
-    hint.classList.add('visible');
-    map.getCanvas().style.cursor = 'crosshair';
-  } else {
-    btn.classList.remove('draw-active');
-    btn.textContent = 'Dibujar parcela';
-    btnCancel.style.display = 'none';
-    btnFinish.style.display = 'none';
-    hint.classList.remove('visible');
-    map.getCanvas().style.cursor = '';
-  }
-}
-
-function cancelDraw() {
-  drawMode = false;
-  drawPoints = [];
-  drawMarkers.forEach(m => m.remove());
-  drawMarkers = [];
-
-  if (map.getSource('draw-preview')) {
-    map.removeLayer('draw-preview-line');
-    map.removeSource('draw-preview');
-  }
-
-  toggleDrawModeUI(false);
-}
-
-function clearDrawnParcel() {
-  if (map.getSource('drawn-parcel')) {
-    map.removeLayer('drawn-parcel-fill');
-    map.removeLayer('drawn-parcel-line');
-    map.removeSource('drawn-parcel');
-  }
-  if (drawnResultLayer && map.getSource('drawn-result')) {
-    map.removeLayer('drawn-result-fill');
-    map.removeLayer('drawn-result-line');
-    map.removeSource('drawn-result');
-  }
-  drawnParcel = null;
-  drawnResultLayer = null;
-  document.getElementById('btn-draw-clear').style.display = 'none';
-  document.getElementById('draw-assess-result').innerHTML = '';
-}
-
-async function assessDrawnParcel() {
-  if (!drawnParcel) {
-    alert('Dibuja una parcela primero');
-    return;
-  }
-
-  // Buscar subzona espacial que contiene el centroide de la parcela
-  let municipio = null;
-  let subzona = null;
-  let planProps = {};
-
-  try {
-    const centroid = turf.centroid({ type: 'Feature', geometry: drawnParcel });
-    const [lon, lat] = centroid.geometry.coordinates;
-    const lookupResp = await fetch(`${API_BASE}/planeamiento/subzonas/lookup?lon=${lon}&lat=${lat}`);
-    const lookupData = await lookupResp.json();
-    if (lookupData.found && lookupData.subzona) {
-      municipio = lookupData.subzona.municipio;
-      subzona = lookupData.subzona.subzona;
-      planProps = lookupData.subzona;
-    }
-  } catch (e) {
-    console.warn('No se pudo buscar subzona para la parcela dibujada', e);
-  }
-
-  const body = {
-    geometry: drawnParcel,
-    altura_maxima_m: planProps.altura_maxima_m || null,
-    retranqueo_min_m: planProps.retranqueo_min_m || null,
-    municipio: municipio,
-    subzona: subzona,
-    setback_front_m: planProps.setback_front_m || null,
-    setback_side_m: planProps.setback_side_m || null,
-    setback_back_m: planProps.setback_back_m || null,
-    front_direction: planProps.front_direction_default || null,
-    crs: 'EPSG:4326'
-  };
-
-  const resultDiv = document.getElementById('draw-assess-result');
-  resultDiv.innerHTML = '<span class="loading">Evaluando parcela dibujada...</span>';
-
-  try {
-    const resp = await fetch(`${API_BASE}/zoning/assess`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = await resp.json();
-
-    let badgeClass = data.viability === 'apto' ? 'apto' :
-                     data.viability === 'condicionado' ? 'condicionado' : 'no_apto';
-    let badgeText = data.viability === 'apto' ? 'APTO' :
-                    data.viability === 'condicionado' ? 'CONDICIONADO' : 'NO APTO';
-
-    let html = `<div class="viability">Viabilidad: <span class="badge ${badgeClass}">${badgeText}</span></div>`;
-    if (municipio) {
-      html += `<div class="hint">Subzona detectada: ${municipio} / ${subzona || '(sin subzona)'}</div>`;
-    } else {
-      html += `<div class="hint">Sin subzona espacial detectada (evaluacion con parametros por defecto)</div>`;
-    }
-    if (data.reasons && data.reasons.length > 0) {
-      html += '<ul class="reasons">';
-      data.reasons.forEach(r => { html += `<li>${r}</li>`; });
-      html += '</ul>';
-    }
-    resultDiv.innerHTML = html;
-
-    // Si hay feature (envolvente), mostrarla en el mapa
-    if (data.feature && data.feature.geometry) {
-      showEnvelopeOnMap(data.feature);
-    }
-  } catch (e) {
-    resultDiv.innerHTML = `<span class="loading">Error: ${e.message}</span>`;
-  }
-}
-
-function showEnvelopeOnMap(feature) {
-  if (map.getSource('drawn-result')) {
-    map.getSource('drawn-result').setData(feature);
-  } else {
-    map.addSource('drawn-result', { type: 'geojson', data: feature });
-    map.addLayer({
-      id: 'drawn-result-fill',
-      type: 'fill',
-      source: 'drawn-result',
-      paint: {
-        'fill-color': '#e94560',
-        'fill-opacity': 0.4
-      }
-    });
-    map.addLayer({
-      id: 'drawn-result-line',
-      type: 'line',
-      source: 'drawn-result',
-      paint: {
-        'line-color': '#e94560',
-        'line-width': 2
-      }
-    });
-  }
-  drawnResultLayer = true;
-}
 </script>
 </body>
 </html>

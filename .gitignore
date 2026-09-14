@@ -58,3 +58,12 @@ reports/
 web/examples/threejs-viewer/index_broken.html
 web/examples/threejs-viewer/index_recovery.html
 
+# Secrets y API keys
+docs/apikey*
+*.secret
+nul
+.pytest_full*.txt
+
+# Visual check screenshots
+docs/*.visual-check.*
+

@@ -10,6 +10,23 @@ import json
 import os
 from functools import lru_cache
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+_OVERPASS_CACHE: dict[tuple[str, int], dict[str, Any]] = {}
+_OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+] 
+
+MUNICIPIO_CENTERS = {
+    "vigo": {"center": [-8.722, 42.232], "delta": 0.02},
+    "a coruna": {"center": [-8.400, 43.370], "delta": 0.02},
+    "coruna": {"center": [-8.400, 43.370], "delta": 0.02},
+    "santiago": {"center": [-8.540, 42.880], "delta": 0.02},
+    "santiago de compostela": {"center": [-8.540, 42.880], "delta": 0.02},
+}
 
 # Ruta del dataset piloto
 _DATOS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos")
@@ -85,6 +102,178 @@ def find_subzone_for_point(lon: float, lat: float) -> dict[str, Any] | None:
             if min(xs) <= lon <= max(xs) and min(ys) <= lat <= max(ys):
                 return feat.get("properties")
     return None
+
+
+def find_subzone_by_name(municipio: str, subzona: str) -> dict[str, Any] | None:
+    """Busca una subzona por municipio y nombre de subzona."""
+    data = _load_subzones_raw()
+    muni_norm = _normalize(municipio)
+    sz_norm = _normalize(subzona)
+    for feat in data.get("features", []):
+        props = feat.get("properties", {})
+        if _normalize(props.get("municipio") or "") == muni_norm and _normalize(props.get("subzona") or "") == sz_norm:
+            return props
+    return None
+
+
+def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800) -> dict[str, Any]:
+    """Devuelve edificios OSM en GeoJSON listos para extrusión 3D.
+
+    Usa Overpass desde backend para evitar CORS del navegador.
+    Si no hay municipio o no existe centro conocido, devuelve FeatureCollection vacía.
+    """
+    muni_key = _normalize(municipio or "")
+    cfg = MUNICIPIO_CENTERS.get(muni_key)
+    if not cfg:
+        return {"type": "FeatureCollection", "features": []}
+
+    cache_key = (muni_key, int(limit))
+    cached = _OVERPASS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    lon, lat = cfg["center"]
+    delta = float(cfg.get("delta") or 0.01)
+    raw = None
+    last_error = None
+    for factor in (0.35, 0.22, 0.15):
+        qd = delta * factor
+        south, west, north, east = lat - qd, lon - qd, lat + qd, lon + qd
+        query = (
+            "[out:json][timeout:15];"
+            f"way['building']({south},{west},{north},{east});"
+            "out geom;"
+        )
+        for overpass_url in _OVERPASS_URLS:
+            req = Request(
+                overpass_url,
+                data=urlencode({"data": query}).encode("utf-8"),
+                headers={"User-Agent": "NormativaGalicia/1.0", "Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            try:
+                with urlopen(req, timeout=15) as resp:
+                    raw = json.loads(resp.read().decode("utf-8", errors="replace"))
+                break
+            except (HTTPError, URLError, TimeoutError) as e:
+                last_error = e
+                continue
+        if raw is not None:
+            break
+    if raw is None:
+        raise last_error or RuntimeError("No se pudieron cargar edificios OSM")
+
+    features: list[dict[str, Any]] = []
+    for el in (raw.get("elements") or []):
+        if el.get("type") != "way":
+            continue
+        geom = el.get("geometry") or []
+        if len(geom) < 4:
+            continue
+        coords = [[float(p["lon"]), float(p["lat"])] for p in geom if "lon" in p and "lat" in p]
+        if len(coords) < 4:
+            continue
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+        tags = el.get("tags") or {}
+        height = _estimate_building_height(tags)
+        subzone_props = _find_subzone_for_ring(coords, municipio)
+        compliance = _classify_building_compliance(height, subzone_props)
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "osm_id": el.get("id"),
+                "name": tags.get("name") or "",
+                "building": tags.get("building") or "yes",
+                "height": height,
+                "levels": tags.get("building:levels") or None,
+                "_altura_visual": round(float(height) * 1.35, 2),
+                "municipio": (subzone_props or {}).get("municipio") or municipio,
+                "subzona": (subzone_props or {}).get("subzona"),
+                "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
+                "cumplimiento_altura": compliance["status"],
+                "cumplimiento_detalle": compliance["detail"],
+                "color_semantica": compliance["color_semantics"],
+            },
+            "geometry": {"type": "Polygon", "coordinates": [coords]},
+        })
+        if len(features) >= max(1, int(limit)):
+            break
+    result = {"type": "FeatureCollection", "features": features}
+    _OVERPASS_CACHE[cache_key] = result
+    return result
+
+
+def _find_subzone_for_ring(coords: list[list[float]], municipio: str | None) -> dict[str, Any] | None:
+    try:
+        from shapely.geometry import Polygon
+        poly = Polygon(coords)
+        pt = poly.representative_point()
+        return find_subzone_for_point(float(pt.x), float(pt.y))
+    except Exception:
+        try:
+            xs = [c[0] for c in coords]
+            ys = [c[1] for c in coords]
+            lon = (min(xs) + max(xs)) / 2.0
+            lat = (min(ys) + max(ys)) / 2.0
+            return find_subzone_for_point(float(lon), float(lat))
+        except Exception:
+            return None
+
+
+def _classify_building_compliance(height: float, subzone_props: dict[str, Any] | None) -> dict[str, str]:
+    limit = None if not subzone_props else subzone_props.get("altura_maxima_m")
+    if limit is None:
+        return {
+            "status": "sin_dato",
+            "detail": "Sin subzona normativa asociada o sin altura máxima conocida",
+            "color_semantics": "gris = sin dato normativo",
+        }
+    try:
+        limit_f = float(limit)
+        h = float(height)
+    except Exception:
+        return {
+            "status": "sin_dato",
+            "detail": "No se pudo comparar la altura del edificio con la norma",
+            "color_semantics": "gris = sin dato normativo",
+        }
+    if h <= limit_f:
+        margin = round(limit_f - h, 2)
+        return {
+            "status": "compatible",
+            "detail": f"Altura estimada dentro del máximo de subzona ({h} m <= {limit_f} m, margen {margin} m)",
+            "color_semantics": "verde/azul = compatible con la altura máxima",
+        }
+    excess = round(h - limit_f, 2)
+    return {
+        "status": "supera_altura",
+        "detail": f"Altura estimada por encima del máximo de subzona ({h} m > {limit_f} m, exceso {excess} m)",
+        "color_semantics": "rojo/naranja = supera la altura máxima",
+    }
+
+
+def _estimate_building_height(tags: dict[str, Any]) -> float:
+    raw_h = tags.get("height")
+    if isinstance(raw_h, str):
+        try:
+            return max(2.5, float(raw_h.lower().replace("m", "").strip()))
+        except Exception:
+            pass
+    raw_levels = tags.get("building:levels")
+    if isinstance(raw_levels, str):
+        try:
+            return max(3.0, float(raw_levels.strip()) * 3.2)
+        except Exception:
+            pass
+    btype = str(tags.get("building") or "").strip().lower()
+    if btype in {"apartments", "office", "hospital", "hotel"}:
+        return 18.0
+    if btype in {"commercial", "retail", "school", "church"}:
+        return 12.0
+    if btype in {"industrial", "warehouse"}:
+        return 8.0
+    return 9.0
 
 
 def _normalize(s: str) -> str:

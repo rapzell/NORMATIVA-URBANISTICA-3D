@@ -68,6 +68,63 @@ def test_cityjson_multipolygon_exports_multiple_solids():
     assert all(g['type'] == 'Solid' for g in geoms)
 
 
+def test_ifc_polygon_exports_step_file():
+    client = _client()
+    payload = {
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0,0],[10,0],[10,10],[0,10],[0,0]]]
+        },
+        "altura_maxima_m": 12.0,
+        "retranqueo_min_m": 0.0,
+        "format": "ifc"
+    }
+    r = client.post('/zoning/volume-export', json=payload)
+    assert r.status_code == 200, r.text
+    content = r.text
+    assert 'ISO-10303-21' in content
+    assert 'IFC4' in content
+    assert 'IFCBUILDINGELEMENTPROXY' in content
+    assert 'IFCEXTRUDEDAREASOLID' in content
+    assert 'IFCPROJECT' in content
+    assert 'IFCBUILDING' in content
+
+
+def test_ifc_download_returns_attachment():
+    client = _client()
+    payload = {
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0,0],[5,0],[5,5],[0,5],[0,0]]]
+        },
+        "altura_maxima_m": 8.0,
+        "retranqueo_min_m": 0.0,
+        "format": "ifc"
+    }
+    r = client.post('/zoning/volume-export', json=payload, params={'download': 'true'})
+    assert r.status_code == 200, r.text
+    assert 'attachment' in r.headers.get('content-disposition', '')
+    assert 'building.ifc' in r.headers.get('content-disposition', '')
+    assert 'ISO-10303-21' in r.text
+
+
+def test_ifc_multipolygon_exports_via_envelope():
+    """MultiPolygon se reduce a una envolvente Polygon única, que IFC soporta."""
+    client = _client()
+    payload = {
+        "geometry": {
+            "type": "MultiPolygon",
+            "coordinates": [[[[0,0],[2,0],[2,2],[0,2],[0,0]]]]
+        },
+        "altura_maxima_m": 5.0,
+        "retranqueo_min_m": 0.0,
+        "format": "ifc"
+    }
+    r = client.post('/zoning/volume-export', json=payload)
+    assert r.status_code == 200, r.text
+    assert 'ISO-10303-21' in r.text
+
+
 essages = (
     "GLTF should reject polygons with holes"
 )

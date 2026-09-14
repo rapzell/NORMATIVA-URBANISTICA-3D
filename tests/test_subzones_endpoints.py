@@ -1,6 +1,8 @@
 """Tests del endpoint de subzonas espaciales (Fase 2 GeoLibre)."""
 from __future__ import annotations
 
+import io
+import json
 import os
 import sys
 
@@ -29,7 +31,9 @@ def test_subzonas_filtra_por_municipio():
     assert resp.status_code == 200
     data = resp.json()
     assert data["type"] == "FeatureCollection"
-    assert len(data["features"]) == 2
+    assert len(data["features"]) >= 3
+    subzonas = {feat["properties"]["subzona"] for feat in data["features"]}
+    assert {"R-1", "R-2", "R-3"}.issubset(subzonas)
     for feat in data["features"]:
         assert feat["properties"]["municipio"] == "Vigo"
 
@@ -39,8 +43,11 @@ def test_subzonas_filtra_por_municipio_sin_acentos():
     resp = client.get("/planeamiento/subzonas", params={"municipio": "A Coruña"})
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data["features"]) == 1
-    assert data["features"][0]["properties"]["municipio"] == "A Coruna"
+    assert len(data["features"]) >= 2
+    subzonas = {feat["properties"]["subzona"] for feat in data["features"]}
+    assert {"UC-1", "UC-2"}.issubset(subzonas)
+    for feat in data["features"]:
+        assert feat["properties"]["municipio"] == "A Coruna"
 
 
 def test_subzonas_municipios_lista():
@@ -81,3 +88,44 @@ def test_subzonas_tiene_propiedades_normativas():
         assert "retranqueo_min_m" in props
         assert "subzona" in props
         assert "fuente" in props
+
+
+def test_proxy_osm_buildings_returns_geojson(monkeypatch):
+    class _FakeResp:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+        def read(self):
+            payload = {
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 123,
+                        "tags": {"building": "residential", "building:levels": "3"},
+                        "geometry": [
+                            {"lon": -8.72, "lat": 42.23},
+                            {"lon": -8.719, "lat": 42.23},
+                            {"lon": -8.719, "lat": 42.231},
+                            {"lon": -8.72, "lat": 42.231},
+                        ],
+                    }
+                ]
+            }
+            return json.dumps(payload).encode("utf-8")
+
+    import src.subzones_service as _ss
+    monkeypatch.setattr(_ss, "urlopen", lambda req, timeout=25: _FakeResp(), raising=True)
+
+    resp = client.get("/proxy/osm-buildings", params={"municipio": "Vigo", "limit": 10})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "FeatureCollection"
+    assert len(data["features"]) == 1
+    props = data["features"][0]["properties"]
+    assert props["building"] == "residential"
+    assert props["height"] > 0
+    assert props["_altura_visual"] > props["height"]
+    assert "cumplimiento_altura" in props
+    assert "cumplimiento_detalle" in props
+    assert "color_semantica" in props

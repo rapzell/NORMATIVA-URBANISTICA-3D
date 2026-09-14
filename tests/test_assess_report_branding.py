@@ -93,7 +93,7 @@ def test_assess_report_includes_cartographic_composition():
 
 
 def test_assess_report_without_geometry_omits_cartographic():
-    """El informe sin geometria no debe incluir la composicion cartografica."""
+    """El informe sin geometria no debe incluir el contenido cartografico."""
     body = {
         "geometry": None,
         "altura_maxima_m": 10.0,
@@ -103,5 +103,364 @@ def test_assess_report_without_geometry_omits_cartographic():
     r = client.get("/zoning/assess-report", params={"body_b64": b64})
     assert r.status_code == 200, r.text
     html = r.text
-    # Sin geometria, no hay seccion cartografica
-    assert "Composición cartográfica" not in html
+    # Sin geometria, no hay contenido cartografico (SVG minimap)
+    assert "Vista esquemática de la parcela" not in html
+    assert "Sin geometría para mostrar" in html
+
+
+def test_assess_report_includes_official_context(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {
+        'catastro': {
+            'available': True,
+            'refcat': '1234567AB1234C',
+            'direccion': 'RUA DEMO 1 VIGO',
+            'query_lon': -8.72,
+            'query_lat': 42.23,
+        },
+        'planeamiento': {
+            'available': True,
+            'count': 1,
+            'rows': [{'CONCELLO': 'Vigo', 'FIGURA': 'PXOM', 'ESTADO': 'Vixente'}],
+        },
+        'siotuga': {
+            'available': True,
+            'note': 'Contexto apoyado en inventario municipal y servicios WMS/WFS/proxy ya integrados',
+        },
+        'afecciones_preliminares': {
+            'available': True,
+            'land_cover_labels': ['agua'],
+            'alerts': ['Entorno potencialmente sensible por presencia de agua'],
+            'disclaimer': 'Prechequeo preliminar basado en SIOSE; no sustituye verificación sectorial oficial.',
+        },
+    }, raising=True)
+    body = {
+        'geometry': None,
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Datos oficiales y contexto' in html
+    assert '1234567AB1234C' in html
+    assert 'RUA DEMO 1 VIGO' in html
+    assert 'PXOM' in html
+    assert 'Afecciones preliminares' in html
+    assert 'agua' in html
+
+
+def test_assess_report_includes_surface_table(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {}, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'ocupacion_max': 0.5,
+        'setback_front_m': 3.0,
+        'setback_side_m': 3.0,
+        'setback_back_m': 3.0,
+        'front_direction': 'north',
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Cuadro de superficies' in html
+    assert 'Superficie de parcela' in html
+    assert 'Superficie libre estimada' in html
+    assert 'Envolvente edificable' in html
+
+
+def test_assess_report_includes_economic_estimate(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {}, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'ocupacion_max': 0.5,
+        'edificabilidad_max_m2_m2': 1.25,
+        'setback_front_m': 3.0,
+        'setback_side_m': 3.0,
+        'setback_back_m': 3.0,
+        'front_direction': 'north',
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Estimación económica preliminar' in html
+    assert 'Superficie edificable total estimada' in html
+    assert 'Viviendas potenciales' in html
+
+
+def test_assess_report_includes_shadow_analysis(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {}, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[-8.72, 42.23], [-8.71, 42.23], [-8.71, 42.24], [-8.72, 42.24], [-8.72, 42.23]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'ocupacion_max': 0.5,
+        'edificabilidad_max_m2_m2': 1.25,
+        'setback_front_m': 3.0,
+        'setback_side_m': 3.0,
+        'setback_back_m': 3.0,
+        'front_direction': 'north',
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Análisis de sombras' in html
+    assert 'Elevación solar' in html
+    assert 'Azimut solar' in html
+    assert 'Longitud sombra' in html
+
+
+def test_assess_report_includes_diagnostic_comparison(monkeypatch):
+    """El informe debe incluir el diagnóstico comparativo edificio vs subzona."""
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {}, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[-8.72, 42.23], [-8.71, 42.23], [-8.71, 42.24], [-8.72, 42.24], [-8.72, 42.23]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'height_m': 9.0,
+        'levels': 3,
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'ocupacion_max': 0.5,
+        'edificabilidad_max_m2_m2': 1.25,
+        'setback_front_m': 3.0,
+        'setback_side_m': 3.0,
+        'setback_back_m': 3.0,
+        'front_direction': 'north',
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Diagnóstico comparativo' in html
+    assert 'Edificio' in html
+    assert 'Norma' in html
+    assert 'Estado' in html
+
+
+def test_assess_report_includes_official_source_links(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {
+        'catastro': {'available': True, 'refcat': '1234567AB1234C', 'direccion': 'RUA DEMO 1 VIGO', 'query_lon': -8.72, 'query_lat': 42.23},
+        'planeamiento': {'available': True, 'count': 1, 'rows': [{'CONCELLO': 'Vigo', 'FIGURA': 'PXOM', 'ESTADO': 'Aprobado'}]},
+        'siotuga': {'available': True, 'note': 'Contexto SIOTUGA'},
+        'afecciones_preliminares': {'available': True, 'alerts': ['Revisar zona húmeda'], 'land_cover_labels': ['Agua'], 'disclaimer': 'Preliminar'},
+    }, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[-8.72, 42.23], [-8.71, 42.23], [-8.71, 42.24], [-8.72, 42.24], [-8.72, 42.23]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Fuentes oficiales consultadas' in html
+    assert 'sedecatastro.gob.es' in html
+    assert 'OVCListaBienes' in html
+    assert 'siotuga.xunta.gal' in html
+    assert 'servicios.idee.es' in html
+    assert 'GetFeatureInfo' in html or 'GetCapabilities' in html
+    assert 'Ver parcela' in html or 'Buscador de inmuebles' in html
+    assert 'target="_blank"' in html
+
+
+def test_assess_report_has_professional_template(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {}, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'class="cover"' in html
+    assert 'Informe de viabilidad urbanística preliminar' in html
+    assert 'class="toc"' in html
+    assert 'Índice' in html
+    assert 'section-num' in html
+    assert 'sec-1' in html
+    assert 'sec-11' in html
+    assert 'Resumen ejecutivo' in html
+    assert 'Parámetros efectivos' in html
+
+
+def test_assess_report_includes_provenance(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {
+        'catastro': {'available': True, 'refcat': '1234567AB1234C', 'direccion': 'RUA DEMO 1 VIGO', 'query_lon': -8.72, 'query_lat': 42.23},
+        'planeamiento': {'available': True, 'count': 1, 'rows': [{'CONCELLO': 'Vigo', 'FIGURA': 'PXOM', 'ESTADO': 'Aprobado'}]},
+        'siotuga': {'available': True, 'note': 'Contexto SIOTUGA'},
+        'afecciones_preliminares': {'available': True, 'alerts': ['Revisar zona húmeda'], 'land_cover_labels': ['Agua'], 'disclaimer': 'Preliminar'},
+        'provenance': {
+            'query_timestamp': '2025-01-15T12:00:00+00:00',
+            'api_version': '0.2.1',
+            'sources': [
+                {'name': 'Catastro (OVC)', 'url': 'https://ovc.catastro.meh.es/', 'type': 'coordenadas/referencia'},
+                {'name': 'SIOTUGA', 'url': 'https://siotuga.xunta.gal/', 'type': 'planeamiento territorial'},
+            ],
+        },
+    }, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[-8.72, 42.23], [-8.71, 42.23], [-8.71, 42.24], [-8.72, 42.24], [-8.72, 42.23]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Proveniencia de los datos' in html
+    assert 'Fecha de consulta' in html
+    assert 'Versión de la API' in html
+    assert 'Catastro (OVC)' in html
+    assert 'SIOTUGA' in html
+
+
+def test_assess_report_includes_enhanced_catastro(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {
+        'catastro': {
+            'available': True,
+            'refcat': '1234567AB1234C',
+            'direccion': 'RUA DEMO 1 VIGO',
+            'query_lon': -8.72,
+            'query_lat': 42.23,
+            'superficie_terreno_m2': 350.5,
+            'superficie_construida_m2': 180.0,
+            'uso_principal': 'Residencial',
+            'anio_construccion': 1985,
+            'municipio_catastral': 'Vigo',
+        },
+        'planeamiento': {'available': False, 'count': 0, 'rows': []},
+        'siotuga': {'available': True, 'note': 'Contexto SIOTUGA'},
+        'afecciones_preliminares': {'available': False, 'alerts': []},
+        'provenance': {
+            'query_timestamp': '2025-01-15T12:00:00+00:00',
+            'api_version': '0.2.1',
+            'sources': [],
+        },
+    }, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[-8.72, 42.23], [-8.71, 42.23], [-8.71, 42.24], [-8.72, 42.24], [-8.72, 42.23]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Superficie terreno' in html
+    assert '350.5' in html
+    assert 'Superficie construida' in html
+    assert '180.0' in html
+    assert 'Uso principal' in html
+    assert 'Residencial' in html
+    assert 'Año construcción' in html
+    assert '1985' in html
+
+
+def test_assess_report_shows_data_quality(monkeypatch):
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {
+        'catastro': {
+            'available': True,
+            'refcat': '1234567AB1234C',
+            'direccion': 'RUA DEMO 1 VIGO',
+            'query_lon': -8.72,
+            'query_lat': 42.23,
+            'coord_consistency': 'ok',
+            'municipio_consistency': 'ok',
+        },
+        'planeamiento': {'available': True, 'count': 1, 'rows': []},
+        'siotuga': {'available': True, 'note': 'Contexto SIOTUGA'},
+        'afecciones_preliminares': {'available': True, 'alerts': [], 'land_cover_labels': []},
+        'data_quality': 'alta',
+        'provenance': {
+            'query_timestamp': '2025-01-15T12:00:00+00:00',
+            'api_version': '0.2.1',
+            'sources': [],
+        },
+    }, raising=True)
+    body = {
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[[-8.72, 42.23], [-8.71, 42.23], [-8.71, 42.24], [-8.72, 42.24], [-8.72, 42.23]]],
+        },
+        'municipio': 'Vigo',
+        'subzona': 'R-1',
+        'altura_maxima_m': 12.0,
+        'retranqueo_min_m': 3.0,
+        'crs': 'EPSG:4326',
+    }
+    b64 = _b64url(body)
+    r = client.get('/zoning/assess-report', params={'body_b64': b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert 'Calidad de datos' in html
+    assert 'alta' in html
+    assert 'Consistencia coordenadas' in html
+    assert 'Consistencia municipio' in html

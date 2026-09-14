@@ -1,0 +1,7 @@
+municipio,subzona,altura_maxima_m,retranqueo_min_m,setback_front_m,setback_side_m,setback_back_m,front_direction_default,ocupacion_max,edificabilidad_max_m2_m2,source,source_refs,precedence,notes
+Vigo,,16,3,,,,,0.42,1.25,municipal,"Art. 5.2; pág. 134",municipal_over_autonomic,Regla general
+Vigo,RZ-2,12,3,2.0,1.0,0.5,north,0.35,0.90,municipal,"RZ-2, pág. 201",municipal_over_autonomic,Residencial
+A Coruna,,13.5,3,,,,,0.45,1.10,municipal,"Sección 3",municipal_over_autonomic,General
+Santiago,,14,3,,,,,0.40,1.00,municipal,"Cap. 4",municipal_over_autonomic,General
+Ourense,,12,3,,,,,0.38,0.95,municipal,"T-2",municipal_over_autonomic,General
+Lugo,,13,3,,,,,0.42,1.05,municipal,"Título II",municipal_over_autonomic,General
