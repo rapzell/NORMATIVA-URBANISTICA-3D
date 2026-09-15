@@ -6,7 +6,7 @@
 # Arrancar servidor (puerto 8002)
 venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 
-# Tests completos (223 tests, ~10s)
+# Tests completos (264 tests, ~9s)
 venv\Scripts\python.exe -m pytest -q --ignore=tests/test_asistente_normativa_rules.py --ignore=tests/test_evaluar_dataset_helpers.py
 
 # Tests focalizados
@@ -40,6 +40,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Análisis de soleamiento por orientación | `src/solar_analysis.py` |
 | Estimación de costes de conversión | `src/cost_estimator.py` |
 | Ordenanzas municipales (cambio de uso) | `src/ordenanzas_service.py`, `datos/ordenanzas/` |
+| Panel multi-proyecto | `web/geolibre/index.html` (localStorage) |
 | Gateway IA | `src/model_gateway.py` |
 
 ## Patrones del código
@@ -135,7 +136,18 @@ Valores verificados (no hardcodear sin fuente):
 
 3. **RAG normativo** — indexar los PDFs en `datos/normativa/` y permitir consultas en lenguaje natural
 
-4. **Ampliar `MUNICIPIO_CENTERS` en `src/subzones_service.py`** — solo tiene 5 municipios (Vigo, A Coruña, Santiago). Ampliar con centros para que el proxy de edificios OSM funcione en más municipios.
+4. ~~**Ampliar `MUNICIPIO_CENTERS`**~~ — HECHO: 337 municipios (principales + aliases). Cubre las 4 provincias.
+
+5. **Panel multi-proyecto** — HECHO: `localStorage` para guardar proyectos con estado (viabilidad/licencia/obra), plazo y navegación.
+
+6. **Módulos completados en esta fase**:
+   - `src/habitabilidad_checker.py` — NHV/Decreto 128/2023 (reglas verificadas contra DOG)
+   - `src/licencia_docs.py` — plantillas de documentación de licencia
+   - `src/solar_analysis.py` — soleamiento por orientación (preliminar)
+   - `src/cost_estimator.py` — estimación de costes (inputs del usuario, no inventa precios)
+   - `src/ordenanzas_service.py` — estructura para ordenanzas municipales (pendiente datos de AC8)
+   - `src/report_service.py` — integra habitabilidad, soleamiento y costes
+   - Performance: Overpass timeout 8s→25s, eliminado Shapely por edificio, límite 3000→500
 
 ## Notas sobre datos y reproducibilidad
 
