@@ -6,7 +6,7 @@
 # Arrancar servidor (puerto 8002)
 venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 
-# Tests completos (264 tests, ~9s)
+# Tests completos (269 tests, ~8s)
 venv\Scripts\python.exe -m pytest -q --ignore=tests/test_asistente_normativa_rules.py --ignore=tests/test_evaluar_dataset_helpers.py
 
 # Tests focalizados
@@ -148,6 +148,17 @@ Valores verificados (no hardcodear sin fuente):
    - `src/ordenanzas_service.py` — estructura para ordenanzas municipales (pendiente datos de AC8)
    - `src/report_service.py` — integra habitabilidad, soleamiento y costes
    - Performance: Overpass timeout 8s→25s, eliminado Shapely por edificio, límite 3000→500
+
+7. **Auto-rellenado de formularios e informes**:
+   - Botón "Generar informe de viabilidad" con formulario inline y vista previa de datos
+   - Auto-rellena: geometría, altura, huella (turf), municipio, habitabilidad preliminar, datos OSM
+   - El servidor rellena desde fuentes oficiales: Catastro, SIOTUGA, SIOSE, soleamiento, sombras
+   - Resumen ejecutivo con datos del edificio, Catastro e indicador de disponibilidad por sección
+   - Diagnóstico del edificio funciona sin subzona (muestra datos disponibles)
+   - Sección de costes muestra "Pendiente" cuando no hay datos (no se omite)
+   - Habitabilidad: pre-rellena altura (OSM) y superficie (Catastro o huella)
+   - Costes: pre-rellena superficie (huella del edificio) y guarda inputs para el informe
+   - Licencia: pre-rellena huella (turf) para el cuadro de superficies
 
 ## Notas sobre datos y reproducibilidad
 
