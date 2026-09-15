@@ -1367,6 +1367,11 @@ async function generateLicenciaDoc() {
   if (props.edificabilidad_max_subzona != null) paramsUrbanisticos['Edificabilidad máxima (m²/m²)'] = props.edificabilidad_max_subzona;
   if (props.retranqueo_min_subzona_m != null) paramsUrbanisticos['Retranqueo mínimo (m)'] = props.retranqueo_min_subzona_m;
   if (props.subzona) paramsUrbanisticos['Subzona'] = props.subzona;
+  // Datos de Catastro
+  if (cat.superficie_construida_m2) paramsUrbanisticos['Sup. construida (Catastro)'] = cat.superficie_construida_m2;
+  if (cat.uso_principal) paramsUrbanisticos['Uso principal (Catastro)'] = cat.uso_principal;
+  if (cat.anio_construccion) paramsUrbanisticos['Año construcción (Catastro)'] = cat.anio_construccion;
+  if (cat.superficie_comercial_m2) paramsUrbanisticos['Sup. no residencial (Catastro)'] = cat.superficie_comercial_m2;
   if (Object.keys(paramsUrbanisticos).length === 0 && siotuga.plan_title) {
     paramsUrbanisticos['Planeamiento'] = siotuga.plan_title;
   }
@@ -1380,6 +1385,11 @@ async function generateLicenciaDoc() {
     programa_declarado_completo: false,
   };
 
+  const superficiesLic = {};
+  if (footprint) superficiesLic['superficie_ocupada_m2'] = footprint;
+  if (cat.superficie_construida_m2) superficiesLic['superficie_construida_m2'] = cat.superficie_construida_m2;
+  if (cat.superficie_terreno_m2) superficiesLic['superficie_parcela_m2'] = cat.superficie_terreno_m2;
+
   const payload = {
     municipio: props.municipio || activeMunicipio,
     ref_catastral: cat.refcat || null,
@@ -1389,7 +1399,7 @@ async function generateLicenciaDoc() {
     instrumento_planeamiento: siotuga.plan_title || null,
     fecha_aprobacion: siotuga.approval_date || null,
     tipo_operacion: 'cambio_uso_local_a_vivienda',
-    superficies: footprint ? { superficie_ocupada_m2: footprint } : {},
+    superficies: superficiesLic,
     params_urbanisticos: paramsUrbanisticos,
     habitabilidad: habitabilidad,
   };

@@ -245,6 +245,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if cat_ctx.get('refcat'): parts.append(f"Ref. catastral: {esc(cat_ctx['refcat'])}")
             if cat_ctx.get('superficie_construida_m2'): parts.append(f"Sup. construida: {esc(cat_ctx['superficie_construida_m2'])} m²")
             if cat_ctx.get('uso_principal'): parts.append(f"Uso: {esc(cat_ctx['uso_principal'])}")
+            if cat_ctx.get('anio_construccion'): parts.append(f"Año: {esc(cat_ctx['anio_construccion'])}")
+            if cat_ctx.get('superficie_comercial_m2'): parts.append(f"Sup. no residencial: {esc(cat_ctx['superficie_comercial_m2'])} m²")
             if parts:
                 cat_summary = f"<p class=muted>Catastro: {' · '.join(parts)}.</p>"
     except Exception:
@@ -291,6 +293,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if cat_ctx.get('superficie_construida_m2'): ficha_rows += f"<tr><td>Sup. construida (Catastro)</td><td>{esc(cat_ctx['superficie_construida_m2'])} m²</td></tr>"
             if cat_ctx.get('uso_principal'): ficha_rows += f"<tr><td>Uso principal</td><td>{esc(cat_ctx['uso_principal'])}</td></tr>"
             if cat_ctx.get('anio_construccion'): ficha_rows += f"<tr><td>Año construcción</td><td>{esc(cat_ctx['anio_construccion'])}</td></tr>"
+            if cat_ctx.get('num_unidades'): ficha_rows += f"<tr><td>Unidades catastrales</td><td>{esc(cat_ctx['num_unidades'])}</td></tr>"
+            if cat_ctx.get('superficie_comercial_m2'): ficha_rows += f"<tr><td>Sup. no residencial (Catastro)</td><td>{esc(cat_ctx['superficie_comercial_m2'])} m²</td></tr>"
     except Exception:
         pass
     src_row = ''
@@ -746,6 +750,36 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 f"<tr><td>Consistencia coordenadas</td><td>{esc(cat.get('coord_consistency') or '—')}</td></tr>" if cat.get('coord_consistency') else '',
                 f"<tr><td>Consistencia municipio</td><td>{esc(cat.get('municipio_consistency') or '—')}</td></tr>" if cat.get('municipio_consistency') else '',
             ])
+            # Desglose de usos del inmueble (Catastro DNPRC)
+            usos_rows = ''
+            usos_det = cat.get('usos_detalle') or {}
+            if usos_det:
+                usos_rows = ''.join(
+                    f"<tr><td>{esc(u)}</td><td>{esc(round(v, 1))} m²</td></tr>"
+                    for u, v in sorted(usos_det.items(), key=lambda x: -x[1])
+                )
+                usos_html = (
+                    "<div class='muted' style='margin-top:8px'><b>Desglose de usos catastrales:</b></div>"
+                    f"<table><thead><tr><th>Uso</th><th>Superficie</th></tr></thead><tbody>{usos_rows}</tbody></table>"
+                )
+            else:
+                usos_html = ''
+            # Unidades no residenciales (candidatas a conversión)
+            unidades_html = ''
+            unidades = cat.get('unidades_comerciales') or []
+            if unidades:
+                unidades_rows = ''.join(
+                    f"<tr><td>{esc(u.get('car') or '—')}</td><td>{esc(u.get('uso') or '—')}</td>"
+                    f"<td>{esc(u.get('sfc'))} m²</td><td>{esc(u.get('planta') or '—')}</td><td>{esc(u.get('puerta') or '—')}</td></tr>"
+                    for u in unidades
+                )
+                unidades_html = (
+                    f"<div class='muted' style='margin-top:8px'><b>Unidades no residenciales ({len(unidades)}):</b>"
+                    f" Superficie total no residencial: <strong>{esc(cat.get('superficie_comercial_m2'))} m²</strong></div>"
+                    "<table><thead><tr><th>Sub-ref</th><th>Uso</th><th>Superficie</th><th>Planta</th><th>Puerta</th></tr></thead>"
+                    f"<tbody>{unidades_rows}</tbody></table>"
+                    "<div class='muted' style='margin-top:4px'>Estas unidades son candidatas a cambio de uso a vivienda según su uso catastral actual.</div>"
+                )
             inv_rows = pl.get('rows') or []
             planeamiento_items = ''.join(
                 f"<li>{esc(r.get('CONCELLO') or r.get('Concello') or r.get('municipio') or '')} · {esc(r.get('FIGURA') or r.get('Figura') or r.get('figura') or 'Planeamiento')} · {esc(r.get('ESTADO') or r.get('Estado') or r.get('estado') or '—')}</li>"
@@ -804,6 +838,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 f"<tr><td>Afecciones preliminares</td><td>{esc(af.get('available'))}</td></tr>"
                 f"{cat_rows}"
                 "</tbody></table>"
+                f"{usos_html}"
+                f"{unidades_html}"
                 "<div class='muted' style='margin-top:8px'>"
                 "Referencia rápida de inventario/planeamiento municipal:</div>"
                 f"<ul>{planeamiento_items}</ul>"

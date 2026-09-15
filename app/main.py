@@ -2785,8 +2785,7 @@ def _safe_fetch_siose(lon: float, lat: float) -> dict:
 
 def _fetch_catastro_details_by_ref(refcat: str) -> dict:
   """Obtiene datos ampliados de una parcela por referencia catastral.
-  Usa Consulta_DNPRC del OVC que devuelve datos no protegidos.
-  Maneja diferentes esquemas XML del Catastro.
+  Usa Consulta_DNPRC del OVC que devuelve datos no protegidos por sub-referencia.
   """
   cache_key = ('catastro', 'details', refcat[:14])
   cached = _official_cache_get(cache_key)
@@ -2795,64 +2794,57 @@ def _fetch_catastro_details_by_ref(refcat: str) -> dict:
   rc = ''.join(ch for ch in (refcat or '') if ch.isalnum()).upper()[:14]
   if len(rc) < 14:
     return {}
-  base = 'https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCSoporteWS.asmx/Consulta_DNPRC'
-  url = f"{base}?{urlencode({'Provincia': '', 'Municipio': '', 'RC': rc, 'Localizador': ''})}"
+  base = 'https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCallejero.svc/rest/Consulta_DNPRC'
+  url = f"{base}?{urlencode({'Provincia': '', 'Municipio': '', 'RefCat': rc})}"
   req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
-  with urlopen(req, timeout=10) as resp:
-    raw = resp.read()
+  try:
+    with urlopen(req, timeout=10) as resp:
+      raw = resp.read()
+  except Exception:
+    return {}
   try:
     root = ET.fromstring(raw)
   except Exception:
     return {}
-  for elem in root.iter():
-    if '}' in elem.tag:
-      elem.tag = elem.tag.rsplit('}', 1)[-1]
   result: dict = {}
-  # Buscar el nodo bi (bien inmueble) en cualquier posición
-  bi = root.find('.//bico/bi')
-  if bi is None:
-    # Intentar buscar directamente bi
-    for elem in root.iter():
-      if elem.tag.endswith('bi'):
-        bi = elem
-        break
-  if bi is not None:
-    # Superficie construida — buscar en múltiples ubicaciones posibles
-    for path in ['.//lscons/dcons/scon', './/dcons/scon', './/scon', './/cons/scon']:
-      scon = bi.findtext(path)
-      if scon:
-        val = _try_float(scon)
-        if val and val > 0:
-          result['superficie_construida_m2'] = val
-          break
-    # Superficie del terreno — buscar en múltiples ubicaciones
-    for path in ['.//sfterreno', './/stf', './/dt/sfterreno', './/dt/stf', './/superficie']:
-      sf = bi.findtext(path)
-      if sf:
-        val = _try_float(sf)
-        if val and val > 0:
-          result['superficie_terreno_m2'] = val
-          break
-    # Uso principal — buscar en múltiples ubicaciones
-    for path in ['.//luso/fpu', './/luso/cuo', './/luso', './/fpu', './/uso']:
-      uso = bi.findtext(path)
-      if uso and uso.strip():
-        result['uso_principal'] = uso.strip()
-        break
-    # Año de construcción
-    for path in ['.//ant/e1', './/ant', './/e1', './/anio', './/ano']:
-      año = bi.findtext(path)
-      if año:
-        val = _try_int(año)
-        if val and 1800 < val < 2100:
-          result['anio_construccion'] = val
-          break
-  # También buscar en el nodo ctrl para datos del control
-  ctrl = root.find('.//ctrl')
-  if ctrl is not None:
-    val = ctrl.findtext('.//val')
-    if val:
-      result.setdefault('valor_catastral', _try_float(val))
+  rcdnps = root.findall('.//{*}rcdnp')
+  if not rcdnps:
+    return {}
+  usos: dict[str, float] = {}
+  total_sfc = 0.0
+  anios: set[int] = set()
+  unidades_comerciales = []
+  for r in rcdnps:
+    debi = r.find('.//{*}debi')
+    if debi is None:
+      continue
+    luso = (debi.findtext('{*}luso') or '').strip()
+    sfc_txt = (debi.findtext('{*}sfc') or '').strip().replace(',', '.')
+    sfc = _try_float(sfc_txt)
+    ant_txt = (debi.findtext('{*}ant') or '').strip()
+    ant = _try_int(ant_txt)
+    car = (r.findtext('.//{*}rc/{*}car') or '').strip()
+    loint = r.find('.//{*}loint')
+    planta = (loint.findtext('{*}pt') or '').strip() if loint is not None else ''
+    puerta = (loint.findtext('{*}pu') or '').strip() if loint is not None else ''
+    if sfc and sfc > 0:
+      total_sfc += sfc
+      usos[luso] = usos.get(luso, 0) + sfc
+      if luso in ('Comercial', 'Oficinas', 'Almacen-Estacionamiento'):
+        unidades_comerciales.append({'car': car, 'uso': luso, 'sfc': sfc, 'planta': planta, 'puerta': puerta})
+    if ant and 1800 < ant < 2100:
+      anios.add(ant)
+  if total_sfc > 0:
+    result['superficie_construida_m2'] = round(total_sfc, 2)
+  if usos:
+    result['uso_principal'] = max(usos, key=usos.get)
+    result['usos_detalle'] = usos
+  if anios:
+    result['anio_construccion'] = min(anios)
+  if unidades_comerciales:
+    result['unidades_comerciales'] = unidades_comerciales
+    result['superficie_comercial_m2'] = round(sum(u['sfc'] for u in unidades_comerciales), 2)
+  result['num_unidades'] = len(rcdnps)
   _official_cache_set(cache_key, result)
   return result
 
