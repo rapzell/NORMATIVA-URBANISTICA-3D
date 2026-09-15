@@ -122,8 +122,18 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     reasons = ''.join(f"<li>{esc(r)}</li>" for r in (res.reasons or []))
     pe = res.params_effective or {}
     rows = ''
+    pe_labels = {
+        'altura_maxima_m': 'Altura máxima (m)',
+        'retranqueo_min_m': 'Retranqueo mínimo (m)',
+        'setback_front_m': 'Retranqueo frontal (m)',
+        'setback_side_m': 'Retranqueo lateral (m)',
+        'setback_back_m': 'Retranqueo trasero (m)',
+        'front_direction': 'Orientación del frente',
+        'front_direction_source': 'Fuente de orientación',
+    }
     for k in ['altura_maxima_m','retranqueo_min_m','setback_front_m','setback_side_m','setback_back_m','front_direction','front_direction_source']:
-        rows += f"<tr><td>{esc(k)}</td><td>{esc(pe.get(k))}</td></tr>"
+        label = pe_labels.get(k, k)
+        rows += f"<tr><td>{esc(label)}</td><td>{esc(pe.get(k))}</td></tr>"
     # Datos del edificio como parámetros efectivos
     try:
         bld = body.get('edificio_osm') if isinstance(body, dict) else None
