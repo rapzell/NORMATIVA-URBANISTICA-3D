@@ -167,6 +167,14 @@ def test_geolibre_index_has_habitability_flow():
     assert "programa_declarado_completo" in body
 
 
+def test_geolibre_index_has_licencia_doc_flow():
+    resp = client.get("/geolibre/")
+    body = resp.text
+    assert "generateLicenciaDoc" in body
+    assert "/licencia/documentacion" in body
+    assert "Generar documentación de licencia" in body
+
+
 def test_geolibre_index_has_official_source_links():
     """La vista debe tener código para renderizar enlaces a fuentes oficiales."""
     resp = client.get("/geolibre/")

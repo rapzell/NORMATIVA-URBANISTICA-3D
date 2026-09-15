@@ -29,6 +29,7 @@ from src.export_service import (
 from src.report_service import render_assess_report_html as _render_assess_report_html
 from src.shadow_service import shadow_analysis, shadow_analysis_multi_hour, solar_position
 from src.habitabilidad_checker import HabitabilityInput, HabitabilityResult, check_habitability
+from src.licencia_docs import LicenciaInput, render_licencia_html
 from src.subzones_service import (
     find_subzone_for_point,
     get_osm_buildings_geojson,
@@ -51,7 +52,7 @@ import mimetypes
 import logging
 from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, HTTPException, Response, Body
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -1377,6 +1378,12 @@ async def endpoint_geometry_checks(req: GeometryChecksRequest):
 @app.post("/habitabilidad/verificar", response_model=HabitabilityResult)
 def habitabilidad_verificar(req: HabitabilityInput = Body(...)):
     return check_habitability(req)
+
+
+@app.post("/licencia/documentacion")
+def licencia_documentacion(payload: dict = Body(...)):
+    html = render_licencia_html(payload)
+    return HTMLResponse(content=html)
 
 
 # Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)

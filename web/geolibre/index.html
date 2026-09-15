@@ -1133,6 +1133,35 @@ async function submitHabitabilityCheck() {
   }
 }
 
+async function generateLicenciaDoc() {
+  const feature = window._selectedBuildingFeature || {};
+  const props = feature.properties || {};
+  const ctx = window._officialContext || {};
+  const cat = ctx.catastro || {};
+  const siotuga = ctx.siotuga || {};
+  const payload = {
+    municipio: props.municipio || activeMunicipio,
+    ref_catastral: cat.refcat || null,
+    direccion_catastral: cat.direccion || null,
+    superficie_parcela_m2: cat.superficie_terreno_m2 ? Number(cat.superficie_terreno_m2) : null,
+    clasificacion_suelo: siotuga.plan_title || null,
+    instrumento_planeamiento: siotuga.plan_title || null,
+    fecha_aprobacion: siotuga.approval_date || null,
+    tipo_operacion: 'cambio_uso_local_a_vivienda',
+    superficies: props.footprint_m2 ? { superficie_ocupada_m2: props.footprint_m2 } : {},
+  };
+  try {
+    const response = await fetch(`${API}/licencia/documentacion`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const html = await response.text();
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  } catch (e) {
+    alert('No se pudo generar la documentación: ' + e.message);
+  }
+}
+
 async function selectBuilding(feature) {
   const props = feature.properties || {};
   const panel = document.getElementById('info-panel');
@@ -1164,6 +1193,7 @@ async function selectBuilding(feature) {
     html += `<button class="eval-btn" onclick="exportBuildingIFC(${Number(props.height)})">Exportar geometría IFC aproximada</button>`;
   }
   html += '<button class="eval-btn" onclick="showHabitabilityForm()">Verificar habitabilidad (Decreto 128/2023)</button>';
+  html += '<button class="eval-btn" onclick="generateLicenciaDoc()">Generar documentación de licencia</button>';
   html += `<div class="hint">${escapeHtml(props.cumplimiento_detalle || props.color_semantica || 'Sin evaluación normativa disponible para este edificio.')}</div>`;
   panel.innerHTML = html + '<div class="loading">Cargando diagnóstico y contexto oficial…</div>';
   window._selectedBuildingFeature = feature;
@@ -1175,6 +1205,7 @@ async function selectBuilding(feature) {
       fetch(`${API}/zoning/building-diagnostic?height_m=${props.height || ''}&levels=${props.levels || ''}&footprint_m2=${footprint || ''}&subzona=${encodeURIComponent(props.subzona || '')}&municipio=${encodeURIComponent(props.municipio || activeMunicipio || '')}&lon=${coords[0]}&lat=${coords[1]}`).then(r => r.json()).catch(() => null),
       fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
     ]);
+    window._officialContext = ctx || {};
     let diagHtml = '';
     if (diagResp && diagResp.available && diagResp.comparisons && diagResp.comparisons.length > 0) {
       diagHtml = '<div class="info-card">';
