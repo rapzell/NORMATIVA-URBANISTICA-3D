@@ -125,7 +125,11 @@ def test_proxy_osm_buildings_returns_geojson(monkeypatch):
     props = data["features"][0]["properties"]
     assert props["building"] == "residential"
     assert props["height"] > 0
-    assert props["_altura_visual"] > props["height"]
+    assert props["_altura_visual"] == props["height"]
     assert "cumplimiento_altura" in props
     assert "cumplimiento_detalle" in props
     assert "color_semantica" in props
+    assert "height_source" in props
+    assert "height_estimated" in props
+    assert props["normative_status"] == "pilot"
+    assert props["cumplimiento_altura"] in ("orientativo_dentro", "orientativo_supera", "sin_dato")

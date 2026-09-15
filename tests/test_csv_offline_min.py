@@ -10,7 +10,7 @@ def _setup_env(csv_path: str):
 
 
 def test_vigo_u3_from_csv():
-    _setup_env('datos/plan_uploaded.csv')
+    _setup_env('datos/planes_municipales_sample.csv')
     # Import tardío para que coja las env vars
     from app.main import app
     client = TestClient(app)
@@ -32,7 +32,7 @@ def test_vigo_u3_from_csv():
 
 
 def test_acoruna_nr1_from_csv():
-    _setup_env('datos/plan_uploaded.csv')
+    _setup_env('datos/planes_municipales_sample.csv')
     from app.main import app
     client = TestClient(app)
     payload = {

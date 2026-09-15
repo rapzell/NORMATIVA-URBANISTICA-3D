@@ -117,6 +117,8 @@
   #building-tooltip .tt-badge { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 12px; font-weight: 700; }
   #building-tooltip .tt-badge.compatible { background: #238636; color: #fff; }
   #building-tooltip .tt-badge.supera_altura { background: #da3633; color: #fff; }
+  #building-tooltip .tt-badge.orientativo_dentro { background: #9a6700; color: #fff; }
+  #building-tooltip .tt-badge.orientativo_supera { background: #bc4c00; color: #fff; }
   #building-tooltip .tt-badge.sin_dato { background: #1f6feb; color: #fff; }
 
   #map-summary {
@@ -151,9 +153,10 @@
       </div>
       <div class="info-card">
         <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda edificios 3D</div>
-        <div class="info-row"><span class="key" style="background:#2e7d32;color:#fff">Verde</span><span class="val">compatible con altura</span></div>
-        <div class="info-row"><span class="key" style="background:#c62828;color:#fff">Rojo</span><span class="val">supera altura de subzona</span></div>
+        <div class="info-row"><span class="key" style="background:#9a6700;color:#fff">Amarillo</span><span class="val">dentro del límite piloto</span></div>
+        <div class="info-row"><span class="key" style="background:#bc4c00;color:#fff">Naranja</span><span class="val">supera el límite piloto</span></div>
         <div class="info-row"><span class="key" style="background:#1976d2;color:#fff">Azul</span><span class="val">sin dato normativo</span></div>
+        <div class="hint">Las comparaciones piloto no acreditan cumplimiento urbanístico.</div>
       </div>
       <div class="info-card">
         <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda afecciones (SIOSE)</div>
@@ -193,6 +196,7 @@
 <script>
 const API = window.location.origin;
 let map = null;
+let mapReady = false;
 let show3D = true;
 let allSubzones = null;
 let activeMunicipio = null;
@@ -214,6 +218,41 @@ const MUNI_CENTERS = {
   'A Coruna': { center: [-8.400, 43.370], zoom: 15 },
   'Santiago': { center: [-8.540, 42.880], zoom: 15 },
 };
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>'"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
+}
+
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '#';
+  } catch (e) { return '#'; }
+}
+
+function statusLabel(status) {
+  return ({
+    compatible: 'Compatible',
+    supera_altura: 'Supera altura',
+    orientativo_dentro: 'Dentro del límite piloto',
+    orientativo_supera: 'Supera el límite piloto',
+    sin_dato: 'Sin dato normativo',
+  })[status] || 'Sin dato normativo';
+}
+
+function statusClass(status) {
+  if (status === 'compatible') return 'apto';
+  if (status === 'supera_altura') return 'no_apto';
+  return 'condicionado';
+}
+
+function buildingTypeLabel(value) {
+  return ({ residential: 'Residencial', apartments: 'Viviendas colectivas', house: 'Vivienda', commercial: 'Comercial', retail: 'Comercio', industrial: 'Industrial', warehouse: 'Almacén', office: 'Oficinas', yes: 'Edificio' })[value] || value || 'No disponible';
+}
+
+function heightSourceLabel(source) {
+  return ({ osm_height: 'altura declarada en OSM', osm_levels: 'estimada desde plantas OSM', building_type: 'estimada por tipo de edificio', default: 'estimación genérica' })[source] || 'procedencia desconocida';
+}
 
 function initMap() {
   tooltipEl = document.getElementById('building-tooltip');
@@ -237,6 +276,16 @@ function initMap() {
     bearing: -20
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  map.on('load', () => { mapReady = true; console.log('Mapa listo'); });
+  map.on('error', (e) => { console.error('Error mapa:', e); });
+}
+
+function waitForMap() {
+  return new Promise((resolve) => {
+    if (mapReady || (map && typeof map.isStyleLoaded === 'function' && map.isStyleLoaded())) { resolve(); return; }
+    const timeout = setTimeout(resolve, 5000);
+    map.once('load', () => { clearTimeout(timeout); resolve(); });
+  });
 }
 
 async function loadMunicipios() {
@@ -280,10 +329,10 @@ async function goToMunicipio(municipio) {
     // renderSubzones3D(data) — desactivado
 
     // Cargar zonificación oficial de SIOTUGA automáticamente
-    loadSiotugaWMS(municipio);
+    loadSiotugaWMS(municipio).catch(e => console.error('Error WMS:', e));
 
     // Cargar edificios reales de OpenStreetMap
-    loadBuildings(municipio);
+    loadBuildings(municipio).catch(e => console.error('Error buildings:', e));
 
     // Mostrar info del municipio
     const panel = document.getElementById('info-panel');
@@ -300,8 +349,10 @@ async function goToMunicipio(municipio) {
 
 async function loadSiotugaWMS(municipio) {
   try {
+    await waitForMap();
     const resp = await fetch(`${API}/official/siotuga-wms?municipio=${encodeURIComponent(municipio)}`);
     const data = await resp.json();
+    if (activeMunicipio !== municipio) return;
     if (!data.available) {
       console.warn('WMS SIOTUGA no disponible:', data.error);
       return;
@@ -624,13 +675,13 @@ function showBuildingTooltip(feature, point) {
   if (!tooltipEl || !feature) return;
   const props = feature.properties || {};
   const status = props.cumplimiento_altura || 'sin_dato';
-  const statusTxt = status === 'compatible' ? 'Compatible' : status === 'supera_altura' ? 'Supera altura' : 'Sin dato';
+  const pilot = props.normative_status === 'pilot';
   tooltipEl.innerHTML = `
-    <div class="tt-title">${props.name || ('Edificio #' + (props.osm_id || 'OSM'))}</div>
-    <div class="tt-row"><span class="tt-key">Altura</span><span>${props.height || '—'} m</span></div>
-    <div class="tt-row"><span class="tt-key">Subzona</span><span>${props.subzona || '—'}</span></div>
-    <div class="tt-row"><span class="tt-key">Máx. subzona</span><span>${props.altura_maxima_subzona_m || '—'} m</span></div>
-    <div class="tt-badge ${status}">${statusTxt}</div>
+    <div class="tt-title">${escapeHtml(props.name || ('Edificio #' + (props.osm_id || 'OSM')))}</div>
+    <div class="tt-row"><span class="tt-key">Altura</span><span>${escapeHtml(props.height || '—')} m</span></div>
+    <div class="tt-row"><span class="tt-key">Subzona${pilot ? ' piloto' : ''}</span><span>${escapeHtml(props.subzona || '—')}</span></div>
+    <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${escapeHtml(props.altura_maxima_subzona_m || '—')} m</span></div>
+    <div class="tt-badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</div>
   `;
   tooltipEl.style.display = 'block';
   tooltipEl.style.left = `${point.x + 14}px`;
@@ -660,17 +711,17 @@ function showSubzoneTooltip(feature, point) {
 function updateMapSummary(features) {
   const el = document.getElementById('map-summary');
   if (!el || !activeMunicipio) return;
-  const stats = { compatible: 0, supera_altura: 0, sin_dato: 0 };
+  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_dato: 0 };
   for (const f of (features || [])) {
     const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
     stats[s] = (stats[s] || 0) + 1;
   }
   el.innerHTML = `
-    <div class="sum-title">${activeMunicipio}</div>
-    <div class="sum-row"><span class="sum-key">Subzonas</span><span>${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
+    <div class="sum-title">${escapeHtml(activeMunicipio)}</div>
+    <div class="sum-row"><span class="sum-key">Subzonas piloto</span><span>${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
     <div class="sum-row"><span class="sum-key">Edificios 3D</span><span>${(features || []).length}</span></div>
-    <div class="sum-row"><span class="sum-key">Compatibles</span><span>${stats.compatible}</span></div>
-    <div class="sum-row"><span class="sum-key">Superan</span><span>${stats.supera_altura}</span></div>
+    <div class="sum-row"><span class="sum-key">Dentro límite piloto</span><span>${stats.orientativo_dentro}</span></div>
+    <div class="sum-row"><span class="sum-key">Sobre límite piloto</span><span>${stats.orientativo_supera}</span></div>
     <div class="sum-row"><span class="sum-key">Sin dato</span><span>${stats.sin_dato}</span></div>
   `;
   el.style.display = 'block';
@@ -709,15 +760,17 @@ function renderOfficialContext(ctx) {
   if (quality) {
     const qColor = quality === 'alta' ? '#2da44e' : (quality === 'media' ? '#d29922' : '#f85149');
     const qLabel = quality === 'alta' ? 'Alta' : (quality === 'media' ? 'Media' : 'Baja');
-    html += `<div class="info-row"><span class="key">Calidad datos</span><span class="val" style="color:${qColor};font-weight:600">${qLabel}</span></div>`;
+    html += `<div class="info-row"><span class="key">Cobertura de fuentes</span><span class="val" style="color:${qColor};font-weight:600">${qLabel}</span></div>`;
+    html += `<div class="hint">${quality === 'alta' ? 'Dos o más fuentes oficiales respondieron.' : quality === 'media' ? 'Solo una fuente oficial respondió.' : 'Datos oficiales incompletos; no emitir conclusiones normativas.'}</div>`;
   }
-  html += `<div class="info-row"><span class="key">Ref. catastral</span><span class="val">${cat.refcat || '—'}</span></div>`;
-  html += `<div class="info-row"><span class="key">Dirección</span><span class="val">${cat.direccion || '—'}</span></div>`;
-  if (cat.superficie_terreno_m2) html += `<div class="info-row"><span class="key">Sup. terreno</span><span class="val">${cat.superficie_terreno_m2} m²</span></div>`;
-  if (cat.superficie_construida_m2) html += `<div class="info-row"><span class="key">Sup. construida</span><span class="val">${cat.superficie_construida_m2} m²</span></div>`;
-  if (cat.uso_principal) html += `<div class="info-row"><span class="key">Uso</span><span class="val">${cat.uso_principal}</span></div>`;
-  if (cat.anio_construccion) html += `<div class="info-row"><span class="key">Año construc.</span><span class="val">${cat.anio_construccion}</span></div>`;
-  if (cat.valor_catastral) html += `<div class="info-row"><span class="key">Valor catastral</span><span class="val">${cat.valor_catastral} €</span></div>`;
+  html += `<div class="info-row"><span class="key">Ref. catastral</span><span class="val">${escapeHtml(cat.refcat || 'No disponible')}</span></div>`;
+  html += `<div class="info-row"><span class="key">Dirección</span><span class="val">${escapeHtml(cat.direccion || 'No disponible')}</span></div>`;
+  if (cat.error) html += `<div class="hint">Catastro: ${escapeHtml(cat.error)}</div>`;
+  if (cat.superficie_terreno_m2) html += `<div class="info-row"><span class="key">Sup. terreno</span><span class="val">${escapeHtml(cat.superficie_terreno_m2)} m²</span></div>`;
+  if (cat.superficie_construida_m2) html += `<div class="info-row"><span class="key">Sup. construida</span><span class="val">${escapeHtml(cat.superficie_construida_m2)} m²</span></div>`;
+  if (cat.uso_principal) html += `<div class="info-row"><span class="key">Uso</span><span class="val">${escapeHtml(cat.uso_principal)}</span></div>`;
+  if (cat.anio_construccion) html += `<div class="info-row"><span class="key">Año construc.</span><span class="val">${escapeHtml(cat.anio_construccion)}</span></div>`;
+  if (cat.valor_catastral) html += `<div class="info-row"><span class="key">Valor catastral</span><span class="val">${escapeHtml(cat.valor_catastral)} €</span></div>`;
   if (cat.coord_consistency) html += `<div class="info-row"><span class="key">Coord. consistentes</span><span class="val">${cat.coord_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
   if (cat.municipio_consistency) html += `<div class="info-row"><span class="key">Muni. consistente</span><span class="val">${cat.municipio_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
   html += '</div>';
@@ -727,16 +780,18 @@ function renderOfficialContext(ctx) {
     html += '<div class="info-card">';
     html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Planeamiento vigente</div>';
     if (siotuga.plan_title) {
-      html += `<div class="info-row"><span class="key">Plan</span><span class="val">${siotuga.plan_title}</span></div>`;
+      const planLabel = String(siotuga.plan_title).startsWith('_') ? `PXOM de ${ctx.municipio || 'municipio'}` : siotuga.plan_title;
+      html += `<div class="info-row"><span class="key">Plan</span><span class="val">${escapeHtml(planLabel)}</span></div>`;
+      if (siotuga.wms_layer) html += `<div class="hint">Capa SIOTUGA: ${escapeHtml(siotuga.wms_layer)}</div>`;
     }
     if (siotuga.approval_date) {
-      html += `<div class="info-row"><span class="key">Aprobación</span><span class="val">${siotuga.approval_date}</span></div>`;
+      html += `<div class="info-row"><span class="key">Fecha identificada</span><span class="val">${escapeHtml(siotuga.approval_date)}</span></div>`;
     }
     rows.slice(0, 3).forEach(r => {
       const figura = r.FIGURA || r.Figura || r.figura || 'Planeamiento';
       const estado = r.ESTADO || r.Estado || r.estado || '—';
       const fecha = r.FECHA_APROBACION || r.Fecha || r.fecha || '';
-      html += `<div class="info-row"><span class="key">${figura}</span><span class="val">${estado}${fecha ? ' (' + fecha + ')' : ''}</span></div>`;
+      html += `<div class="info-row"><span class="key">${escapeHtml(figura)}</span><span class="val">${escapeHtml(estado)}${fecha ? ' (' + escapeHtml(fecha) + ')' : ''}</span></div>`;
     });
     html += '</div>';
   }
@@ -745,12 +800,12 @@ function renderOfficialContext(ctx) {
     html += '<div class="info-card">';
     html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Afecciones preliminares</div>';
     (aff.land_cover_labels || []).slice(0, 3).forEach(v => {
-      html += `<div class="info-row"><span class="key">Cobertura</span><span class="val">${v}</span></div>`;
+      html += `<div class="info-row"><span class="key">Cobertura</span><span class="val">${escapeHtml(v)}</span></div>`;
     });
     (aff.alerts || []).slice(0, 3).forEach(v => {
-      html += `<div class="hint">• ${v}</div>`;
+      html += `<div class="hint">${escapeHtml(v)}</div>`;
     });
-    html += aff.disclaimer ? `<div class="hint">${aff.disclaimer}</div>` : '';
+    html += aff.disclaimer ? `<div class="hint">${escapeHtml(aff.disclaimer)}</div>` : '';
     html += '</div>';
   }
   // Enlaces a fuentes oficiales con datos específicos
@@ -759,7 +814,7 @@ function renderOfficialContext(ctx) {
     html += '<div class="info-card">';
     html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Verificar en fuente oficial</div>';
     for (const link of links) {
-      html += `<div class="info-row"><span class="key">${link.name}</span><span class="val"><a href="${link.url}" target="_blank" rel="noopener">${link.label}</a></span></div>`;
+      html += `<div class="info-row"><span class="key">${escapeHtml(link.name)}</span><span class="val"><a href="${escapeHtml(safeExternalUrl(link.url))}" target="_blank" rel="noopener">${escapeHtml(link.label)}</a></span></div>`;
     }
     html += '</div>';
   }
@@ -768,24 +823,28 @@ function renderOfficialContext(ctx) {
   if (prov.query_timestamp || prov.api_version) {
     html += '<div class="info-card">';
     html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Proveniencia</div>';
-    if (prov.query_timestamp) html += `<div class="info-row"><span class="key">Consulta</span><span class="val">${prov.query_timestamp}</span></div>`;
-    if (prov.api_version) html += `<div class="info-row"><span class="key">API</span><span class="val">v${prov.api_version}</span></div>`;
+    if (prov.query_timestamp) {
+      const queryDate = new Date(prov.query_timestamp);
+      html += `<div class="info-row"><span class="key">Consulta</span><span class="val">${escapeHtml(Number.isNaN(queryDate.getTime()) ? prov.query_timestamp : queryDate.toLocaleString('es-ES'))}</span></div>`;
+    }
+    if (prov.api_version) html += `<div class="info-row"><span class="key">API</span><span class="val">v${escapeHtml(prov.api_version)}</span></div>`;
     html += '</div>';
   }
   return html;
 }
 
 function renderMunicipioStats(features) {
-  const stats = { compatible: 0, supera_altura: 0, sin_dato: 0 };
+  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_dato: 0 };
   for (const f of (features || [])) {
     const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
     stats[s] = (stats[s] || 0) + 1;
   }
   return `
     <div class="info-card">
-      <div class="info-row"><span class="key">Compatibles</span><span class="val">${stats.compatible}</span></div>
-      <div class="info-row"><span class="key">Superan altura</span><span class="val">${stats.supera_altura}</span></div>
-      <div class="info-row"><span class="key">Sin dato</span><span class="val">${stats.sin_dato}</span></div>
+      <div class="info-row"><span class="key">Dentro límite piloto</span><span class="val">${stats.orientativo_dentro}</span></div>
+      <div class="info-row"><span class="key">Sobre límite piloto</span><span class="val">${stats.orientativo_supera}</span></div>
+      <div class="info-row"><span class="key">Sin dato normativo</span><span class="val">${stats.sin_dato}</span></div>
+      <div class="hint">Resultados orientativos: las subzonas piloto no representan la delimitación oficial.</div>
     </div>`;
 }
 
@@ -795,8 +854,8 @@ function renderBuildingFilters() {
       <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Filtro de edificios</div>
       <div class="filter-row">
         <button class="filter-btn ${currentBuildingFilter === 'all' ? 'active' : ''}" onclick="setBuildingFilter('all')">Todos</button>
-        <button class="filter-btn ${currentBuildingFilter === 'compatible' ? 'active' : ''}" onclick="setBuildingFilter('compatible')">Compatibles</button>
-        <button class="filter-btn ${currentBuildingFilter === 'supera_altura' ? 'active' : ''}" onclick="setBuildingFilter('supera_altura')">Superan</button>
+        <button class="filter-btn ${currentBuildingFilter === 'orientativo_dentro' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_dentro')">Dentro (piloto)</button>
+        <button class="filter-btn ${currentBuildingFilter === 'orientativo_supera' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_supera')">Sobre (piloto)</button>
         <button class="filter-btn ${currentBuildingFilter === 'sin_dato' ? 'active' : ''}" onclick="setBuildingFilter('sin_dato')">Sin dato</button>
       </div>
     </div>`;
@@ -831,8 +890,10 @@ async function loadBuildings(municipio) {
   loadingMsg.textContent = 'Cargando edificios 3D de OpenStreetMap…';
   if (panel) panel.appendChild(loadingMsg);
   try {
+    await waitForMap();
     const resp = await fetch(`${API}/proxy/osm-buildings?municipio=${encodeURIComponent(municipio)}&limit=3000`);
     const geojson = await resp.json();
+    if (activeMunicipio !== municipio) return;
     const features = geojson.features || [];
     const loadingEl = document.getElementById('buildings-loading');
     if (loadingEl) loadingEl.remove();
@@ -855,6 +916,8 @@ async function loadBuildings(municipio) {
             'match', ['get', 'cumplimiento_altura'],
             'compatible', '#2da44e',
             'supera_altura', '#f85149',
+            'orientativo_dentro', '#d29922',
+            'orientativo_supera', '#bc4c00',
             '#58a6ff'
           ],
           'fill-extrusion-height': ['get', '_altura_visual'],
@@ -908,16 +971,16 @@ async function loadBuildings(municipio) {
 
     const panel = document.getElementById('info-panel');
     if (panel && activeMunicipio) {
-      window._lastMunicipioPanelHtml = () => `<h2>${activeMunicipio}</h2>
+      window._lastMunicipioPanelHtml = () => `<h2>${escapeHtml(activeMunicipio)}</h2>
         <div class="info-card">
-          <div class="info-row"><span class="key">Subzonas</span><span class="val">${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
-          <div class="info-row"><span class="key">Edificios 3D</span><span class="val">${features.length}</span></div>
-          <div class="info-row"><span class="key">Vista</span><span class="val">Normativa + edificios</span></div>
-          <div class="info-row"><span class="key">Filtro activo</span><span class="val">${currentBuildingFilter}</span></div>
+          <div class="info-row"><span class="key">Subzonas piloto</span><span class="val">${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
+          <div class="info-row"><span class="key">Edificios OSM 3D</span><span class="val">${features.length}</span></div>
+          <div class="info-row"><span class="key">Zonificación oficial</span><span class="val">SIOTUGA (capa visual)</span></div>
+          <div class="info-row"><span class="key">Filtro activo</span><span class="val">${escapeHtml(currentBuildingFilter)}</span></div>
         </div>
         ${renderMunicipioStats(features)}
         ${renderBuildingFilters()}
-        <div class="hint">Verde = compatible con altura de subzona. Rojo = supera altura. Azul = sin dato normativo. Haz clic en un edificio o subzona.</div>`;
+        <div class="hint">Amarillo/naranja = comparación orientativa con límites piloto. Azul = sin dato normativo. La capa SIOTUGA es la referencia visual oficial.</div>`;
       panel.innerHTML = window._lastMunicipioPanelHtml();
     }
 
@@ -941,30 +1004,34 @@ async function loadBuildings(municipio) {
 async function selectBuilding(feature) {
   const props = feature.properties || {};
   const panel = document.getElementById('info-panel');
-  const h = props.height != null ? `${props.height} m` : '—';
-  const levels = props.levels || '—';
-  const btype = props.building || '—';
-  const subzona = props.subzona || '—';
-  const alturaSubzona = props.altura_maxima_subzona_m != null ? `${props.altura_maxima_subzona_m} m` : '—';
+  const h = props.height != null ? `${props.height} m` : 'No disponible';
+  const levels = props.levels || 'No disponible';
+  const subzona = props.subzona || 'No asociada';
+  const alturaSubzona = props.altura_maxima_subzona_m != null ? `${props.altura_maxima_subzona_m} m` : 'No disponible';
   const status = props.cumplimiento_altura || 'sin_dato';
-  const statusTxt = status === 'compatible' ? 'Compatible' : status === 'supera_altura' ? 'Supera altura' : 'Sin dato';
-  const statusClass = status === 'compatible' ? 'apto' : status === 'supera_altura' ? 'no_apto' : 'condicionado';
+  const pilot = props.normative_status === 'pilot';
+  let footprint = null;
+  try { footprint = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
 
-  let html = `<h2>Edificio ${props.name || '#' + (props.osm_id || 'OSM')}</h2>`;
-  html += `<div style="margin-bottom:8px"><span class="badge ${statusClass}">${statusTxt}</span></div>`;
+  let html = `<h2>${escapeHtml(props.name || 'Edificio #' + (props.osm_id || 'OSM'))}</h2>`;
+  html += `<div style="margin-bottom:8px"><span class="badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span></div>`;
+  if (pilot) html += '<div class="hint" style="color:#d29922;margin-bottom:8px">Comparación piloto, no oficial. Verifica la parcela y la ordenanza en SIOTUGA/Catastro antes de tomar decisiones.</div>';
   html += '<div class="info-card">';
-  html += `<div class="info-row"><span class="key">Tipo</span><span class="val">${btype}</span></div>`;
-  html += `<div class="info-row"><span class="key">Altura estimada</span><span class="val">${h}</span></div>`;
-  html += `<div class="info-row"><span class="key">Plantas</span><span class="val">${levels}</span></div>`;
-  html += `<div class="info-row"><span class="key">Subzona</span><span class="val">${subzona}</span></div>`;
-  html += `<div class="info-row"><span class="key">Altura máx. subzona</span><span class="val">${alturaSubzona}</span></div>`;
-  html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${props.osm_id || '—'}</span></div>`;
+  html += `<div class="info-row"><span class="key">Tipo OSM</span><span class="val">${escapeHtml(buildingTypeLabel(props.building))}</span></div>`;
+  html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}</span></div>`;
+  html += `<div class="info-row"><span class="key">Procedencia altura</span><span class="val">${escapeHtml(heightSourceLabel(props.height_source))}</span></div>`;
+  html += `<div class="info-row"><span class="key">Plantas OSM</span><span class="val">${escapeHtml(levels)}</span></div>`;
+  if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
+  html += `<div class="info-row"><span class="key">${pilot ? 'Subzona piloto' : 'Subzona'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
+  html += `<div class="info-row"><span class="key">${pilot ? 'Límite de altura piloto' : 'Altura máx. subzona'}</span><span class="val">${escapeHtml(alturaSubzona)}</span></div>`;
+  if (props.normative_source) html += `<div class="info-row"><span class="key">Fuente del límite</span><span class="val">${escapeHtml(props.normative_source)}</span></div>`;
+  const osmId = String(props.osm_id || '');
+  html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—'}</span></div>`;
   html += '</div>';
-  // Botón exportar IFC
   if (props.height && props.height > 0) {
-    html += `<button class="eval-btn" onclick="exportBuildingIFC(${props.height})">Exportar IFC (BIM)</button>`;
+    html += `<button class="eval-btn" onclick="exportBuildingIFC(${Number(props.height)})">Exportar geometría IFC aproximada</button>`;
   }
-  html += `<div class="hint">${props.cumplimiento_detalle || props.color_semantica || 'Sin evaluación normativa disponible para este edificio.'}</div>`;
+  html += `<div class="hint">${escapeHtml(props.cumplimiento_detalle || props.color_semantica || 'Sin evaluación normativa disponible para este edificio.')}</div>`;
   panel.innerHTML = html + '<div class="loading">Cargando diagnóstico y contexto oficial…</div>';
   window._selectedBuildingFeature = feature;
   try {
@@ -972,25 +1039,29 @@ async function selectBuilding(feature) {
     const coords = center.geometry.coordinates;
     // Cargar diagnóstico comparativo y contexto oficial en paralelo
     const [diagResp, ctx] = await Promise.all([
-      fetch(`${API}/zoning/building-diagnostic?height_m=${props.height || ''}&levels=${props.levels || ''}&subzona=${encodeURIComponent(props.subzona || '')}&municipio=${encodeURIComponent(props.municipio || activeMunicipio || '')}&lon=${coords[0]}&lat=${coords[1]}`).then(r => r.json()).catch(() => null),
+      fetch(`${API}/zoning/building-diagnostic?height_m=${props.height || ''}&levels=${props.levels || ''}&footprint_m2=${footprint || ''}&subzona=${encodeURIComponent(props.subzona || '')}&municipio=${encodeURIComponent(props.municipio || activeMunicipio || '')}&lon=${coords[0]}&lat=${coords[1]}`).then(r => r.json()).catch(() => null),
       fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
     ]);
     let diagHtml = '';
     if (diagResp && diagResp.available && diagResp.comparisons && diagResp.comparisons.length > 0) {
       diagHtml = '<div class="info-card">';
-      diagHtml += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Diagnóstico comparativo</div>';
-      diagHtml += '<table style="width:100%;font-size:12px"><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>';
+      diagHtml += `<div style="font-size:12px;color:#8b949e;margin-bottom:8px">${diagResp.normative_status === 'pilot' ? 'Comparación orientativa (datos piloto)' : 'Diagnóstico comparativo'}</div>`;
+      if (diagResp.warning) diagHtml += `<div class="hint" style="color:#d29922">${escapeHtml(diagResp.warning)}</div>`;
+      diagHtml += '<table style="width:100%;font-size:12px"><thead><tr><th>Parámetro</th><th>Edificio</th><th>Límite</th><th>Resultado</th></tr></thead><tbody>';
       for (const c of diagResp.comparisons) {
-        const cumpleIcon = c.cumple === true ? '✓' : c.cumple === false ? '✗' : '—';
-        const cumpleColor = c.cumple === true ? '#2da44e' : c.cumple === false ? '#f85149' : '#8b949e';
-        diagHtml += `<tr><td>${c.parametro}</td><td>${c.valor_edificio}</td><td>${c.valor_normativo}</td><td style="color:${cumpleColor};font-weight:600">${cumpleIcon}</td></tr>`;
-        if (c.detalle) diagHtml += `<tr><td colspan="4" style="font-size:11px;color:#8b949e;padding-left:12px">${c.detalle}</td></tr>`;
+        const orientativo = c.resultado_orientativo;
+        const cumpleIcon = orientativo === 'dentro' ? '≈ dentro' : orientativo === 'supera' ? '≈ supera' : c.cumple === true ? '✓' : c.cumple === false ? '✗' : '—';
+        const cumpleColor = orientativo === 'dentro' ? '#d29922' : orientativo === 'supera' ? '#bc4c00' : c.cumple === true ? '#2da44e' : c.cumple === false ? '#f85149' : '#8b949e';
+        diagHtml += `<tr><td>${escapeHtml(c.parametro)}</td><td>${escapeHtml(c.valor_edificio)}</td><td>${escapeHtml(c.valor_normativo)}</td><td style="color:${cumpleColor};font-weight:600">${escapeHtml(cumpleIcon)}</td></tr>`;
+        if (c.detalle) diagHtml += `<tr><td colspan="4" style="font-size:11px;color:#8b949e;padding-left:12px">${escapeHtml(c.detalle)}</td></tr>`;
       }
       diagHtml += '</tbody></table>';
       if (diagResp.issues && diagResp.issues.length > 0) {
-        diagHtml += `<div style="margin-top:6px;color:#f85149;font-size:12px">⚠ ${diagResp.issues.join('; ')}</div>`;
+        diagHtml += `<div style="margin-top:6px;color:#f85149;font-size:12px">${escapeHtml(diagResp.issues.join('; '))}</div>`;
       } else if (diagResp.verdict === 'compatible') {
-        diagHtml += `<div style="margin-top:6px;color:#2da44e;font-size:12px">✓ Todos los parámetros cumplen</div>`;
+        diagHtml += '<div style="margin-top:6px;color:#2da44e;font-size:12px">Los parámetros comparables cumplen</div>';
+      } else if (diagResp.normative_status === 'pilot') {
+        diagHtml += '<div style="margin-top:6px;color:#d29922;font-size:12px">Resultado no vinculante: verificar ordenanza y parcela oficiales.</div>';
       }
       diagHtml += '</div>';
     }
@@ -1026,7 +1097,7 @@ async function selectSubzone(feature) {
 
   fields.forEach(([label, val]) => {
     if (val !== undefined && val !== null && val !== '—') {
-      html += `<div class="info-row"><span class="key">${label}</span><span class="val">${val}</span></div>`;
+      html += `<div class="info-row"><span class="key">${escapeHtml(label)}</span><span class="val">${escapeHtml(val)}</span></div>`;
     }
   });
   html += '</div>';
@@ -1180,7 +1251,7 @@ async function assessSubzone() {
 }
 
 window.addEventListener('load', () => {
-  initMap();
+  try { initMap(); } catch (e) { console.error('Error initMap:', e); }
   loadMunicipios();
 });
 </script>

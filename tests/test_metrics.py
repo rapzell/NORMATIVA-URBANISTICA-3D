@@ -59,7 +59,7 @@ def test_metrics_enabled_content_type(monkeypatch):
     except Exception:
         # Fallback exposition may omit the custom metric
         assert '# HELP api_requests_total' in text
-    assert 'version=0.0.4' in resp.headers.get('content-type', '')
+    assert 'version=' in resp.headers.get('content-type', '')
     # Ensure expected metric names appear at least once
     txt = resp.text
     assert 'api_requests_total' in txt

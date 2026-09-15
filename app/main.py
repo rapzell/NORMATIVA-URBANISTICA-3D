@@ -64,6 +64,12 @@ import xml.etree.ElementTree as ET
 import json as _json
 import csv
 
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 API_VERSION = "0.2.1"
 
 # Lifespan para inicialización (autocarga de plan por defecto si existe datos/plan_uploaded.csv)
@@ -735,8 +741,8 @@ async def admin_reload_plan(
 # --- Redirecciones de conveniencia ---
 @app.get("/")
 async def root_redirect():
-    # Ir directo al visor principal
-    return RedirectResponse(url="/viewer")
+    # Ir directo al visor principal (GeoLibre)
+    return RedirectResponse(url="/geolibre")
 
 @app.get("/web")
 async def web_redirect():
@@ -855,8 +861,65 @@ def _siose_cache_set(key, data):
     except Exception:
         pass
 
+_SIOSE_CLASS_LABELS = {
+    '110': 'Tejido urbano',
+    '111': 'Centro urbano',
+    '112': 'Área de expansión urbana',
+    '113': 'Tejido urbano discontinuo',
+    '114': 'Zonas verdes urbanas',
+    '140': 'Servicios públicos',
+    '161': 'Redes viarias y ferroviarias',
+    '330': 'Matorral',
+    '354': 'Suelo desnudo',
+    '514': 'Masa de agua artificial',
+}
+
+
+def _parse_siose_gml(raw: bytes) -> dict:
+    root = ET.fromstring(raw)
+    ns = {
+        'wfs': 'http://www.opengis.net/wfs/2.0',
+        'gml': 'http://www.opengis.net/gml/3.2',
+        'lcv': 'http://inspire.ec.europa.eu/schemas/lcv/4.0',
+        'xlink': 'http://www.w3.org/1999/xlink',
+    }
+    features = []
+    for member in root.findall('.//wfs:member', ns):
+        unit = member.find('lcv:LandCoverUnit', ns)
+        if unit is None:
+            continue
+        class_el = unit.find('./lcv:landCoverObservation/lcv:LandCoverObservation/lcv:class', ns)
+        href = class_el.get(f'{{{ns["xlink"]}}}href', '') if class_el is not None else ''
+        code = href.rstrip('/').rsplit('/', 1)[-1] if href else ''
+        polygons = []
+        for patch in unit.findall('.//gml:PolygonPatch', ns):
+            rings = []
+            exterior = patch.find('./gml:exterior//gml:posList', ns)
+            ring_nodes = ([exterior] if exterior is not None else []) + patch.findall('./gml:interior//gml:posList', ns)
+            for pos_list in ring_nodes:
+                values = [float(v) for v in (pos_list.text or '').split()]
+                ring = [[values[i], values[i + 1]] for i in range(0, len(values) - 1, 2)]
+                if len(ring) >= 4:
+                    rings.append(ring)
+            if rings:
+                polygons.append(rings)
+        if not polygons:
+            continue
+        geometry = {'type': 'Polygon', 'coordinates': polygons[0]} if len(polygons) == 1 else {'type': 'MultiPolygon', 'coordinates': polygons}
+        features.append({
+            'type': 'Feature',
+            'geometry': geometry,
+            'properties': {
+                'code': code,
+                'label': _SIOSE_CLASS_LABELS.get(code, f'Clase CODIIGE {code}' if code else 'Sin clasificar'),
+                'source': 'SIOSE Alta Resolución 2017 (IDEE)',
+            },
+        })
+    return {'type': 'FeatureCollection', 'features': features}
+
+
 @app.get("/proxy/siose")
-async def proxy_siose(bbox: str, typeNames: str = "elu:LandCoverUnit", srsName: str = "EPSG:4326", version: str = "2.0.0", max_age: int = 15):
+async def proxy_siose(bbox: str, typeNames: str = "lcv:LandCoverUnit", srsName: str = "EPSG:4326", version: str = "2.0.0", max_age: int = 15):
     try:
         bb = bbox.strip()
         if bb.count(',') == 3 and srsName:
@@ -872,7 +935,8 @@ async def proxy_siose(bbox: str, typeNames: str = "elu:LandCoverUnit", srsName: 
             "typeNames": typeNames,
             "srsName": srsName,
             "bbox": bb,
-            "outputFormat": "application/json",
+            "outputFormat": 'application/gml+xml; version=3.2',
+            "count": 500,
         }
         from urllib.parse import urlencode as _urlencode
         from urllib.request import urlopen as _urlopen, Request as _Request
@@ -889,11 +953,7 @@ async def proxy_siose(bbox: str, typeNames: str = "elu:LandCoverUnit", srsName: 
                         return empty
                     raise HTTPException(status_code=resp.status, detail=f"SIOSE status {resp.status}")
                 raw = resp.read()
-                try:
-                    import json as _json
-                    data = _json.loads(raw.decode("utf-8", "ignore"))
-                except Exception:
-                    return Response(content=raw, media_type=resp.headers.get('Content-Type', 'application/json'))
+                data = _parse_siose_gml(raw)
         except _HTTPError as e:
             # Amortiguar 4xx: devolver colección vacía y 200
             try:
@@ -1945,6 +2005,9 @@ def _parse_catastro_rccoor_xml(raw: bytes) -> dict:
     root = ET.fromstring(raw)
   except Exception:
     return {'found': False, 'error': 'XML inválido'}
+  for elem in root.iter():
+    if '}' in elem.tag:
+      elem.tag = elem.tag.rsplit('}', 1)[-1]
   # Buscar el nodo coord en cualquier namespace
   coord = root.find('.//coord')
   if coord is None:
@@ -2003,56 +2066,414 @@ _GALICIA_BBOX = {
 }
 
 # Mapeo de municipios a códigos INE para SIOTUGA
+# Fuente: INE - Relación de municipios y sus códigos (313 concellos de Galicia)
+# Incluye alias comunes (sin artículo, formas cortas) para matching flexible
 _MUNICIPIO_INE: dict[str, str] = {
-  'vigo': '36057',
+  'a arnoia': '32003',
+  'a bana': '15007',
+  'a bola': '32014',
+  'a caniza': '36009',
+  'a capela': '15018',
   'a coruna': '15030',
-  'a coruña': '15030',
-  'coruna': '15030',
-  'coruña': '15030',
-  'santiago de compostela': '27059',
-  'santiago': '27059',
-  'lugo': '27028',
-  'ourense': '32054',
-  'pontevedra': '36042',
-  'ferrol': '15027',
-  'vilagarcia de arousa': '36062',
-  'vilanova de arousa': '36063',
-  'redondela': '36042',
-  'porrino': '36041',
-  'poio': '36040',
-  'marin': '36027',
-  'nigran': '36031',
-  'baiona': '36005',
-  'cangas': '36012',
-  'moana': '36029',
-  'arteixo': '15006',
-  'culleredo': '15025',
+  'a estrada': '36017',
+  'a fonsagrada': '27018',
+  'a guarda': '36023',
+  'a gudina': '32034',
+  'a illa de arousa': '36901',
+  'a lama': '36025',
+  'a laracha': '15041',
+  'a merca': '32047',
+  'a mezquita': '32048',
+  'a pastoriza': '27044',
+  'a peroxa': '32059',
+  'a pobra de trives': '32063',
+  'a pobra do brollon': '27047',
+  'a pobra do caraminal': '15067',
+  'a pontenova': '27048',
+  'a rua': '32072',
+  'a teixeira': '32080',
+  'a veiga': '32083',
+  'abadin': '27001',
+  'abegondo': '15001',
+  'agolada': '36020',
+  'alfoz': '27002',
+  'allariz': '32001',
   'ames': '15002',
+  'amoeiro': '32002',
+  'antas de ulla': '27003',
+  'aranga': '15003',
+  'arbo': '36001',
+  'ares': '15004',
+  'arnoia': '32003',
+  'arnoia, a': '32003',
+  'arteixo': '15005',
+  'arzua': '15006',
+  'as neves': '36034',
+  'as nogais': '27037',
+  'as pontes de garcia rodriguez': '15070',
+  'as somozas': '15081',
+  'avion': '32004',
+  'baiona': '36003',
+  'baleira': '27004',
+  'baltar': '32005',
+  'bana': '15007',
+  'bana, a': '15007',
+  'bande': '32006',
+  'banos de molgas': '32007',
+  'baralla': '27901',
+  'barbadas': '32008',
+  'barco de valdeorras': '32009',
+  'barco de valdeorras, o': '32009',
+  'barreiros': '27005',
+  'barro': '36002',
+  'beade': '32010',
+  'beariz': '32011',
+  'becerrea': '27006',
+  'begonte': '27007',
+  'bergondo': '15008',
   'bertamirans': '15002',
-  'padron': '36038',
-  'rois': '36045',
-  'teo': '36053',
-  'valga': '36057',
-  'dodro': '36014',
-  'lousame': '36024',
-  'noia': '36033',
-  'boiro': '36009',
-  'ribeira': '36043',
-  'portodo son': '36042',
-  'muros': '36030',
-  'muxia': '36031',
-  'carnota': '36012',
-  'fisterra': '36017',
-  'corcubion': '36013',
-  'cee': '36011',
-  'camarinas': '36010',
-  'malpica': '36026',
-  'ponteceso': '36039',
-  'carballo': '36011',
-  'coristanco': '36013',
-  'laxe': '36022',
-  'vimianzo': '36058',
-  'zas': '36059',
+  'betanzos': '15009',
+  'blancos': '32012',
+  'blancos, os': '32012',
+  'boboras': '32013',
+  'boimorto': '15010',
+  'boiro': '15011',
+  'bola': '32014',
+  'bola, a': '32014',
+  'bolo': '32015',
+  'bolo, o': '32015',
+  'boqueixon': '15012',
+  'boveda': '27008',
+  'brion': '15013',
+  'bueu': '36004',
+  'burela': '27902',
+  'cabana de bergantinos': '15014',
+  'cabanas': '15015',
+  'caldas de reis': '36005',
+  'calvos de randin': '32016',
+  'camarinas': '15016',
+  'cambados': '36006',
+  'cambre': '15017',
+  'campo lameiro': '36007',
+  'cangas': '36008',
+  'caniza': '36009',
+  'caniza, a': '36009',
+  'capela': '15018',
+  'capela, a': '15018',
+  'carballeda de avia': '32018',
+  'carballeda de valdeorras': '32017',
+  'carballedo': '27009',
+  'carballino': '32019',
+  'carballino, o': '32019',
+  'carballo': '15019',
+  'carino': '15901',
+  'carnota': '15020',
+  'carral': '15021',
+  'cartelle': '32020',
+  'castrelo de mino': '32022',
+  'castrelo do val': '32021',
+  'castro caldelas': '32023',
+  'castro de rei': '27010',
+  'castroverde': '27011',
+  'catoira': '36010',
+  'cedeira': '15022',
+  'cee': '15023',
+  'celanova': '32024',
+  'cenlle': '32025',
+  'cerceda': '15024',
+  'cerdedo-cotobade': '36902',
+  'cerdido': '15025',
+  'cervantes': '27012',
+  'cervo': '27013',
+  'chandrexa de queixa': '32029',
+  'chantada': '27016',
+  'coiros': '15027',
+  'coles': '32026',
+  'corcubion': '15028',
+  'corgo': '27014',
+  'corgo, o': '27014',
+  'coristanco': '15029',
+  'cortegada': '32027',
+  'coruna': '15030',
+  'coruna, a': '15030',
+  'cospeito': '27015',
+  'covelo': '36013',
+  'crecente': '36014',
+  'cualedro': '32028',
+  'culleredo': '15031',
+  'cuntis': '36015',
+  'curtis': '15032',
+  'dodro': '15033',
+  'dozon': '36016',
+  'dumbria': '15034',
+  'entrimo': '32030',
+  'esgos': '32031',
+  'estrada': '36017',
+  'estrada, a': '36017',
+  'fene': '15035',
+  'ferrol': '15036',
+  'fisterra': '15037',
+  'folgoso do courel': '27017',
+  'fonsagrada': '27018',
+  'fonsagrada, a': '27018',
+  'forcarei': '36018',
+  'fornelos de montes': '36019',
+  'foz': '27019',
+  'frades': '15038',
+  'friol': '27020',
+  'gomesende': '32033',
+  'gondomar': '36021',
+  'grove': '36022',
+  'grove, o': '36022',
+  'guarda': '36023',
+  'guarda, a': '36023',
+  'gudina': '32034',
+  'gudina, a': '32034',
+  'guitiriz': '27022',
+  'guntin': '27023',
+  'illa de arousa': '36901',
+  'illa de arousa, a': '36901',
+  'incio': '27024',
+  'incio, o': '27024',
+  'irixo': '32035',
+  'irixo, o': '32035',
+  'irixoa': '15039',
+  'lalin': '36024',
+  'lama': '36025',
+  'lama, a': '36025',
+  'lancara': '27026',
+  'laracha': '15041',
+  'laracha, a': '15041',
+  'larouco': '32038',
+  'laxe': '15040',
+  'laza': '32039',
+  'leiro': '32040',
+  'lobeira': '32041',
+  'lobios': '32042',
+  'lourenza': '27027',
+  'lousame': '15042',
+  'lugo': '27028',
+  'maceda': '32043',
+  'malpica de bergantinos': '15043',
+  'manon': '15044',
+  'manzaneda': '32044',
+  'marin': '36026',
+  'maside': '32045',
+  'mazaricos': '15045',
+  'meano': '36027',
+  'meira': '27029',
+  'meis': '36028',
+  'melide': '15046',
+  'melon': '32046',
+  'merca': '32047',
+  'merca, a': '32047',
+  'mesia': '15047',
+  'mezquita': '32048',
+  'mezquita, a': '32048',
+  'mino': '15048',
+  'moana': '36029',
+  'moeche': '15049',
+  'mondariz': '36030',
+  'mondariz-balneario': '36031',
+  'mondonedo': '27030',
+  'monfero': '15050',
+  'monforte de lemos': '27031',
+  'montederramo': '32049',
+  'monterrei': '32050',
+  'monterroso': '27032',
+  'morana': '36032',
+  'mos': '36033',
+  'mugardos': '15051',
+  'muinos': '32051',
+  'muras': '27033',
+  'muros': '15053',
+  'muxia': '15052',
+  'naron': '15054',
+  'navia de suarna': '27034',
+  'neda': '15055',
+  'negreira': '15056',
+  'negueira de muniz': '27035',
+  'neves': '36034',
+  'neves, as': '36034',
+  'nigran': '36035',
+  'nogais': '27037',
+  'nogais, as': '27037',
+  'nogueira de ramuin': '32052',
+  'noia': '15057',
+  'o barco de valdeorras': '32009',
+  'o bolo': '32015',
+  'o carballino': '32019',
+  'o corgo': '27014',
+  'o grove': '36022',
+  'o incio': '27024',
+  'o paramo': '27043',
+  'o pereiro de aguiar': '32058',
+  'o pino': '15066',
+  'o porrino': '36039',
+  'o rosal': '36048',
+  'o savinao': '27058',
+  'o valadouro': '27063',
+  'o vicedo': '27064',
+  'oia': '36036',
+  'oimbra': '32053',
+  'oleiros': '15058',
+  'ordes': '15059',
+  'oroso': '15060',
+  'ortigueira': '15061',
+  'os blancos': '32012',
+  'ourense': '32054',
+  'ourol': '27038',
+  'outeiro de rei': '27039',
+  'outes': '15062',
+  'oza-cesuras': '15902',
+  'paderne': '15064',
+  'paderne de allariz': '32055',
+  'padrenda': '32056',
+  'padron': '15065',
+  'palas de rei': '27040',
+  'panton': '27041',
+  'parada de sil': '32057',
+  'paradela': '27042',
+  'paramo': '27043',
+  'paramo, o': '27043',
+  'pastoriza': '27044',
+  'pastoriza, a': '27044',
+  'pazos de borben': '36037',
+  'pedrafita do cebreiro': '27045',
+  'pereiro de aguiar': '32058',
+  'pereiro de aguiar, o': '32058',
+  'peroxa': '32059',
+  'peroxa, a': '32059',
+  'petin': '32060',
+  'pino': '15066',
+  'pino, o': '15066',
+  'pinor': '32061',
+  'pobra de trives': '32063',
+  'pobra de trives, a': '32063',
+  'pobra do brollon': '27047',
+  'pobra do brollon, a': '27047',
+  'pobra do caraminal': '15067',
+  'pobra do caraminal, a': '15067',
+  'poio': '36041',
+  'pol': '27046',
+  'ponte caldelas': '36043',
+  'ponteareas': '36042',
+  'ponteceso': '15068',
+  'pontecesures': '36044',
+  'pontedeume': '15069',
+  'pontedeva': '32064',
+  'pontenova': '27048',
+  'pontenova, a': '27048',
+  'pontes de garcia rodriguez': '15070',
+  'pontes de garcia rodriguez, as': '15070',
+  'pontevedra': '36038',
+  'porqueira': '32062',
+  'porrino': '36039',
+  'porrino, o': '36039',
+  'portas': '36040',
+  'porto do son': '15071',
+  'portodo son': '15071',
+  'portomarin': '27049',
+  'punxin': '32065',
+  'quintela de leirado': '32066',
+  'quiroga': '27050',
+  'rabade': '27056',
+  'rairiz de veiga': '32067',
+  'ramiras': '32068',
+  'redondela': '36045',
+  'rianxo': '15072',
+  'ribadavia': '32069',
+  'ribadeo': '27051',
+  'ribadumia': '36046',
+  'ribas de sil': '27052',
+  'ribeira': '15073',
+  'ribeira de piquin': '27053',
+  'rios': '32071',
+  'riotorto': '27054',
+  'rodeiro': '36047',
+  'rois': '15074',
+  'rosal': '36048',
+  'rosal, o': '36048',
+  'rua': '32072',
+  'rua, a': '32072',
+  'rubia': '32073',
+  'sada': '15075',
+  'salceda de caselas': '36049',
+  'salvaterra de mino': '36050',
+  'samos': '27055',
+  'san amaro': '32074',
+  'san cibrao das vinas': '32075',
+  'san cristovo de cea': '32076',
+  'san sadurnino': '15076',
+  'san xoan de rio': '32070',
+  'sandias': '32077',
+  'santa comba': '15077',
+  'santiago': '15078',
+  'santiago de compostela': '15078',
+  'santiso': '15079',
+  'sanxenxo': '36051',
+  'sarreaus': '32078',
+  'sarria': '27057',
+  'savinao': '27058',
+  'savinao, o': '27058',
+  'silleda': '36052',
+  'sober': '27059',
+  'sobrado': '15080',
+  'somozas': '15081',
+  'somozas, as': '15081',
+  'soutomaior': '36053',
+  'taboada': '27060',
+  'taboadela': '32079',
+  'teixeira': '32080',
+  'teixeira, a': '32080',
+  'teo': '15082',
+  'toen': '32081',
+  'tomino': '36054',
+  'toques': '15083',
+  'tordoia': '15084',
+  'touro': '15085',
+  'trabada': '27061',
+  'trasmiras': '32082',
+  'trazo': '15086',
+  'triacastela': '27062',
+  'tui': '36055',
+  'val do dubra': '15088',
+  'valadouro': '27063',
+  'valadouro, o': '27063',
+  'valdovino': '15087',
+  'valga': '36056',
+  'vedra': '15089',
+  'veiga': '32083',
+  'veiga, a': '32083',
+  'verea': '32084',
+  'verin': '32085',
+  'viana do bolo': '32086',
+  'vicedo': '27064',
+  'vicedo, o': '27064',
+  'vigo': '36057',
+  'vila de cruces': '36059',
+  'vilaboa': '36058',
+  'vilagarcia': '36060',
+  'vilagarcia de arousa': '36060',
+  'vilalba': '27065',
+  'vilamarin': '32087',
+  'vilamartin de valdeorras': '32088',
+  'vilanova': '36061',
+  'vilanova de arousa': '36061',
+  'vilar de barrio': '32089',
+  'vilar de santos': '32090',
+  'vilardevos': '32091',
+  'vilarino de conso': '32092',
+  'vilarmaior': '15091',
+  'vilasantar': '15090',
+  'vimianzo': '15092',
+  'viveiro': '27066',
+  'xermade': '27021',
+  'xinzo de limia': '32032',
+  'xove': '27025',
+  'xunqueira de ambia': '32036',
+  'xunqueira de espadanedo': '32037',
+  'zas': '15093',
 }
 
 
@@ -2206,6 +2627,9 @@ def _fetch_catastro_by_ref(refcat: str) -> dict:
   with urlopen(req, timeout=20) as resp:
     raw = resp.read()
   root = ET.fromstring(raw)
+  for elem in root.iter():
+    if '}' in elem.tag:
+      elem.tag = elem.tag.rsplit('}', 1)[-1]
   coord = root.find('.//coord')
   if coord is None:
     return {'found': False, 'refcat': rc}
@@ -2227,23 +2651,24 @@ def _fetch_siose_precheck(lon: float, lat: float, delta: float = 0.0015) -> dict
   cached = _official_cache_get(cache_key)
   if cached is not None:
     return cached
-  wfs_cache_key = (bb, 'elu:LandCoverUnit', 'EPSG:4326', '2.0.0')
+  wfs_cache_key = (bb, 'lcv:LandCoverUnit', 'EPSG:4326', '2.0.0')
   data = _siose_cache_get(wfs_cache_key, max_age=120)
   if data is None:
     params = {
       'service': 'WFS',
       'request': 'GetFeature',
       'version': '2.0.0',
-      'typeNames': 'elu:LandCoverUnit',
+      'typeNames': 'lcv:LandCoverUnit',
       'srsName': 'EPSG:4326',
       'bbox': bb,
-      'outputFormat': 'application/json',
+      'outputFormat': 'application/gml+xml; version=3.2',
+      'count': 50,
     }
     url = f"{SIOSE_WFS_URL}?{urlencode(params)}"
     req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
     with urlopen(req, timeout=15) as resp:
-      data = _json.loads(resp.read().decode('utf-8', 'ignore'))
-    _siose_cache_set(cache_key, data)
+      data = _parse_siose_gml(resp.read())
+    _siose_cache_set(wfs_cache_key, data)
   feats = data.get('features') or []
   labels: list[str] = []
   alerts: list[str] = []
@@ -2335,6 +2760,9 @@ def _fetch_catastro_details_by_ref(refcat: str) -> dict:
     root = ET.fromstring(raw)
   except Exception:
     return {}
+  for elem in root.iter():
+    if '}' in elem.tag:
+      elem.tag = elem.tag.rsplit('}', 1)[-1]
   result: dict = {}
   # Buscar el nodo bi (bien inmueble) en cualquier posición
   bi = root.find('.//bico/bi')
@@ -2704,6 +3132,27 @@ def zoning_building_diagnostic(
       'detalle': 'Retranqueo mínimo a linderos',
     })
 
+  is_pilot = str(subzone_props.get('normative_status') or '').lower() == 'pilot'
+  if is_pilot:
+    for comparison in comparisons:
+      comparison['detalle'] = f"Dato piloto: {comparison.get('detalle') or ''}".strip()
+      if comparison.get('cumple') is not None:
+        comparison['resultado_orientativo'] = 'dentro' if comparison['cumple'] else 'supera'
+        comparison['cumple'] = None
+    pilot_verdict = 'orientativo_dentro' if verdict == 'compatible' else 'orientativo_supera'
+    return {
+      'available': True,
+      'subzona': subzone_props.get('subzona'),
+      'municipio': subzone_props.get('municipio') or municipio,
+      'comparisons': comparisons,
+      'verdict': pilot_verdict,
+      'issues': [],
+      'observations': issues,
+      'normative_status': 'pilot',
+      'source': subzone_props.get('fuente'),
+      'warning': 'Diagnóstico orientativo basado en una subzona piloto no oficial.',
+      'summary': 'Comparación orientativa; requiere verificación en el planeamiento oficial',
+    }
   return {
     'available': True,
     'subzona': subzone_props.get('subzona'),
@@ -2711,6 +3160,8 @@ def zoning_building_diagnostic(
     'comparisons': comparisons,
     'verdict': verdict,
     'issues': issues,
+    'normative_status': 'verified',
+    'source': subzone_props.get('fuente'),
     'summary': 'Todos los parámetros cumplen' if verdict == 'compatible' else f'{len(issues)} parámetro(s) no cumplen',
   }
 
@@ -2759,22 +3210,23 @@ def _fetch_siose_afecciones_geojson(bbox: str) -> dict:
   bb = bbox.strip()
   if bb.count(',') == 3:
     bb = f"{bb},EPSG:4326"
-  cache_key = (bb, 'elu:LandCoverUnit', 'EPSG:4326', '2.0.0')
+  cache_key = (bb, 'lcv:LandCoverUnit', 'EPSG:4326', '2.0.0')
   data = _siose_cache_get(cache_key, max_age=120)
   if data is None:
     params = {
       'service': 'WFS',
       'request': 'GetFeature',
       'version': '2.0.0',
-      'typeNames': 'elu:LandCoverUnit',
+      'typeNames': 'lcv:LandCoverUnit',
       'srsName': 'EPSG:4326',
       'bbox': bb,
-      'outputFormat': 'application/json',
+      'outputFormat': 'application/gml+xml; version=3.2',
+      'count': 500,
     }
     url = f"{SIOSE_WFS_URL}?{urlencode(params)}"
     req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
     with urlopen(req, timeout=20) as resp:
-      data = _json.loads(resp.read().decode('utf-8', 'ignore'))
+      data = _parse_siose_gml(resp.read())
     _siose_cache_set(cache_key, data)
   out_features = []
   for feat in data.get('features') or []:

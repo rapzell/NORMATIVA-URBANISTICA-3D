@@ -93,6 +93,9 @@ def test_geolibre_index_has_building_filters():
     assert "setBuildingFilter" in body
     assert "applyBuildingFilter" in body
     assert "Filtro de edificios" in body
+    assert "orientativo_dentro" in body
+    assert "orientativo_supera" in body
+    assert "no acreditan cumplimiento urbanístico" in body
 
 
 def test_geolibre_index_has_assess_flow():

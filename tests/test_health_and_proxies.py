@@ -85,6 +85,35 @@ def test_official_catastro_by_coords_parses_xml(monkeypatch):
     assert 'VIGO' in j['direccion']
 
 
+def test_catastro_parser_handles_default_namespace():
+    import app.main as _m
+    raw = b'''<?xml version="1.0" encoding="utf-8"?>
+<consulta_coordenadas xmlns="http://www.catastro.meh.es/">
+  <coordenadas><coord>
+    <pc><pc1>3057003</pc1><pc2>NG2725N</pc2></pc>
+    <geo><xcen>-8.723</xcen><ycen>42.2311</ycen><srs>EPSG:4326</srs></geo>
+    <ldt>RU MARQUES DE ALCEDO 13 VIGO (PONTEVEDRA)</ldt>
+  </coord></coordenadas>
+</consulta_coordenadas>'''
+    parsed = _m._parse_catastro_rccoor_xml(raw)
+    assert parsed['found'] is True
+    assert parsed['refcat'] == '3057003NG2725N'
+    assert 'VIGO' in parsed['direccion']
+
+
+def test_siose_gml_parser_returns_geojson():
+    import app.main as _m
+    raw = b'''<wfs:FeatureCollection xmlns:wfs="http://www.opengis.net/wfs/2.0" xmlns:gml="http://www.opengis.net/gml/3.2" xmlns:lcv="http://inspire.ec.europa.eu/schemas/lcv/4.0" xmlns:xlink="http://www.w3.org/1999/xlink">
+<wfs:member><lcv:LandCoverUnit><lcv:geometry><gml:Surface><gml:patches><gml:PolygonPatch><gml:exterior><gml:LinearRing><gml:posList>-8.72 42.23 -8.71 42.23 -8.71 42.24 -8.72 42.23</gml:posList></gml:LinearRing></gml:exterior></gml:PolygonPatch></gml:patches></gml:Surface></lcv:geometry><lcv:landCoverObservation><lcv:LandCoverObservation><lcv:class xlink:href="https://registro.idee.es/codelist/CODIIGEValue/112"/></lcv:LandCoverObservation></lcv:landCoverObservation></lcv:LandCoverUnit></wfs:member>
+</wfs:FeatureCollection>'''
+    parsed = _m._parse_siose_gml(raw)
+    assert parsed['type'] == 'FeatureCollection'
+    assert len(parsed['features']) == 1
+    assert parsed['features'][0]['geometry']['type'] == 'Polygon'
+    assert parsed['features'][0]['properties']['code'] == '112'
+    assert parsed['features'][0]['properties']['label'] == 'Área de expansión urbana'
+
+
 def test_official_context_includes_planeamiento_without_geometry(monkeypatch):
     import app.main as _m
     monkeypatch.setattr(_m, '_load_inventario', lambda: [
@@ -145,6 +174,24 @@ def test_building_diagnostic_compatible(monkeypatch):
     alt_comp = [c for c in j['comparisons'] if c['parametro'] == 'Altura'][0]
     assert alt_comp['cumple'] is True
     assert 'margen' in alt_comp['diferencia']
+
+
+def test_building_diagnostic_marks_pilot_as_orientative(monkeypatch):
+    import src.subzones_service as _ss
+    monkeypatch.setattr(_ss, 'find_subzone_by_name', lambda municipio, subzona: {
+        'subzona': 'R-1', 'municipio': 'Vigo', 'altura_maxima_m': 12.0,
+        'normative_status': 'pilot', 'fuente': 'PXOM Vigo (piloto)',
+    }, raising=True)
+    r = client.get('/zoning/building-diagnostic', params={
+        'height_m': 9.0, 'subzona': 'R-1', 'municipio': 'Vigo',
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data['verdict'] == 'orientativo_dentro'
+    assert data['normative_status'] == 'pilot'
+    assert data['comparisons'][0]['cumple'] is None
+    assert data['comparisons'][0]['resultado_orientativo'] == 'dentro'
+    assert 'no oficial' in data['warning']
 
 
 def test_building_diagnostic_exceeds(monkeypatch):

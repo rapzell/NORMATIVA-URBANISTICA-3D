@@ -96,6 +96,28 @@ Se usan solo para los cálculos del backend (diagnóstico, viabilidad).
    - O parsear los PDFs del planeamiento y asociar parámetros a cada polígono
    - O usar el WMS solo como referencia visual y mantener los parámetros piloto para cálculos
 
-2. **Más municipios** — ampliar `_MUNICIPIO_INE` en `app/main.py` con los 313 municipios de Galicia
+2. ~~**Más municipios**~~ — HECHO: `_MUNICIPIO_INE` ahora tiene los 313 municipios de Galicia (fuente: INE) con alias. Se corrigieron errores graves: Pontevedra era 36042 (en realidad Ponteareas, correcto 36038), Santiago era 27059 (en realidad Sober, correcto 15078), Porriño era 36041 (en realidad Poio, correcto 36039), y muchos municipios de A Coruña tenían códigos de Pontevedra.
 
 3. **RAG normativo** — indexar los PDFs en `datos/normativa/` y permitir consultas en lenguaje natural
+
+4. **Ampliar `MUNICIPIO_CENTERS` en `src/subzones_service.py`** — solo tiene 5 municipios (Vigo, A Coruña, Santiago). Ampliar con centros para que el proxy de edificios OSM funcione en más municipios.
+
+## Notas sobre datos y reproducibilidad
+
+- `datos/` está gitignored salvo archivos de test. Los archivos trackeados son: `planes_municipales_sample.csv`, `planes_vigo_boiro.csv`, `subzonas_piloto.geojson`, `planes_ejemplo_residencial.csv`, `sample_parcela.geojson`, `sample_street_axis.geojson`.
+- `plan_uploaded.csv` es el CSV local de trabajo del usuario (se edita vía admin/reload-plan), permanece ignorado y no debe publicarse ni sobrescribirse.
+- `planes_municipales_sample.csv` es el fixture de tests (Vigo RZ-2 con setbacks 2/1/0.5 north → área 60).
+- `subzonas_piloto.geojson` tiene geometrías inventadas (no reales) con parámetros orientativos.
+- En Python 3.14, `torch==2.8.0` no está disponible. Los tests `test_asistente_normativa_rules.py` y `test_evaluar_dataset_helpers.py` requieren `sentence_transformers` (depende de torch) y se excluyen con `--ignore`.
+- `prometheus-client` >= 0.26 usa `version=1.0.0` en el content-type (antes `0.0.4`). El test `test_metrics_enabled_content_type` acepta cualquier versión.
+
+## Estado del bloque GeoLibre (auditoría 2026-09-15)
+
+- Catastro y SIOSE usan el almacén de certificados del sistema mediante `truststore`; no desactivar la verificación SSL.
+- El parser de Catastro elimina namespaces XML antes de extraer referencia y dirección.
+- SIOSE usa el tipo correcto `lcv:LandCoverUnit`, recibe GML 3.2 y lo convierte a GeoJSON.
+- La altura 3D coincide con la altura indicada; se eliminó la exageración visual del 35 %.
+- Cada edificio expone `height_source` y `height_estimated` para distinguir altura OSM, estimación por plantas, tipo o valor genérico.
+- Las comparaciones con `subzonas_piloto.geojson` usan estados `orientativo_dentro`/`orientativo_supera`; nunca deben mostrarse como cumplimiento o incumplimiento oficial.
+- El visor escapa datos externos antes de insertarlos en HTML y valida enlaces HTTP(S).
+- Verificación del bloque: 214 tests pasan (excluyendo los 2 de `sentence_transformers` incompatibles con Python 3.14), JavaScript válido con `node --check`, y prueba real positiva de Catastro, SIOSE, SIOTUGA y OSM.

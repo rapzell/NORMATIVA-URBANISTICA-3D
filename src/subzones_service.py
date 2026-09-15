@@ -136,28 +136,39 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
     delta = float(cfg.get("delta") or 0.01)
     raw = None
     last_error = None
-    for factor in (0.35, 0.22, 0.15):
+    for factor in (0.22, 0.15):
         qd = delta * factor
         south, west, north, east = lat - qd, lon - qd, lat + qd, lon + qd
         query = (
-            "[out:json][timeout:15];"
+            "[out:json][timeout:8];"
             f"way['building']({south},{west},{north},{east});"
             "out geom;"
         )
-        for overpass_url in _OVERPASS_URLS:
+
+        def _fetch_overpass(overpass_url: str):
             req = Request(
                 overpass_url,
                 data=urlencode({"data": query}).encode("utf-8"),
                 headers={"User-Agent": "NormativaGalicia/1.0", "Content-Type": "application/x-www-form-urlencoded"},
                 method="POST",
             )
-            try:
-                with urlopen(req, timeout=15) as resp:
-                    raw = json.loads(resp.read().decode("utf-8", errors="replace"))
-                break
-            except (HTTPError, URLError, TimeoutError) as e:
-                last_error = e
-                continue
+            with urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        pool = ThreadPoolExecutor(max_workers=len(_OVERPASS_URLS))
+        futures = [pool.submit(_fetch_overpass, url) for url in _OVERPASS_URLS]
+        try:
+            for future in as_completed(futures):
+                try:
+                    raw = future.result()
+                    break
+                except (HTTPError, URLError, TimeoutError, ValueError) as e:
+                    last_error = e
+        finally:
+            for future in futures:
+                future.cancel()
+            pool.shutdown(wait=False, cancel_futures=True)
         if raw is not None:
             break
     if raw is None:
@@ -176,7 +187,8 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
         if coords[0] != coords[-1]:
             coords.append(coords[0])
         tags = el.get("tags") or {}
-        height = _estimate_building_height(tags)
+        height_info = _building_height_details(tags)
+        height = round(float(height_info["height"]), 2)
         subzone_props = _find_subzone_for_ring(coords, municipio)
         compliance = _classify_building_compliance(height, subzone_props)
         features.append({
@@ -186,11 +198,15 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "name": tags.get("name") or "",
                 "building": tags.get("building") or "yes",
                 "height": height,
+                "height_source": height_info["source"],
+                "height_estimated": height_info["estimated"],
                 "levels": tags.get("building:levels") or None,
-                "_altura_visual": round(float(height) * 1.35, 2),
+                "_altura_visual": round(float(height), 2),
                 "municipio": (subzone_props or {}).get("municipio") or municipio,
                 "subzona": (subzone_props or {}).get("subzona"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
+                "normative_status": (subzone_props or {}).get("normative_status"),
+                "normative_source": (subzone_props or {}).get("fuente"),
                 "cumplimiento_altura": compliance["status"],
                 "cumplimiento_detalle": compliance["detail"],
                 "color_semantica": compliance["color_semantics"],
@@ -226,7 +242,7 @@ def _classify_building_compliance(height: float, subzone_props: dict[str, Any] |
     if limit is None:
         return {
             "status": "sin_dato",
-            "detail": "Sin subzona normativa asociada o sin altura máxima conocida",
+            "detail": "Sin subzona asociada o sin altura máxima conocida",
             "color_semantics": "gris = sin dato normativo",
         }
     try:
@@ -235,45 +251,62 @@ def _classify_building_compliance(height: float, subzone_props: dict[str, Any] |
     except Exception:
         return {
             "status": "sin_dato",
-            "detail": "No se pudo comparar la altura del edificio con la norma",
+            "detail": "No se pudo comparar la altura del edificio con el límite disponible",
             "color_semantics": "gris = sin dato normativo",
         }
+    is_pilot = str((subzone_props or {}).get("normative_status") or "").lower() == "pilot"
     if h <= limit_f:
         margin = round(limit_f - h, 2)
+        if is_pilot:
+            return {
+                "status": "orientativo_dentro",
+                "detail": f"Comparación orientativa: {h} m <= {limit_f} m (margen {margin} m). La subzona y su límite son piloto, no acreditan cumplimiento urbanístico.",
+                "color_semantics": "amarillo = comparación con datos piloto",
+            }
         return {
             "status": "compatible",
-            "detail": f"Altura estimada dentro del máximo de subzona ({h} m <= {limit_f} m, margen {margin} m)",
-            "color_semantics": "verde/azul = compatible con la altura máxima",
+            "detail": f"Altura dentro del máximo de subzona ({h} m <= {limit_f} m, margen {margin} m)",
+            "color_semantics": "verde = compatible con la altura máxima",
         }
     excess = round(h - limit_f, 2)
+    if is_pilot:
+        return {
+            "status": "orientativo_supera",
+            "detail": f"Comparación orientativa: {h} m > {limit_f} m (exceso {excess} m). La subzona y su límite son piloto, no acreditan incumplimiento urbanístico.",
+            "color_semantics": "naranja = posible exceso según datos piloto",
+        }
     return {
         "status": "supera_altura",
-        "detail": f"Altura estimada por encima del máximo de subzona ({h} m > {limit_f} m, exceso {excess} m)",
-        "color_semantics": "rojo/naranja = supera la altura máxima",
+        "detail": f"Altura por encima del máximo de subzona ({h} m > {limit_f} m, exceso {excess} m)",
+        "color_semantics": "rojo = supera la altura máxima",
     }
 
 
-def _estimate_building_height(tags: dict[str, Any]) -> float:
+def _building_height_details(tags: dict[str, Any]) -> dict[str, Any]:
     raw_h = tags.get("height")
     if isinstance(raw_h, str):
         try:
-            return max(2.5, float(raw_h.lower().replace("m", "").strip()))
+            return {"height": max(2.5, float(raw_h.lower().replace("m", "").strip())), "source": "osm_height", "estimated": False}
         except Exception:
             pass
     raw_levels = tags.get("building:levels")
     if isinstance(raw_levels, str):
         try:
-            return max(3.0, float(raw_levels.strip()) * 3.2)
+            return {"height": max(3.0, float(raw_levels.strip()) * 3.2), "source": "osm_levels", "estimated": True}
         except Exception:
             pass
     btype = str(tags.get("building") or "").strip().lower()
     if btype in {"apartments", "office", "hospital", "hotel"}:
-        return 18.0
+        return {"height": 18.0, "source": "building_type", "estimated": True}
     if btype in {"commercial", "retail", "school", "church"}:
-        return 12.0
+        return {"height": 12.0, "source": "building_type", "estimated": True}
     if btype in {"industrial", "warehouse"}:
-        return 8.0
-    return 9.0
+        return {"height": 8.0, "source": "building_type", "estimated": True}
+    return {"height": 9.0, "source": "default", "estimated": True}
+
+
+def _estimate_building_height(tags: dict[str, Any]) -> float:
+    return float(_building_height_details(tags)["height"])
 
 
 def _normalize(s: str) -> str:

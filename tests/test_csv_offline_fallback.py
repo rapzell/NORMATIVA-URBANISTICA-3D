@@ -10,7 +10,7 @@ def _setup_env(csv_path: str):
 
 
 def test_fallback_to_municipio_default_when_subzona_missing():
-    _setup_env('datos/plan_uploaded.csv')
+    _setup_env('datos/planes_municipales_sample.csv')
     from app.main import app
     client = TestClient(app)
     payload = {

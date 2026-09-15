@@ -45,10 +45,13 @@ tmp/
 *.tmp
 
 # Data (keep only minimal samples)
-datos/
+datos/*
 !datos/sample_parcela.geojson
 !datos/sample_street_axis.geojson
 !datos/planes_ejemplo_residencial.csv
+!datos/planes_municipales_sample.csv
+!datos/planes_vigo_boiro.csv
+!datos/subzonas_piloto.geojson
  
 # Auto: excluir artefactos demo y pesados
 exports/

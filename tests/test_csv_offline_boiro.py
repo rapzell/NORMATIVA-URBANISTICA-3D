@@ -10,7 +10,7 @@ def _setup_env(csv_path: str):
 
 
 def test_boiro_ordenanza_1_from_csv():
-    _setup_env('datos/plan_uploaded.csv')
+    _setup_env('datos/planes_municipales_sample.csv')
     from app.main import app
     client = TestClient(app)
     payload = {
@@ -30,7 +30,7 @@ def test_boiro_ordenanza_1_from_csv():
 
 
 def test_boiro_ordenanza_3_from_csv():
-    _setup_env('datos/plan_uploaded.csv')
+    _setup_env('datos/planes_municipales_sample.csv')
     from app.main import app
     client = TestClient(app)
     payload = {
