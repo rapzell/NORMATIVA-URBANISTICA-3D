@@ -38,6 +38,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Preverificación de habitabilidad (NHV/Decreto 128/2023) | `src/habitabilidad_checker.py` |
 | Plantillas de documentación de licencia | `src/licencia_docs.py` |
 | Análisis de soleamiento por orientación | `src/solar_analysis.py` |
+| Estimación de costes de conversión | `src/cost_estimator.py` |
 | Gateway IA | `src/model_gateway.py` |
 
 ## Patrones del código

@@ -1199,6 +1199,78 @@ async function analyzeSolarExposure() {
   }
 }
 
+function showCostEstimator() {
+  const existing = document.getElementById('cost-form');
+  if (existing) { existing.scrollIntoView({ behavior: 'smooth' }); return; }
+  const feature = window._selectedBuildingFeature || {};
+  const props = feature.properties || {};
+  const footprint = props.footprint_m2 || '';
+  const panel = document.getElementById('info-panel');
+  const wrapper = document.createElement('div');
+  wrapper.id = 'cost-form';
+  wrapper.className = 'habitability-form';
+  wrapper.innerHTML = `<h2>Estimación de costes de conversión</h2>
+    <div class="hint">Los valores son aportados por ti; no son datos de mercado verificados.</div>
+    <div class="info-card">
+      <label>Superficie útil (m²)</label><input id="ce-area" type="number" min="0" step="0.01" value="${footprint}">
+      <label>Coste de obra (€/m²)</label><input id="ce-cost-m2" type="number" min="0" step="1" placeholder="800">
+      <label>Coste fijo adicional (€)</label><input id="ce-fixed" type="number" min="0" step="100" placeholder="5000">
+      <label>Tasas municipales (€)</label><input id="ce-fees" type="number" min="0" step="100" placeholder="300">
+      <label>Valor de venta esperado (€)</label><input id="ce-sale" type="number" min="0" step="1000" placeholder="120000">
+      <label>Alquiler mensual esperado (€)</label><input id="ce-rent" type="number" min="0" step="50" placeholder="800">
+      <label>Fuente de los costes</label><input id="ce-source" type="text" placeholder="Presupuesto estimado, base de precios, etc.">
+    </div>
+    <button class="eval-btn" onclick="submitCostEstimate()">Calcular estimación</button>
+    <div id="cost-result"></div>`;
+  panel.appendChild(wrapper);
+  wrapper.scrollIntoView({ behavior: 'smooth' });
+}
+
+function costNumber(id) {
+  const el = document.getElementById(id);
+  if (!el || el.value === '') return null;
+  const v = Number(el.value);
+  return Number.isFinite(v) ? v : null;
+}
+
+async function submitCostEstimate() {
+  const payload = {
+    superficie_util_m2: costNumber('ce-area'),
+    coste_obra_m2: costNumber('ce-cost-m2'),
+    coste_obra_fijo: costNumber('ce-fixed'),
+    tasas_municipales: costNumber('ce-fees'),
+    valor_venta_esperado: costNumber('ce-sale'),
+    valor_alquiler_mensual: costNumber('ce-rent'),
+    municipio: activeMunicipio,
+    fuente_costes: document.getElementById('ce-source').value || null,
+  };
+  const resultElement = document.getElementById('cost-result');
+  resultElement.innerHTML = '<div class="loading">Calculando…</div>';
+  try {
+    const response = await fetch(`${API}/costes/estimar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const r = await response.json();
+    let html = '<div class="info-card">';
+    if (r.coste_obra_total != null) html += `<div class="info-row"><span class="key">Coste obra</span><span class="val">${r.coste_obra_total.toLocaleString('es-ES')} €</span></div>`;
+    if (r.coste_total_inversion != null) html += `<div class="info-row"><span class="key">Inversión total</span><span class="val">${r.coste_total_inversion.toLocaleString('es-ES')} €</span></div>`;
+    if (r.coste_por_m2_total != null) html += `<div class="info-row"><span class="key">Coste total/m²</span><span class="val">${r.coste_por_m2_total.toLocaleString('es-ES')} €/m²</span></div>`;
+    if (r.beneficio_bruto_venta != null) {
+      const color = r.beneficio_bruto_venta >= 0 ? '#2da44e' : '#f85149';
+      html += `<div class="info-row"><span class="key">Beneficio bruto venta</span><span class="val" style="color:${color};font-weight:600">${r.beneficio_bruto_venta.toLocaleString('es-ES')} €</span></div>`;
+    }
+    if (r.roi_venta_pct != null) html += `<div class="info-row"><span class="key">ROI venta</span><span class="val">${r.roi_venta_pct}%</span></div>`;
+    if (r.payback_alquiler_meses != null) html += `<div class="info-row"><span class="key">Payback alquiler</span><span class="val">${r.payback_alquiler_meses} meses</span></div>`;
+    if (r.rentabilidad_alquiler_anual_pct != null) html += `<div class="info-row"><span class="key">Rentabilidad alq. anual</span><span class="val">${r.rentabilidad_alquiler_anual_pct}%</span></div>`;
+    if (r.fuente_costes) html += `<div class="hint">Fuente: ${escapeHtml(r.fuente_costes)}</div>`;
+    html += '</div>';
+    for (const w of (r.advertencias || [])) html += `<div class="hint" style="color:#d29922">${escapeHtml(w)}</div>`;
+    for (const l of (r.limitaciones || [])) html += `<div class="hint">${escapeHtml(l)}</div>`;
+    resultElement.innerHTML = html;
+  } catch (e) {
+    resultElement.innerHTML = `<div class="hint check-fail">No se pudo calcular: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function selectBuilding(feature) {
   const props = feature.properties || {};
   const panel = document.getElementById('info-panel');
@@ -1232,6 +1304,7 @@ async function selectBuilding(feature) {
   html += '<button class="eval-btn" onclick="showHabitabilityForm()">Verificar habitabilidad (Decreto 128/2023)</button>';
   html += '<button class="eval-btn" onclick="generateLicenciaDoc()">Generar documentación de licencia</button>';
   html += '<button class="eval-btn" onclick="analyzeSolarExposure()">Analizar soleamiento</button>';
+  html += '<button class="eval-btn" onclick="showCostEstimator()">Estimar costes de conversión</button>';
   html += `<div class="hint">${escapeHtml(props.cumplimiento_detalle || props.color_semantica || 'Sin evaluación normativa disponible para este edificio.')}</div>`;
   panel.innerHTML = html + '<div class="loading">Cargando diagnóstico y contexto oficial…</div>';
   window._selectedBuildingFeature = feature;

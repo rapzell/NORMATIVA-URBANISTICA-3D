@@ -31,6 +31,7 @@ from src.shadow_service import shadow_analysis, shadow_analysis_multi_hour, sola
 from src.habitabilidad_checker import HabitabilityInput, HabitabilityResult, check_habitability
 from src.licencia_docs import LicenciaInput, render_licencia_html
 from src.solar_analysis import analyze_solar_exposure, render_solar_exposure_html
+from src.cost_estimator import CostEstimateInput, CostEstimateResult, estimate_conversion_costs
 from src.subzones_service import (
     find_subzone_for_point,
     get_osm_buildings_geojson,
@@ -1390,6 +1391,11 @@ def licencia_documentacion(payload: dict = Body(...)):
 @app.get("/solar/exposicion")
 def solar_exposicion(lat: float, lon: float):
     return analyze_solar_exposure(lat, lon)
+
+
+@app.post("/costes/estimar", response_model=CostEstimateResult)
+def costes_estimar(req: CostEstimateInput = Body(...)):
+    return estimate_conversion_costs(req)
 
 
 # Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)
