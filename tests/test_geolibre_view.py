@@ -192,6 +192,14 @@ def test_geolibre_index_has_cost_estimator_flow():
     assert "Estimar costes de conversión" in body
 
 
+def test_geolibre_index_has_ordenanzas_flow():
+    resp = client.get("/geolibre/")
+    body = resp.text
+    assert "loadOrdenanzas" in body
+    assert "/ordenanzas/" in body
+    assert "Ordenanzas municipales" in body
+
+
 def test_geolibre_index_has_official_source_links():
     """La vista debe tener código para renderizar enlaces a fuentes oficiales."""
     resp = client.get("/geolibre/")

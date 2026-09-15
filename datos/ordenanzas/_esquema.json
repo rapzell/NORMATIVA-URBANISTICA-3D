@@ -1,0 +1,31 @@
+{
+  "_esquema": "Plantilla de referencia para ordenanzas municipales. Los datos los aporta el estudio o el ayuntamiento; el sistema no los genera.",
+  "_nota": "Copia este fichero como datos/ordenanzas/{municipio}/ordenanza.json y rellenalo con datos verificados del ayuntamiento. No subas datos sin fuente.",
+  "_campos_esperados": [
+    "municipio",
+    "subzonas",
+    "requisitos_generales_licencia"
+  ],
+  "_ejemplo_estructura": {
+    "municipio": "Vigo",
+    "subzonas": {
+      "U3": {
+        "requisitos_cambio_uso": {
+          "superficie_minima_vivienda_m2": null,
+          "altura_minima_m": null,
+          "ventilacion": "Descripcion del requisito",
+          "documentacion_especifica": []
+        },
+        "criterios_tecnicos_municipales": "Texto descriptivo",
+        "plazo_estimado_tramitacion_dias": null,
+        "fuente": "Ordenanza municipal, art. X",
+        "fecha_actualizacion": "YYYY-MM-DD"
+      }
+    },
+    "requisitos_generales_licencia": {
+      "documentacion": [],
+      "plazo_estimado_dias": null,
+      "fuente": "Ordenanza municipal"
+    }
+  }
+}

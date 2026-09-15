@@ -52,6 +52,8 @@ datos/*
 !datos/planes_municipales_sample.csv
 !datos/planes_vigo_boiro.csv
 !datos/subzonas_piloto.geojson
+!datos/ordenanzas/
+!datos/ordenanzas/_esquema.json
  
 # Auto: excluir artefactos demo y pesados
 exports/

@@ -39,6 +39,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Plantillas de documentación de licencia | `src/licencia_docs.py` |
 | Análisis de soleamiento por orientación | `src/solar_analysis.py` |
 | Estimación de costes de conversión | `src/cost_estimator.py` |
+| Ordenanzas municipales (cambio de uso) | `src/ordenanzas_service.py`, `datos/ordenanzas/` |
 | Gateway IA | `src/model_gateway.py` |
 
 ## Patrones del código

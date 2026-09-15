@@ -344,6 +344,9 @@ async function goToMunicipio(municipio) {
     // Cargar edificios reales de OpenStreetMap
     loadBuildings(municipio).catch(e => console.error('Error buildings:', e));
 
+    // Cargar ordenanzas municipales (si disponibles)
+    loadOrdenanzas(municipio).catch(e => console.error('Error ordenanzas:', e));
+
     // Mostrar info del municipio
     const panel = document.getElementById('info-panel');
     panel.innerHTML = `<h2>${municipio}</h2>
@@ -355,6 +358,44 @@ async function goToMunicipio(municipio) {
   } catch (e) {
     document.getElementById('info-panel').innerHTML = '<div class="hint">Error cargando datos</div>';
   }
+}
+
+async function loadOrdenanzas(municipio) {
+  const resp = await fetch(`${API}/ordenanzas/${encodeURIComponent(municipio)}`);
+  const data = await resp.json();
+  const panel = document.getElementById('info-panel');
+  let html = '<div class="info-card" id="ordenanzas-card">';
+  html += '<div style="font-weight:600;margin-bottom:6px">Ordenanzas municipales de cambio de uso</div>';
+  if (!data.disponible) {
+    html += `<div class="hint" style="color:#d29922">${escapeHtml(data.mensaje || 'No disponible')}</div>`;
+    html += '<div class="hint">Si tienes los datos del ayuntamiento, añádelos en datos/ordenanzas/.</div>';
+  } else {
+    const subzonas = Object.keys(data.subzonas || {});
+    if (subzonas.length > 0) {
+      html += `<div class="info-row"><span class="key">Subzonas</span><span class="val">${subzonas.join(', ')}</span></div>`;
+      for (const [code, sz] of Object.entries(data.subzonas)) {
+        html += `<details style="margin-top:6px"><summary style="cursor:pointer;font-weight:600">${escapeHtml(code)}</summary>`;
+        const req = sz.requisitos_cambio_uso || {};
+        if (req.superficie_minima_vivienda_m2 != null) html += `<div class="hint">Sup. mínima vivienda: ${req.superficie_minima_vivienda_m2} m²</div>`;
+        if (req.altura_minima_m != null) html += `<div class="hint">Altura mínima: ${req.altura_minima_m} m</div>`;
+        if (req.ventilacion) html += `<div class="hint">Ventilación: ${escapeHtml(req.ventilacion)}</div>`;
+        if (sz.plazo_estimado_tramitacion_dias != null) html += `<div class="hint">Plazo estimado: ${sz.plazo_estimado_tramitacion_dias} días</div>`;
+        if (sz.fuente) html += `<div class="hint">Fuente: ${escapeHtml(sz.fuente)}</div>`;
+        html += '</details>';
+      }
+    } else {
+      html += '<div class="hint">Sin subzonas específicas cargadas.</div>';
+    }
+    if (data.requisitos_generales_licencia) {
+      const grl = data.requisitos_generales_licencia;
+      if (grl.plazo_estimado_dias != null) html += `<div class="hint">Plazo general: ${grl.plazo_estimado_dias} días</div>`;
+      if (grl.fuente) html += `<div class="hint">Fuente: ${escapeHtml(grl.fuente)}</div>`;
+    }
+  }
+  html += '</div>';
+  const existing = document.getElementById('ordenanzas-card');
+  if (existing) existing.remove();
+  panel.insertAdjacentHTML('beforeend', html);
 }
 
 async function loadSiotugaWMS(municipio) {

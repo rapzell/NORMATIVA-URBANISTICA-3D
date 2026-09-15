@@ -32,6 +32,7 @@ from src.habitabilidad_checker import HabitabilityInput, HabitabilityResult, che
 from src.licencia_docs import LicenciaInput, render_licencia_html
 from src.solar_analysis import analyze_solar_exposure, render_solar_exposure_html
 from src.cost_estimator import CostEstimateInput, CostEstimateResult, estimate_conversion_costs
+from src.ordenanzas_service import get_ordenanza_municipio, get_ordenanza_subzona, list_municipios_with_ordenanzas
 from src.subzones_service import (
     find_subzone_for_point,
     get_osm_buildings_geojson,
@@ -1396,6 +1397,21 @@ def solar_exposicion(lat: float, lon: float):
 @app.post("/costes/estimar", response_model=CostEstimateResult)
 def costes_estimar(req: CostEstimateInput = Body(...)):
     return estimate_conversion_costs(req)
+
+
+@app.get("/ordenanzas/municipios")
+def ordenanzas_municipios():
+    return {"municipios": list_municipios_with_ordenanzas()}
+
+
+@app.get("/ordenanzas/{municipio}")
+def ordenanzas_municipio(municipio: str):
+    return get_ordenanza_municipio(municipio)
+
+
+@app.get("/ordenanzas/{municipio}/{subzona}")
+def ordenanzas_subzona(municipio: str, subzona: str):
+    return get_ordenanza_subzona(municipio, subzona)
 
 
 # Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)
