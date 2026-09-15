@@ -124,6 +124,15 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     rows = ''
     for k in ['altura_maxima_m','retranqueo_min_m','setback_front_m','setback_side_m','setback_back_m','front_direction','front_direction_source']:
         rows += f"<tr><td>{esc(k)}</td><td>{esc(pe.get(k))}</td></tr>"
+    # Datos del edificio como parámetros efectivos
+    try:
+        bld = body.get('edificio_osm') if isinstance(body, dict) else None
+        if isinstance(bld, dict) and bld:
+            if bld.get('altura_m') is not None: rows += f"<tr><td>altura_edificio_m</td><td>{esc(bld['altura_m'])}</td></tr>"
+            if bld.get('huella_m2') is not None: rows += f"<tr><td>huella_edificio_m2</td><td>{esc(bld['huella_m2'])}</td></tr>"
+            if bld.get('plantas'): rows += f"<tr><td>plantas_edificio</td><td>{esc(bld['plantas'])}</td></tr>"
+    except Exception:
+        pass
     area_txt = ''
     try:
         a = (res.geometry_summary or {}).get('area') or (res.geometry_summary or {}).get('area_m2')
