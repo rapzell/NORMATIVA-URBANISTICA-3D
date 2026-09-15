@@ -200,6 +200,16 @@ def test_geolibre_index_has_ordenanzas_flow():
     assert "Ordenanzas municipales" in body
 
 
+def test_geolibre_index_has_projects_panel():
+    resp = client.get("/geolibre/")
+    body = resp.text
+    assert "toggleProjects" in body
+    assert "saveAsProject" in body
+    assert "projects-panel" in body
+    assert "localStorage" in body
+    assert "Guardar como proyecto" in body
+
+
 def test_geolibre_index_has_official_source_links():
     """La vista debe tener código para renderizar enlaces a fuentes oficiales."""
     resp = client.get("/geolibre/")
