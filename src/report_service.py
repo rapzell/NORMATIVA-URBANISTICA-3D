@@ -522,6 +522,21 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 f"<div class='muted'>{esc(habitability.normativa)} · versión de reglas {esc(habitability.version_reglas)}</div>"
                 "<table><thead><tr><th>Parámetro</th><th>Observado</th><th>Requisito</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>"
                 f"{check_rows}</tbody></table>"
+            )
+            # Datos pendientes
+            missing_items = [c for c in habitability.comprobaciones if c.estado == 'no_verificable']
+            if missing_items:
+                missing_list = ''.join(
+                    f"<li>{esc(c.parametro)}: {esc(c.detalle)}</li>"
+                    for c in missing_items[:5]
+                )
+                habitability_html += (
+                    f"<div class='muted' style='margin-top:8px'><b>Datos pendientes ({len(missing_items)}):</b>"
+                    f"<ul>{missing_list}</ul>"
+                    "Aporte las dimensiones del proyecto terminado en el formulario de habitabilidad del visor "
+                    "para verificar estas reglas.</div>"
+                )
+            habitability_html += (
                 f"<h3>Fuentes oficiales</h3><ul>{source_rows}</ul>"
                 "<div class='muted'>Prechequeo técnico; no sustituye la revisión profesional, el planeamiento municipal ni el resto de normativa aplicable.</div>"
                 "</section>"
