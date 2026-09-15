@@ -1357,6 +1357,29 @@ async function generateLicenciaDoc() {
   if (!footprint && feature.geometry) {
     try { footprint = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
   }
+  const height = props.height || null;
+
+  // Parámetros urbanísticos desde la subzona (si disponible) o el edificio
+  const paramsUrbanisticos = {};
+  if (props.altura_maxima_subzona_m != null) paramsUrbanisticos['Altura máxima (m)'] = props.altura_maxima_subzona_m;
+  else if (height) paramsUrbanisticos['Altura del edificio (m)'] = height;
+  if (props.ocupacion_max_subzona != null) paramsUrbanisticos['Ocupación máxima'] = props.ocupacion_max_subzona;
+  if (props.edificabilidad_max_subzona != null) paramsUrbanisticos['Edificabilidad máxima (m²/m²)'] = props.edificabilidad_max_subzona;
+  if (props.retranqueo_min_subzona_m != null) paramsUrbanisticos['Retranqueo mínimo (m)'] = props.retranqueo_min_subzona_m;
+  if (props.subzona) paramsUrbanisticos['Subzona'] = props.subzona;
+  if (Object.keys(paramsUrbanisticos).length === 0 && siotuga.plan_title) {
+    paramsUrbanisticos['Planeamiento'] = siotuga.plan_title;
+  }
+
+  // Habitabilidad preliminar desde el edificio
+  const habitabilidad = {
+    municipio: props.municipio || activeMunicipio,
+    tipo_operacion: 'cambio_uso_local_a_vivienda',
+    altura_libre_m: height ? Math.round(height * 100) / 100 : null,
+    piezas: footprint ? [{ nombre: 'Estancia principal (preliminar)', tipo: 'estancia', superficie_util_m2: Math.round(footprint * 100) / 100 }] : [],
+    programa_declarado_completo: false,
+  };
+
   const payload = {
     municipio: props.municipio || activeMunicipio,
     ref_catastral: cat.refcat || null,
@@ -1367,6 +1390,8 @@ async function generateLicenciaDoc() {
     fecha_aprobacion: siotuga.approval_date || null,
     tipo_operacion: 'cambio_uso_local_a_vivienda',
     superficies: footprint ? { superficie_ocupada_m2: footprint } : {},
+    params_urbanisticos: paramsUrbanisticos,
+    habitabilidad: habitabilidad,
   };
   try {
     const response = await fetch(`${API}/licencia/documentacion`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

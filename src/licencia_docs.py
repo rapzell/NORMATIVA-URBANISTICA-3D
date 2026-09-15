@@ -116,16 +116,24 @@ def _superficies_table(superficies: dict[str, float]) -> str:
     )
 
 
-def _documentacion_exigida(municipio: str | None, fuente: str | None) -> str:
-    """Lista la documentación típica sin atribuir requisitos municipales sin fuente."""
+def _documentacion_exigida(municipio: str | None, fuente: str | None, *,
+                           ref_catastral: str | None = None,
+                           tiene_habitabilidad: bool = False,
+                           tiene_planos: bool = False) -> str:
+    """Lista la documentación típica marcando qué datos ya están incluidos."""
     base_docs = [
-        "Memoria del proyecto",
-        "Planos (planta, secciones, alzados)",
-        "Plano de situación y emplazamiento",
-        "Justificación del cumplimiento del Decreto 128/2023 (incluida más abajo)",
-        "Referencia catastral del inmueble",
+        ("Memoria del proyecto", False),
+        ("Planos (planta, secciones, alzados)", False),
+        ("Plano de situación y emplazamiento", tiene_planos),
+        ("Justificación del cumplimiento del Decreto 128/2023 (incluida más abajo)", tiene_habitabilidad),
+        ("Referencia catastral del inmueble", ref_catastral is not None),
     ]
-    items = "".join(f"<li>{_esc(d)}</li>" for d in base_docs)
+    items = ""
+    for doc, disponible in base_docs:
+        if disponible:
+            items += f"<li>✓ {_esc(doc)} <span class='muted' style='color:#2e7d32'>(incluido en este documento)</span></li>"
+        else:
+            items += f"<li>○ {_esc(doc)} <span class='muted'>(pendiente de aportar)</span></li>"
     nota = ""
     if not fuente:
         nota = (
@@ -256,7 +264,7 @@ def render_licencia_html(data: LicenciaInput | dict[str, Any]) -> str:
 
 <section id='documentacion-exigida'>
 <h2>{'5' if hab_html else '4'}. Documentación a aportar</h2>
-{_documentacion_exigida(data.municipio, data.fuente_ordenanza_municipal)}
+{_documentacion_exigida(data.municipio, data.fuente_ordenanza_municipal, ref_catastral=data.ref_catastral, tiene_habitabilidad=hab_result is not None)}
 </section>
 
 <section id='observaciones'>
