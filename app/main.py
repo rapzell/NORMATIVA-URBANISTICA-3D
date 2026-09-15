@@ -2759,6 +2759,60 @@ def _fetch_siose_precheck(lon: float, lat: float, delta: float = 0.0015) -> dict
   return result
 
 
+def _fetch_catastro_parcel_geom(refcat: str) -> dict:
+  """Obtiene la geometría de la parcela y su superficie oficial via INSPIRE WFS."""
+  cache_key = ('catastro', 'parcel_geom', refcat[:14])
+  cached = _official_cache_get(cache_key)
+  if cached is not None:
+    return cached
+  rc = ''.join(ch for ch in (refcat or '') if ch.isalnum()).upper()[:14]
+  if len(rc) < 14:
+    return {}
+  url = (
+    'https://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx'
+    f'?service=wfs&version=2&request=getfeature'
+    f'&STOREDQUERIE_ID=GetParcel&refcat={rc}&srsname=EPSG:4326'
+  )
+  req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+  try:
+    with urlopen(req, timeout=15) as resp:
+      raw = resp.read()
+  except Exception:
+    return {}
+  try:
+    root = ET.fromstring(raw)
+  except Exception:
+    return {}
+  result: dict = {}
+  # Superficie oficial de la parcela
+  for elem in root.iter():
+    if elem.tag.endswith('areaValue'):
+      val = _try_float(elem.text)
+      if val and val > 0:
+        result['superficie_parcela_m2'] = val
+        break
+  # Número de parcela (label)
+  for elem in root.iter():
+    if elem.tag.endswith('label'):
+      result['label'] = (elem.text or '').strip()
+      break
+  # Geometría de la parcela en GML → GeoJSON
+  for elem in root.iter():
+    if elem.tag.endswith('posList'):
+      coords_txt = (elem.text or '').strip()
+      if coords_txt:
+        pairs = coords_txt.split()
+        coords = [[float(pairs[i + 1]), float(pairs[i])] for i in range(0, len(pairs) - 1, 2)]
+        if len(coords) >= 4:
+          result['geometry'] = {
+            'type': 'Polygon',
+            'coordinates': [coords],
+          }
+        break
+  _official_cache_set(cache_key, result)
+  return result
+
+
 def _safe_fetch_catastro(lon: float, lat: float) -> dict:
   try:
     result = _fetch_catastro_by_coords(lon, lat)
@@ -2769,6 +2823,12 @@ def _safe_fetch_catastro(lon: float, lat: float) -> dict:
         details = _fetch_catastro_details_by_ref(refcat)
         if details:
           result.update(details)
+      except Exception:
+        pass
+      try:
+        parcel = _fetch_catastro_parcel_geom(refcat)
+        if parcel:
+          result.update(parcel)
       except Exception:
         pass
     return result

@@ -291,6 +291,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if cat_ctx.get('refcat'): ficha_rows += f"<tr><td>Referencia catastral</td><td>{esc(cat_ctx['refcat'])}</td></tr>"
             if cat_ctx.get('direccion'): ficha_rows += f"<tr><td>Dirección catastral</td><td>{esc(cat_ctx['direccion'])}</td></tr>"
             if cat_ctx.get('superficie_construida_m2'): ficha_rows += f"<tr><td>Sup. construida (Catastro)</td><td>{esc(cat_ctx['superficie_construida_m2'])} m²</td></tr>"
+            if cat_ctx.get('superficie_parcela_m2'): ficha_rows += f"<tr><td>Sup. parcela (Catastro)</td><td>{esc(cat_ctx['superficie_parcela_m2'])} m²</td></tr>"
             if cat_ctx.get('uso_principal'): ficha_rows += f"<tr><td>Uso principal</td><td>{esc(cat_ctx['uso_principal'])}</td></tr>"
             if cat_ctx.get('anio_construccion'): ficha_rows += f"<tr><td>Año construcción</td><td>{esc(cat_ctx['anio_construccion'])}</td></tr>"
             if cat_ctx.get('num_unidades'): ficha_rows += f"<tr><td>Unidades catastrales</td><td>{esc(cat_ctx['num_unidades'])}</td></tr>"
@@ -317,6 +318,10 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     carto_html = ''
     try:
         parcel_geom = body.get('geometry') if isinstance(body, dict) else None
+        # Preferir la geometría real de la parcela de Catastro si está disponible
+        cat_parcel_geom = ((official_context or {}).get('catastro') or {}).get('geometry')
+        if isinstance(cat_parcel_geom, dict) and cat_parcel_geom.get('coordinates'):
+            parcel_geom = cat_parcel_geom
         envelope_feat = None
         if hasattr(res, 'feature') and res.feature:
             envelope_feat = res.feature
@@ -742,6 +747,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 f"<tr><td>Dirección catastral</td><td>{esc(cat.get('direccion') or '—')}</td></tr>",
                 f"<tr><td>Coordenadas consulta</td><td>{esc(cat.get('query_lon'))}, {esc(cat.get('query_lat'))}</td></tr>" if cat.get('query_lon') is not None and cat.get('query_lat') is not None else '',
                 f"<tr><td>Superficie terreno</td><td>{esc(cat.get('superficie_terreno_m2') or '—')} m²</td></tr>" if cat.get('superficie_terreno_m2') else '',
+                f"<tr><td>Superficie parcela (Catastro)</td><td>{esc(cat.get('superficie_parcela_m2') or '—')} m²</td></tr>" if cat.get('superficie_parcela_m2') else '',
                 f"<tr><td>Superficie construida</td><td>{esc(cat.get('superficie_construida_m2') or '—')} m²</td></tr>" if cat.get('superficie_construida_m2') else '',
                 f"<tr><td>Uso principal</td><td>{esc(cat.get('uso_principal') or '—')}</td></tr>" if cat.get('uso_principal') else '',
                 f"<tr><td>Año construcción</td><td>{esc(cat.get('anio_construccion') or '—')}</td></tr>" if cat.get('anio_construccion') else '',
