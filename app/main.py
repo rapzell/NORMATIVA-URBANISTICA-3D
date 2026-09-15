@@ -1430,6 +1430,8 @@ class VolumeRequest(BaseModel):
     diagnostics_verbosity: Optional[str] = None  # 'full'|'min'|'none' (override por petición)
     crs: Optional[str] = None  # CRS de la geometría; si 'EPSG:4326' se convertirá a espacio métrico local
     habitabilidad: dict | None = None
+    edificio_osm: dict | None = None
+    costes: dict | None = None
 
 try:
     # Resolver ForwardRefs por uso de `from __future__ import annotations`

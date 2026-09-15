@@ -579,6 +579,16 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             )
     except Exception:
         cost_html = ''
+    if not cost_html:
+        cost_html = (
+            "<section id='sec-5c'>"
+            "<h2><span class='section-num'>5.2</span>Estimación de costes de conversión</h2>"
+            "<div class='muted'>Pendiente de aportar datos de mercado. "
+            "Use el botón \"Estimar costes de conversión\" en el visor para introducir "
+            "coste de obra (€/m²), tasas, valor de venta y alquiler esperado, "
+            "y regenere el informe para incluir esta sección.</div>"
+            "</section>"
+        )
     official_html = ''
     if official_context:
         try:

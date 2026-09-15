@@ -60,10 +60,11 @@ def test_report_cost_section_shows_roi():
     assert "Beneficio bruto (venta)" in html
 
 
-def test_report_without_cost_data_has_no_cost_section():
+def test_report_without_cost_data_shows_pending():
     body = {"municipio": "Vigo", "geometry": _parcel_geometry()}
     html = render_assess_report_html(body, _result())
-    assert "Estimación de costes de conversión" not in html
+    assert "Estimación de costes de conversión" in html
+    assert "Pendiente de aportar datos de mercado" in html
 
 
 def test_report_solar_section_has_limitations():
