@@ -1555,7 +1555,11 @@ async function generateReport() {
   if (municipio) autoData += `<li>Municipio: ${escapeHtml(municipio)}</li>`;
   if (subzona) autoData += `<li>Subzona: ${escapeHtml(subzona)}</li>`;
   if (cat.refcat) autoData += `<li>Ref. catastral: ${escapeHtml(cat.refcat)}</li>`;
+  if (cat.superficie_parcela_m2) autoData += `<li>Sup. parcela (Catastro): ${cat.superficie_parcela_m2} m²</li>`;
   if (cat.superficie_construida_m2) autoData += `<li>Sup. construida (Catastro): ${cat.superficie_construida_m2} m²</li>`;
+  if (cat.uso_principal) autoData += `<li>Uso catastral: ${escapeHtml(cat.uso_principal)}</li>`;
+  if (cat.anio_construccion) autoData += `<li>Año construcción: ${cat.anio_construccion}</li>`;
+  if (cat.superficie_comercial_m2) autoData += `<li>Sup. no residencial: ${cat.superficie_comercial_m2} m²</li>`;
   autoData += '<li>Habitabilidad preliminar (altura y superficie del edificio)</li>';
   autoData += '<li>Soleamiento por orientación (cálculo astronómico)</li>';
   autoData += '<li>Análisis de sombras (solsticio de invierno)</li>';
@@ -1586,6 +1590,8 @@ async function submitGenerateReport() {
   const height = props.height || null;
   const municipio = props.municipio || activeMunicipio || null;
   const subzona = props.subzona || null;
+  const ctx = window._officialContext || {};
+  const cat = ctx.catastro || {};
   const clientName = (document.getElementById('rpt-client') || {}).value || '';
   const projectName = (document.getElementById('rpt-project') || {}).value || '';
   const resultDiv = document.getElementById('report-result');
@@ -1617,7 +1623,7 @@ async function submitGenerateReport() {
   } catch (e) {}
 
   const body = {
-    geometry: feature.geometry,
+    geometry: (cat.geometry && cat.geometry.coordinates) ? cat.geometry : feature.geometry,
     altura_maxima_m: props.altura_maxima_subzona_m || height || null,
     retranqueo_min_m: null,
     municipio: municipio,
