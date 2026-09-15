@@ -1477,6 +1477,7 @@ async function submitCostEstimate() {
     for (const w of (r.advertencias || [])) html += `<div class="hint" style="color:#d29922">${escapeHtml(w)}</div>`;
     for (const l of (r.limitaciones || [])) html += `<div class="hint">${escapeHtml(l)}</div>`;
     resultElement.innerHTML = html;
+    resultElement.dataset.costInput = JSON.stringify(payload);
   } catch (e) {
     resultElement.innerHTML = `<div class="hint check-fail">No se pudo calcular: ${escapeHtml(e.message)}</div>`;
   }
@@ -1491,12 +1492,59 @@ async function generateReport() {
   const height = props.height || null;
   const municipio = props.municipio || activeMunicipio || null;
   const subzona = props.subzona || null;
-  const clientName = prompt('Nombre del cliente (opcional):', '') || '';
-  const projectName = prompt('Nombre del proyecto (opcional):', props.name || '') || '';
+  const ctx = window._officialContext || {};
+  const cat = ctx.catastro || {};
 
-  // Auto-rellenar habitabilidad con defaults desde el edificio
-  // Altura libre: usar la altura del edificio como estimación preliminar
-  // Superficie útil: usar la huella del edificio como estimación preliminar
+  const existing = document.getElementById('report-form');
+  if (existing) { existing.scrollIntoView({ behavior: 'smooth' }); return; }
+  const panel = document.getElementById('info-panel');
+  const wrapper = document.createElement('div');
+  wrapper.id = 'report-form';
+  wrapper.className = 'habitability-form';
+
+  // Resumen de datos que se incluirán automáticamente
+  let autoData = '<ul style="font-size:12px;color:#8b949e;margin:4px 0 8px 20px">';
+  if (height) autoData += `<li>Altura edificio: ${height} m</li>`;
+  if (footprint) autoData += `<li>Huella: ${footprint} m²</li>`;
+  if (municipio) autoData += `<li>Municipio: ${escapeHtml(municipio)}</li>`;
+  if (subzona) autoData += `<li>Subzona: ${escapeHtml(subzona)}</li>`;
+  if (cat.refcat) autoData += `<li>Ref. catastral: ${escapeHtml(cat.refcat)}</li>`;
+  if (cat.superficie_construida_m2) autoData += `<li>Sup. construida (Catastro): ${cat.superficie_construida_m2} m²</li>`;
+  autoData += '<li>Habitabilidad preliminar (altura y superficie del edificio)</li>';
+  autoData += '<li>Soleamiento por orientación (cálculo astronómico)</li>';
+  autoData += '<li>Análisis de sombras (solsticio de invierno)</li>';
+  autoData += '<li>Datos oficiales (Catastro, SIOTUGA, SIOSE)</li>';
+  autoData += '</ul>';
+
+  wrapper.innerHTML = `<h2>Generar informe de viabilidad</h2>
+    <div class="hint">El informe se rellena automáticamente con los datos disponibles del edificio y fuentes oficiales.</div>
+    <div class="info-card">
+      <label>Cliente (opcional)</label><input id="rpt-client" type="text" placeholder="Nombre del cliente">
+      <label>Proyecto (opcional)</label><input id="rpt-project" type="text" value="${escapeHtml(props.name || '')}" placeholder="Nombre del proyecto">
+    </div>
+    <div style="margin-top:8px"><strong>Datos que se incluirán:</strong></div>
+    ${autoData}
+    <div class="hint" style="margin-top:4px">Los costes de conversión no se incluyen si no se han calculado previamente.</div>
+    <button class="eval-btn" style="background:#1f6feb" onclick="submitGenerateReport()">Generar informe</button>
+    <div id="report-result"></div>`;
+  panel.appendChild(wrapper);
+  wrapper.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function submitGenerateReport() {
+  const feature = window._selectedBuildingFeature;
+  if (!feature || !feature.geometry) { alert('Selecciona un edificio primero.'); return; }
+  const props = feature.properties || {};
+  let footprint = null;
+  try { footprint = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
+  const height = props.height || null;
+  const municipio = props.municipio || activeMunicipio || null;
+  const subzona = props.subzona || null;
+  const clientName = (document.getElementById('rpt-client') || {}).value || '';
+  const projectName = (document.getElementById('rpt-project') || {}).value || '';
+  const resultDiv = document.getElementById('report-result');
+  if (resultDiv) resultDiv.innerHTML = '<div class="loading">Generando informe...</div>';
+
   const habitabilidad = {
     municipio: municipio,
     tipo_operacion: 'cambio_uso_local_a_vivienda',
@@ -1505,7 +1553,6 @@ async function generateReport() {
     programa_declarado_completo: false,
     geometria_local: feature.geometry,
   };
-  // Si hay huella, añadir una estancia preliminar con esa superficie
   if (footprint && footprint > 0) {
     habitabilidad.piezas = [{
       nombre: 'Estancia principal (preliminar)',
@@ -1513,6 +1560,15 @@ async function generateReport() {
       superficie_util_m2: Math.round(footprint * 100) / 100,
     }];
   }
+
+  // Incluir costes si se han calculado previamente
+  let costes = null;
+  try {
+    const costResult = document.getElementById('cost-result');
+    if (costResult && costResult.dataset.costInput) {
+      costes = JSON.parse(costResult.dataset.costInput);
+    }
+  } catch (e) {}
 
   const body = {
     geometry: feature.geometry,
@@ -1533,6 +1589,7 @@ async function generateReport() {
       osm_id: props.osm_id || null,
       nombre: props.name || null,
     },
+    costes: costes,
   };
 
   try {
@@ -1552,8 +1609,10 @@ async function generateReport() {
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
+    if (resultDiv) resultDiv.innerHTML = '<div class="hint" style="color:#2e7d32">Informe generado. Se ha abierto en una nueva pestaña.</div>';
   } catch (e) {
-    alert('No se pudo generar el informe: ' + e.message);
+    if (resultDiv) resultDiv.innerHTML = `<div class="hint check-fail">Error: ${escapeHtml(e.message)}</div>`;
+    else alert('No se pudo generar el informe: ' + e.message);
   }
 }
 
