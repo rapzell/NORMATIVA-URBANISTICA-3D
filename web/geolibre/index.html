@@ -1247,6 +1247,12 @@ function showHabitabilityForm() {
   const feature = window._selectedBuildingFeature || {};
   const props = feature.properties || {};
   const buildingHeight = props.height || '';
+  const ctx = window._officialContext || {};
+  const cat = ctx.catastro || {};
+  let defaultSurface = cat.superficie_construida_m2 || props.footprint_m2 || '';
+  if (!defaultSurface && feature.geometry) {
+    try { defaultSurface = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
+  }
   const panel = document.getElementById('info-panel');
   const wrapper = document.createElement('div');
   wrapper.id = 'habitability-form';
@@ -1264,6 +1270,10 @@ function showHabitabilityForm() {
     <div id="habitability-result"></div>`;
   panel.appendChild(wrapper);
   updateHabitabilityRooms();
+  if (defaultSurface) {
+    const e1Area = document.getElementById('hab-e1-area');
+    if (e1Area) e1Area.value = defaultSurface;
+  }
   wrapper.scrollIntoView({ behavior: 'smooth' });
 }
 
