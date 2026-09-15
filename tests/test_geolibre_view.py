@@ -210,6 +210,16 @@ def test_geolibre_index_has_projects_panel():
     assert "Guardar como proyecto" in body
 
 
+def test_geolibre_index_has_report_generator():
+    resp = client.get("/geolibre/")
+    body = resp.text
+    assert "generateReport" in body
+    assert "/zoning/assess-report" in body
+    assert "Generar informe de viabilidad" in body
+    assert "habitabilidad" in body
+    assert "tipo_operacion" in body
+
+
 def test_geolibre_index_has_official_source_links():
     """La vista debe tener código para renderizar enlaces a fuentes oficiales."""
     resp = client.get("/geolibre/")
