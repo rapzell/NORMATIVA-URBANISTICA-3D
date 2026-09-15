@@ -203,6 +203,46 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         f"Viabilidad: <b>{esc(v or '—')}</b>. Altura máx: {_fmt(alt)} m; Retranqueo: {_fmt(ret)} m; "
         f"Ocupación: {_fmt(ocu)}; Edificabilidad: {_fmt(edi)}.</p>"
     )
+    # Datos del edificio para el resumen
+    bld_summary = ''
+    try:
+        bld_data = body.get('edificio_osm') if isinstance(body, dict) else None
+        if isinstance(bld_data, dict) and bld_data:
+            parts = []
+            if bld_data.get('tipo'): parts.append(f"Tipo: {esc(bld_data['tipo'])}")
+            if bld_data.get('altura_m') is not None: parts.append(f"Altura: {esc(bld_data['altura_m'])} m")
+            if bld_data.get('huella_m2') is not None: parts.append(f"Huella: {esc(bld_data['huella_m2'])} m²")
+            if bld_data.get('plantas'): parts.append(f"Plantas: {esc(bld_data['plantas'])}")
+            if parts:
+                bld_summary = f"<p class=muted>Edificio (OSM): {' · '.join(parts)}.</p>"
+    except Exception:
+        pass
+    # Catastro para el resumen
+    cat_summary = ''
+    try:
+        cat_ctx = (official_context or {}).get('catastro') or {}
+        if cat_ctx.get('available'):
+            parts = []
+            if cat_ctx.get('refcat'): parts.append(f"Ref. catastral: {esc(cat_ctx['refcat'])}")
+            if cat_ctx.get('superficie_construida_m2'): parts.append(f"Sup. construida: {esc(cat_ctx['superficie_construida_m2'])} m²")
+            if cat_ctx.get('uso_principal'): parts.append(f"Uso: {esc(cat_ctx['uso_principal'])}")
+            if parts:
+                cat_summary = f"<p class=muted>Catastro: {' · '.join(parts)}.</p>"
+    except Exception:
+        pass
+    # Indicador de disponibilidad de datos
+    data_flags = []
+    data_flags.append(('Subzona/normativa', subz is not None and subz != ''))
+    data_flags.append(('Catastro', bool((official_context or {}).get('catastro', {}).get('available'))))
+    data_flags.append(('Habitabilidad', bool(body.get('habitabilidad') if isinstance(body, dict) else False)))
+    data_flags.append(('Costes', bool(body.get('costes') if isinstance(body, dict) else False)))
+    data_flags.append(('Edificio OSM', bool(body.get('edificio_osm') if isinstance(body, dict) else False)))
+    avail_items = ''.join(
+        f"<span style='color:{'#2e7d32' if ok else '#f57f17'}'>{'✓' if ok else '○'} {esc(name)}</span>"
+        for name, ok in data_flags
+    )
+    avail_html = f"<p class=muted style='margin-top:6px'>Disponibilidad de datos: {avail_items}</p>"
+    resumen_html = bld_summary + cat_summary + resumen_html + avail_html
     ficha_rows = ''.join([
         f"<tr><td>Municipio</td><td>{muni or '—'}</td></tr>",
         f"<tr><td>Subzona</td><td>{subz or '—'}</td></tr>",
@@ -386,6 +426,32 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 "<div class='muted' style='margin-top:6px'>Nota: las alturas de edificios existentes pueden ser estimadas a partir de OSM y no sustituyen un levantamiento topográfico.</div>"
                 "</section>"
             )
+        else:
+            # Sin subzona: mostrar datos del edificio disponibles
+            h = _num(body.get('height_m') or body.get('altura_m')) if isinstance(body, dict) else None
+            lv = body.get('levels') if isinstance(body, dict) else None
+            fp = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
+            diag_rows = ''
+            if h is not None:
+                diag_rows += f"<tr><td>Altura del edificio</td><td>{h} m</td><td>—</td><td>—</td></tr>"
+            if lv is not None:
+                diag_rows += f"<tr><td>Plantas (OSM)</td><td>{lv}</td><td>—</td><td>—</td></tr>"
+            if fp is not None:
+                diag_rows += f"<tr><td>Huella</td><td>{fp} m²</td><td>—</td><td>—</td></tr>"
+            if diag_rows:
+                diagnostic_html = (
+                    "<section>"
+                    "<h2>Diagnóstico del edificio</h2>"
+                    "<div class='muted' style='margin-bottom:8px'>Sin subzona normativa asociada. "
+                    "Los parámetros normativos (altura máxima, ocupación, edificabilidad, retranqueo) "
+                    "no están disponibles para esta zona.</div>"
+                    "<table><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>"
+                    f"{diag_rows}"
+                    "</tbody></table>"
+                    "<div class='muted' style='margin-top:6px'>Consulte el planeamiento municipal en SIOTUGA o el ayuntamiento "
+                    "para obtener los parámetros normativos aplicables a esta parcela.</div>"
+                    "</section>"
+                )
     except Exception:
         diagnostic_html = ''
     habitability_html = ''

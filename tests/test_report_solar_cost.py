@@ -96,6 +96,27 @@ def test_report_includes_building_osm_data():
     assert "openstreetmap.org/way/123456789" in html
 
 
+def test_report_resumen_includes_building_and_data_availability():
+    body = {
+        "municipio": "Vigo",
+        "geometry": _parcel_geometry(),
+        "edificio_osm": {"tipo": "retail", "altura_m": 4.5, "huella_m2": 120},
+    }
+    html = render_assess_report_html(body, _result())
+    assert "Edificio (OSM)" in html
+    assert "Disponibilidad de datos" in html
+    assert "Edificio OSM" in html
+
+
+def test_report_resumen_shows_catastro_when_available():
+    body = {"municipio": "Vigo", "geometry": _parcel_geometry()}
+    official_ctx = {"catastro": {"available": True, "refcat": "1234", "uso_principal": "Comercial"}}
+    html = render_assess_report_html(body, _result(), official_context=official_ctx)
+    assert "Catastro:" in html
+    assert "1234" in html
+    assert "Comercial" in html
+
+
 def test_report_without_building_osm_data_has_no_section():
     body = {"municipio": "Vigo", "geometry": _parcel_geometry()}
     html = render_assess_report_html(body, _result())
