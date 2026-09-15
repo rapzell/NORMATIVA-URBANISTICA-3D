@@ -320,12 +320,27 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             envelope_feat = res.get('feature')
         svg = render_svg_minimap(parcel_geom, envelope_feat)
         if svg and 'Sin geometría' not in svg:
+            # Enlace a OSM con la ubicación de la parcela
+            osm_link = ''
+            try:
+                from src.zoning_assess import centroid_lonlat_from_geojson
+                c_lon, c_lat = centroid_lonlat_from_geojson(parcel_geom)
+                if c_lon is not None and c_lat is not None:
+                    osm_link = (
+                        f'<div class="muted" style="margin-top:6px">'
+                        f'<a href="https://www.openstreetmap.org/#map=18/{c_lat:.6f}/{c_lon:.6f}" '
+                        f'target="_blank" rel="noopener">Ver ubicación en OpenStreetMap</a>'
+                        f' · Coordenadas: {c_lon:.6f}, {c_lat:.6f}</div>'
+                    )
+            except Exception:
+                pass
             carto_html = (
                 f"<section>\n      <h2>Composición cartográfica</h2>\n"
                 f"      <div>{svg}</div>\n"
                 f"      <div class='muted' style='margin-top:6px'>"
                 f"Vista esquemática de la parcela (azul) y la envolvente edificable (rojo). "
-                f"Coordenadas en EPSG:4326.</div>\n    </section>"
+                f"Coordenadas en EPSG:4326.</div>"
+                f"      {osm_link}\n    </section>"
             )
     except Exception:
         carto_html = ''
