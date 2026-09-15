@@ -30,6 +30,7 @@ from src.report_service import render_assess_report_html as _render_assess_repor
 from src.shadow_service import shadow_analysis, shadow_analysis_multi_hour, solar_position
 from src.habitabilidad_checker import HabitabilityInput, HabitabilityResult, check_habitability
 from src.licencia_docs import LicenciaInput, render_licencia_html
+from src.solar_analysis import analyze_solar_exposure, render_solar_exposure_html
 from src.subzones_service import (
     find_subzone_for_point,
     get_osm_buildings_geojson,
@@ -1384,6 +1385,11 @@ def habitabilidad_verificar(req: HabitabilityInput = Body(...)):
 def licencia_documentacion(payload: dict = Body(...)):
     html = render_licencia_html(payload)
     return HTMLResponse(content=html)
+
+
+@app.get("/solar/exposicion")
+def solar_exposicion(lat: float, lon: float):
+    return analyze_solar_exposure(lat, lon)
 
 
 # Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)

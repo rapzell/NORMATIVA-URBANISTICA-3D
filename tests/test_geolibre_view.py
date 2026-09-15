@@ -175,6 +175,14 @@ def test_geolibre_index_has_licencia_doc_flow():
     assert "Generar documentación de licencia" in body
 
 
+def test_geolibre_index_has_solar_exposure_flow():
+    resp = client.get("/geolibre/")
+    body = resp.text
+    assert "analyzeSolarExposure" in body
+    assert "/solar/exposicion" in body
+    assert "Analizar soleamiento" in body
+
+
 def test_geolibre_index_has_official_source_links():
     """La vista debe tener código para renderizar enlaces a fuentes oficiales."""
     resp = client.get("/geolibre/")

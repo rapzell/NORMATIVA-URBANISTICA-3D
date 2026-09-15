@@ -1162,6 +1162,43 @@ async function generateLicenciaDoc() {
   }
 }
 
+async function analyzeSolarExposure() {
+  const feature = window._selectedBuildingFeature || {};
+  if (!feature.geometry) { alert('Selecciona un edificio primero.'); return; }
+  const center = turf.centerOfMass(feature);
+  const [lon, lat] = center.geometry.coordinates;
+  const panel = document.getElementById('info-panel');
+  const resultId = 'solar-result';
+  let existing = document.getElementById(resultId);
+  if (existing) existing.remove();
+  const div = document.createElement('div');
+  div.id = resultId;
+  div.className = 'info-card';
+  div.innerHTML = '<div class="loading">Analizando soleamiento…</div>';
+  panel.appendChild(div);
+  try {
+    const resp = await fetch(`${API}/solar/exposicion?lat=${lat}&lon=${lon}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const orients = ['N','NE','E','SE','S','SW','W','NW'];
+    let html = '<div style="font-weight:600;margin-bottom:6px">Soleamiento potencial por orientación</div>';
+    html += `<div class="hint">${escapeHtml(data.summary)}</div>`;
+    html += '<table style="width:100%;font-size:11px;margin-top:6px"><thead><tr><th>Fecha</th>';
+    for (const o of orients) html += `<th>${o}</th>`;
+    html += '<th>Luz</th></tr></thead><tbody>';
+    for (const [dateName, d] of Object.entries(data.dates)) {
+      html += `<tr><td>${escapeHtml(dateName)}</td>`;
+      for (const o of orients) html += `<td style="text-align:center">${d.hours_sun_by_orientation[o]}</td>`;
+      html += `<td style="text-align:center">${d.daylight_hours}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    html += '<div class="hint" style="color:#d29922;margin-top:4px">Estimación preliminar: no considera edificios colindantes ni relieve.</div>';
+    div.innerHTML = html;
+  } catch (e) {
+    div.innerHTML = `<div class="hint check-fail">No se pudo analizar el soleamiento: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function selectBuilding(feature) {
   const props = feature.properties || {};
   const panel = document.getElementById('info-panel');
@@ -1194,6 +1231,7 @@ async function selectBuilding(feature) {
   }
   html += '<button class="eval-btn" onclick="showHabitabilityForm()">Verificar habitabilidad (Decreto 128/2023)</button>';
   html += '<button class="eval-btn" onclick="generateLicenciaDoc()">Generar documentación de licencia</button>';
+  html += '<button class="eval-btn" onclick="analyzeSolarExposure()">Analizar soleamiento</button>';
   html += `<div class="hint">${escapeHtml(props.cumplimiento_detalle || props.color_semantica || 'Sin evaluación normativa disponible para este edificio.')}</div>`;
   panel.innerHTML = html + '<div class="loading">Cargando diagnóstico y contexto oficial…</div>';
   window._selectedBuildingFeature = feature;
