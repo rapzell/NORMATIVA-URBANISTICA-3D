@@ -44,6 +44,7 @@ class LicenciaInput:
         ref_catastral: str | None = None,
         direccion_catastral: str | None = None,
         superficie_parcela_m2: float | None = None,
+        parcela_label: str | None = None,
         clasificacion_suelo: str | None = None,
         instrumento_planeamiento: str | None = None,
         fecha_aprobacion: str | None = None,
@@ -57,6 +58,7 @@ class LicenciaInput:
         self.ref_catastral = ref_catastral
         self.direccion_catastral = direccion_catastral
         self.superficie_parcela_m2 = superficie_parcela_m2
+        self.parcela_label = parcela_label
         self.clasificacion_suelo = clasificacion_suelo
         self.instrumento_planeamiento = instrumento_planeamiento
         self.fecha_aprobacion = fecha_aprobacion
@@ -241,6 +243,7 @@ def render_licencia_html(data: LicenciaInput | dict[str, Any]) -> str:
 <table>
   <tr><td>Municipio</td><td>{_esc(data.municipio or '—')}</td></tr>
   <tr><td>Referencia catastral</td><td>{_esc(data.ref_catastral or '—')}{(' · ' + catastro_link) if catastro_link else ''}</td></tr>
+  <tr><td>Número de parcela</td><td>{_esc(data.parcela_label or '—')}</td></tr>
   <tr><td>Dirección catastral</td><td>{_esc(data.direccion_catastral or '—')}</td></tr>
   <tr><td>Superficie de parcela</td><td>{_fmt(data.superficie_parcela_m2, unit=' m²')}</td></tr>
   <tr><td>Clasificación del suelo (SIOTUGA)</td><td>{_esc(data.clasificacion_suelo or '—')}</td></tr>

@@ -1399,6 +1399,7 @@ async function generateLicenciaDoc() {
     ref_catastral: cat.refcat || null,
     direccion_catastral: cat.direccion || null,
     superficie_parcela_m2: cat.superficie_parcela_m2 ? Number(cat.superficie_parcela_m2) : (cat.superficie_terreno_m2 ? Number(cat.superficie_terreno_m2) : null),
+    parcela_label: cat.label || null,
     clasificacion_suelo: siotuga.plan_title || null,
     instrumento_planeamiento: siotuga.plan_title || null,
     fecha_aprobacion: siotuga.approval_date || null,
