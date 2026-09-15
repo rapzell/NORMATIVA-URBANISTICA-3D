@@ -359,6 +359,39 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             )
     except Exception:
         diagnostic_html = ''
+    habitability_html = ''
+    try:
+        habitability_input = body.get('habitabilidad') if isinstance(body, dict) else None
+        if isinstance(habitability_input, dict):
+            from src.habitabilidad_checker import check_habitability
+            habitability = check_habitability(habitability_input)
+            status_label = {
+                'cumple': 'Cumple las reglas comprobables',
+                'no_cumple': 'No cumple',
+                'no_verificable': 'No verificable con los datos aportados',
+            }.get(habitability.estado_global, habitability.estado_global)
+            status_color = {'cumple': '#2e7d32', 'no_cumple': '#c62828', 'no_verificable': '#f57f17'}.get(habitability.estado_global, '#37474f')
+            check_rows = ''.join(
+                f"<tr><td>{esc(check.parametro)}</td><td>{esc(check.valor_observado)}</td><td>{esc(check.requisito)}</td><td>{esc(check.estado)}</td><td>{esc(check.referencia)}</td></tr>"
+                for check in habitability.comprobaciones
+            )
+            source_rows = ''.join(
+                f"<li><a href='{esc(source['url'])}'>{esc(source['nombre'])}</a></li>"
+                for source in habitability.fuentes
+            )
+            habitability_html = (
+                "<section id='sec-3c'>"
+                "<h2><span class='section-num'>3.2</span>Verificación de habitabilidad</h2>"
+                f"<div style='color:{status_color};font-weight:700;margin-bottom:8px'>{esc(status_label)}</div>"
+                f"<div class='muted'>{esc(habitability.normativa)} · versión de reglas {esc(habitability.version_reglas)}</div>"
+                "<table><thead><tr><th>Parámetro</th><th>Observado</th><th>Requisito</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>"
+                f"{check_rows}</tbody></table>"
+                f"<h3>Fuentes oficiales</h3><ul>{source_rows}</ul>"
+                "<div class='muted'>Prechequeo técnico; no sustituye la revisión profesional, el planeamiento municipal ni el resto de normativa aplicable.</div>"
+                "</section>"
+            )
+    except Exception:
+        habitability_html = ''
     economic_html = ''
     try:
         edi_ratio = _num(edi)
@@ -650,6 +683,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         {f'<li><a href="#sec-2">Composición cartográfica</a></li>' if carto_html else ''}
         {f'<li><a href="#sec-3">Cuadro de superficies</a></li>' if surface_html else ''}
         {f'<li><a href="#sec-3b">Diagnóstico comparativo</a></li>' if diagnostic_html else ''}
+        {f'<li><a href="#sec-3c">Verificación de habitabilidad</a></li>' if habitability_html else ''}
         {f'<li><a href="#sec-4">Estimación económica preliminar</a></li>' if economic_html else ''}
         {f'<li><a href="#sec-5">Análisis de sombras</a></li>' if shadow_html else ''}
         {f'<li><a href="#sec-6">Datos oficiales y contexto</a></li>' if official_html else ''}
@@ -677,6 +711,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
       <h2><span class="section-num">3.1</span>Diagnóstico comparativo edificio vs subzona</h2>
       {diagnostic_html or '<div class="muted">Sin datos de subzona o edificio para el diagnóstico.</div>'}
     </section>
+    {habitability_html}
     <section id="sec-4">
       <h2><span class="section-num">4</span>Estimación económica preliminar</h2>
       {economic_html or '<div class="muted">Sin datos suficientes para la estimación.</div>'}

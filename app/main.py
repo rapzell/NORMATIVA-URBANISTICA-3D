@@ -28,6 +28,7 @@ from src.export_service import (
 )
 from src.report_service import render_assess_report_html as _render_assess_report_html
 from src.shadow_service import shadow_analysis, shadow_analysis_multi_hour, solar_position
+from src.habitabilidad_checker import HabitabilityInput, HabitabilityResult, check_habitability
 from src.subzones_service import (
     find_subzone_for_point,
     get_osm_buildings_geojson,
@@ -1373,6 +1374,11 @@ async def endpoint_geometry_checks(req: GeometryChecksRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/habitabilidad/verificar", response_model=HabitabilityResult)
+def habitabilidad_verificar(req: HabitabilityInput = Body(...)):
+    return check_habitability(req)
+
+
 # Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)
 class VolumeRequest(BaseModel):
     geometry: dict | None = None
@@ -1388,6 +1394,7 @@ class VolumeRequest(BaseModel):
     use_plan_front_default: bool | None = None  # Opt-in para usar front_direction_default del plan
     diagnostics_verbosity: Optional[str] = None  # 'full'|'min'|'none' (override por petición)
     crs: Optional[str] = None  # CRS de la geometría; si 'EPSG:4326' se convertirá a espacio métrico local
+    habitabilidad: dict | None = None
 
 try:
     # Resolver ForwardRefs por uso de `from __future__ import annotations`

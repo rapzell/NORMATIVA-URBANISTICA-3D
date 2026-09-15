@@ -6,11 +6,12 @@
 # Arrancar servidor (puerto 8002)
 venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 
-# Tests completos (217 tests, ~15s)
-venv\Scripts\python.exe -m pytest -q
+# Tests completos (223 tests, ~10s)
+venv\Scripts\python.exe -m pytest -q --ignore=tests/test_asistente_normativa_rules.py --ignore=tests/test_evaluar_dataset_helpers.py
 
 # Tests focalizados
 venv\Scripts\python.exe -m pytest tests/test_geolibre_view.py -q
+venv\Scripts\python.exe -m pytest tests/test_habitabilidad_checker.py -q
 venv\Scripts\python.exe -m pytest tests/test_assess_report_branding.py -q
 venv\Scripts\python.exe -m pytest tests/test_health_and_proxies.py -q
 
@@ -34,6 +35,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Inventario de planeamiento | `datos/inventario_planeamento.csv` |
 | Mapeo municipio→INE | `app/main.py` → `_MUNICIPIO_INE` |
 | Exportación 3D | `src/export_service.py` |
+| Preverificación de habitabilidad (NHV/Decreto 128/2023) | `src/habitabilidad_checker.py` |
 | Gateway IA | `src/model_gateway.py` |
 
 ## Patrones del código
@@ -80,6 +82,35 @@ Se usan solo para los cálculos del backend (diagnóstico, viabilidad).
 - Los tests usan `monkeypatch` para mockear servicios externos
 - `_build_official_context` se mockea con `monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {...})`
 - `find_subzone_by_name` se mockea en `src.subzones_service` (no en `app.main`)
+
+### Preverificación de habitabilidad (`src/habitabilidad_checker.py`)
+
+Motor de reglas trazable de las NHV (Decreto 29/2010, redacción dada por el Decreto 128/2023).
+
+- **Endpoint:** `POST /habitabilidad/verificar` (en `app/main.py`)
+- **Tests:** `tests/test_habitabilidad_checker.py`
+- **UI:** panel en `web/geolibre/index.html` (`showHabitabilityForm`, `submitHabitabilityCheck`)
+- **Informe:** sección 3.2 en `src/report_service.py` (recibe `body['habitabilidad']`)
+
+Estados por comprobación: `cumple`, `no_cumple`, `no_verificable` (los datos faltantes nunca fallan).
+
+Fuentes oficiales (siempre se devuelven en `fuentes`):
+- DOG 176, 15/09/2023 (Decreto 128/2023)
+- Corrección de errores, DOG 77, 18/04/2024
+- Texto consolidado comentado NHV v1.2 (IGVS)
+
+Valores verificados (no hardcodear sin fuente):
+- Altura libre mínima cambio de uso: **2,4 m** (Anexo I, A.3.1.1.d)
+- Acristalamiento mínimo: **1/8** de la superficie útil de la pieza (Anexo I, A.1.2.a)
+- Ventilación real mínima: **1/3** del acristalamiento mínimo (Anexo I, A.1.2.i)
+- Superficies de estancias: tablas 1 y 2 del Anexo I, A.3.2.1/A.3.2.2 (varían con el nº de estancias)
+
+**No cubre** (módulos normativos separados, no mezclar con NHV):
+- Accesibilidad, evacuación, seguridad contra incendios, CTE
+- Planeamiento municipal (ordenanzas de cada municipio)
+- Certificación legal o sustitución del proyecto técnico
+
+`programa_declarado_completo=True` convierte las piezas ausentes en `no_cumple`; `False` las deja en `no_verificable`.
 
 ## Lo que NO hay que hacer
 

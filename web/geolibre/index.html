@@ -72,6 +72,16 @@
     margin-top: 10px; font-weight: 600;
   }
   .eval-btn:hover { background: #2ea043; }
+  .habitability-form { margin-top: 12px; }
+  .habitability-form label { display: block; color: #8b949e; font-size: 12px; margin: 8px 0 3px; }
+  .habitability-form input, .habitability-form select {
+    width: 100%; padding: 8px; color: #e6edf3; background: #0d1117;
+    border: 1px solid #30363d; border-radius: 6px;
+  }
+  .habitability-form .room-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .check-ok { color: #2da44e; }
+  .check-fail { color: #f85149; }
+  .check-unknown { color: #d29922; }
 
   /* Mapa */
   #map { flex: 1; height: 100%; }
@@ -1001,6 +1011,128 @@ async function loadBuildings(municipio) {
   }
 }
 
+function habitabilityRoomFields(key, title, options = {}) {
+  const dimensions = options.dimensions !== false;
+  const exterior = options.exterior === true;
+  return `<div class="info-card"><div style="font-weight:600">${escapeHtml(title)}</div>
+    <div class="room-grid">
+      <div><label>Superficie útil (m²)</label><input id="hab-${key}-area" type="number" min="0" step="0.01"></div>
+      ${dimensions ? `<div><label>Ancho mínimo (m)</label><input id="hab-${key}-width" type="number" min="0" step="0.01"></div>` : ''}
+      ${options.square ? `<div><label>Cuadrado inscribible (m)</label><input id="hab-${key}-square" type="number" min="0" step="0.01"></div>` : ''}
+      ${exterior ? `<div><label>Acristalamiento (m²)</label><input id="hab-${key}-glass" type="number" min="0" step="0.01"></div>
+      <div><label>Apertura ventilación (m²)</label><input id="hab-${key}-vent" type="number" min="0" step="0.01"></div>
+      <div><label>Relación exterior</label><select id="hab-${key}-exterior"><option value="">Sin comprobar</option><option value="yes">Sí</option><option value="no">No</option></select></div>` : ''}
+    </div></div>`;
+}
+
+function updateHabitabilityRooms() {
+  const container = document.getElementById('habitability-rooms');
+  if (!container) return;
+  const count = Number(document.getElementById('hab-room-count').value || 1);
+  let html = habitabilityRoomFields('e1', 'Estancia mayor (E1)', { dimensions: true, square: true, exterior: true });
+  for (let i = 2; i <= count; i++) html += habitabilityRoomFields(`e${i}`, `Estancia E${i}`, { dimensions: true, square: true, exterior: true });
+  html += habitabilityRoomFields('kitchen', 'Cocina', { dimensions: true, exterior: true });
+  html += habitabilityRoomFields('bath', 'Cuarto de baño', { dimensions: true });
+  if (count >= 4) html += habitabilityRoomFields('toilet', 'Cuarto de aseo', { dimensions: true });
+  html += habitabilityRoomFields('laundry', 'Lavadero', { dimensions: false });
+  html += habitabilityRoomFields('drying', 'Tendedero', { dimensions: false });
+  html += habitabilityRoomFields('storage', 'Almacenamiento', { dimensions: false });
+  container.innerHTML = html;
+}
+
+function showHabitabilityForm() {
+  const existing = document.getElementById('habitability-form');
+  if (existing) { existing.scrollIntoView({ behavior: 'smooth' }); return; }
+  const panel = document.getElementById('info-panel');
+  const wrapper = document.createElement('div');
+  wrapper.id = 'habitability-form';
+  wrapper.className = 'habitability-form';
+  wrapper.innerHTML = `<h2>Preverificación de habitabilidad</h2>
+    <div class="hint">Introduce dimensiones del proyecto terminado. Los campos vacíos se marcarán como no verificables.</div>
+    <div class="info-card">
+      <label>Tipo de operación</label><select id="hab-operation"><option value="cambio_uso_local_a_vivienda">Cambio de uso de local a vivienda</option><option value="rehabilitacion">Rehabilitación</option><option value="nueva_construccion">Nueva construcción</option></select>
+      <label>Altura libre terminada (m)</label><input id="hab-height" type="number" min="0" step="0.01">
+      <label>Número de estancias (incluida estancia mayor)</label><select id="hab-room-count" onchange="updateHabitabilityRooms()">${[1,2,3,4,5,6].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
+      <label><input id="hab-complete" type="checkbox" style="width:auto"> El programa introducido está completo</label>
+    </div>
+    <div id="habitability-rooms"></div>
+    <button class="eval-btn" onclick="submitHabitabilityCheck()">Comprobar NHV</button>
+    <div id="habitability-result"></div>`;
+  panel.appendChild(wrapper);
+  updateHabitabilityRooms();
+  wrapper.scrollIntoView({ behavior: 'smooth' });
+}
+
+function habitabilityNumber(id) {
+  const element = document.getElementById(id);
+  if (!element || element.value === '') return null;
+  const value = Number(element.value);
+  return Number.isFinite(value) ? value : null;
+}
+
+function habitabilityRoom(key, tipo, nombre, options = {}) {
+  const area = habitabilityNumber(`hab-${key}-area`);
+  if (area == null) return null;
+  const room = { nombre, tipo, superficie_util_m2: area };
+  if (options.dimensions !== false) room.ancho_minimo_m = habitabilityNumber(`hab-${key}-width`);
+  if (options.square) room.lado_cuadrado_inscribible_m = habitabilityNumber(`hab-${key}-square`);
+  if (options.exterior) {
+    room.superficie_acristalada_m2 = habitabilityNumber(`hab-${key}-glass`);
+    room.superficie_ventilacion_m2 = habitabilityNumber(`hab-${key}-vent`);
+    const exterior = document.getElementById(`hab-${key}-exterior`).value;
+    room.relacion_exterior = exterior === '' ? null : exterior === 'yes';
+  }
+  return room;
+}
+
+async function submitHabitabilityCheck() {
+  const count = Number(document.getElementById('hab-room-count').value || 1);
+  const pieces = [];
+  const major = habitabilityRoom('e1', 'estancia_mayor', 'Estancia mayor', { dimensions: true, square: true, exterior: true });
+  if (major) pieces.push(major);
+  for (let i = 2; i <= count; i++) {
+    const room = habitabilityRoom(`e${i}`, 'estancia', `Estancia E${i}`, { dimensions: true, square: true, exterior: true });
+    if (room) pieces.push(room);
+  }
+  const services = [
+    habitabilityRoom('kitchen', 'cocina', 'Cocina', { dimensions: true, exterior: true }),
+    habitabilityRoom('bath', 'bano', 'Cuarto de baño', { dimensions: true }),
+    count >= 4 ? habitabilityRoom('toilet', 'aseo', 'Cuarto de aseo', { dimensions: true }) : null,
+    habitabilityRoom('laundry', 'lavadero', 'Lavadero', { dimensions: false }),
+    habitabilityRoom('drying', 'tendedero', 'Tendedero', { dimensions: false }),
+    habitabilityRoom('storage', 'almacenamiento', 'Almacenamiento', { dimensions: false }),
+  ];
+  pieces.push(...services.filter(Boolean));
+  const payload = {
+    municipio: activeMunicipio,
+    tipo_operacion: document.getElementById('hab-operation').value,
+    altura_libre_m: habitabilityNumber('hab-height'),
+    programa_declarado_completo: document.getElementById('hab-complete').checked,
+    piezas: pieces,
+    geometria_local: (window._selectedBuildingFeature || {}).geometry || null,
+  };
+  const resultElement = document.getElementById('habitability-result');
+  resultElement.innerHTML = '<div class="loading">Comprobando reglas trazables…</div>';
+  try {
+    const response = await fetch(`${API}/habitabilidad/verificar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    const statusText = result.estado_global === 'cumple' ? 'Cumple las reglas comprobables' : result.estado_global === 'no_cumple' ? 'No cumple' : 'No verificable con los datos aportados';
+    const statusCss = result.estado_global === 'cumple' ? 'check-ok' : result.estado_global === 'no_cumple' ? 'check-fail' : 'check-unknown';
+    let html = `<div class="info-card"><div class="${statusCss}" style="font-weight:700">${escapeHtml(statusText)}</div><div class="hint">${escapeHtml(result.normativa)} · reglas ${escapeHtml(result.version_reglas)}</div></div>`;
+    for (const check of result.comprobaciones) {
+      const css = check.estado === 'cumple' ? 'check-ok' : check.estado === 'no_cumple' ? 'check-fail' : 'check-unknown';
+      html += `<div class="info-card"><div class="${css}" style="font-weight:600">${escapeHtml(check.parametro)}: ${escapeHtml(check.estado)}</div><div class="info-row"><span class="key">Observado</span><span class="val">${escapeHtml(check.valor_observado)}</span></div><div class="info-row"><span class="key">Requisito</span><span class="val">${escapeHtml(check.requisito)}</span></div><div class="hint">${escapeHtml(check.referencia)} — ${escapeHtml(check.detalle)}</div></div>`;
+    }
+    html += '<div class="info-card"><div style="font-weight:600;margin-bottom:6px">Fuentes oficiales</div>';
+    for (const source of result.fuentes) html += `<div class="hint"><a href="${escapeHtml(safeExternalUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.nombre)}</a></div>`;
+    html += '<div class="hint">Prechequeo técnico: no sustituye la revisión profesional, el planeamiento municipal ni otras normas aplicables.</div></div>';
+    resultElement.innerHTML = html;
+  } catch (e) {
+    resultElement.innerHTML = `<div class="hint check-fail">No se pudo completar la verificación: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function selectBuilding(feature) {
   const props = feature.properties || {};
   const panel = document.getElementById('info-panel');
@@ -1031,6 +1163,7 @@ async function selectBuilding(feature) {
   if (props.height && props.height > 0) {
     html += `<button class="eval-btn" onclick="exportBuildingIFC(${Number(props.height)})">Exportar geometría IFC aproximada</button>`;
   }
+  html += '<button class="eval-btn" onclick="showHabitabilityForm()">Verificar habitabilidad (Decreto 128/2023)</button>';
   html += `<div class="hint">${escapeHtml(props.cumplimiento_detalle || props.color_semantica || 'Sin evaluación normativa disponible para este edificio.')}</div>`;
   panel.innerHTML = html + '<div class="loading">Cargando diagnóstico y contexto oficial…</div>';
   window._selectedBuildingFeature = feature;

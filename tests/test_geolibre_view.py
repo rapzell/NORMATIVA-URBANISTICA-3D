@@ -157,6 +157,16 @@ def test_geolibre_index_has_shadow_slider():
     assert "updateShadowSliderInfo" in body
 
 
+def test_geolibre_index_has_habitability_flow():
+    resp = client.get("/geolibre/")
+    body = resp.text
+    assert "showHabitabilityForm" in body
+    assert "submitHabitabilityCheck" in body
+    assert "/habitabilidad/verificar" in body
+    assert "Decreto 128/2023" in body
+    assert "programa_declarado_completo" in body
+
+
 def test_geolibre_index_has_official_source_links():
     """La vista debe tener código para renderizar enlaces a fuentes oficiales."""
     resp = client.get("/geolibre/")
