@@ -1244,15 +1244,18 @@ function updateHabitabilityRooms() {
 function showHabitabilityForm() {
   const existing = document.getElementById('habitability-form');
   if (existing) { existing.scrollIntoView({ behavior: 'smooth' }); return; }
+  const feature = window._selectedBuildingFeature || {};
+  const props = feature.properties || {};
+  const buildingHeight = props.height || '';
   const panel = document.getElementById('info-panel');
   const wrapper = document.createElement('div');
   wrapper.id = 'habitability-form';
   wrapper.className = 'habitability-form';
   wrapper.innerHTML = `<h2>Preverificación de habitabilidad</h2>
-    <div class="hint">Introduce dimensiones del proyecto terminado. Los campos vacíos se marcarán como no verificables.</div>
+    <div class="hint">Los datos del edificio se rellenan automáticamente. Los campos vacíos se marcarán como no verificables.</div>
     <div class="info-card">
       <label>Tipo de operación</label><select id="hab-operation"><option value="cambio_uso_local_a_vivienda">Cambio de uso de local a vivienda</option><option value="rehabilitacion">Rehabilitación</option><option value="nueva_construccion">Nueva construcción</option></select>
-      <label>Altura libre terminada (m)</label><input id="hab-height" type="number" min="0" step="0.01">
+      <label>Altura libre terminada (m) <span class="hint" style="display:inline">— auto desde edificio</span></label><input id="hab-height" type="number" min="0" step="0.01" value="${buildingHeight}">
       <label>Número de estancias (incluida estancia mayor)</label><select id="hab-room-count" onchange="updateHabitabilityRooms()">${[1,2,3,4,5,6].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
       <label><input id="hab-complete" type="checkbox" style="width:auto"> El programa introducido está completo</label>
     </div>
@@ -1340,6 +1343,10 @@ async function generateLicenciaDoc() {
   const ctx = window._officialContext || {};
   const cat = ctx.catastro || {};
   const siotuga = ctx.siotuga || {};
+  let footprint = props.footprint_m2 || null;
+  if (!footprint && feature.geometry) {
+    try { footprint = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
+  }
   const payload = {
     municipio: props.municipio || activeMunicipio,
     ref_catastral: cat.refcat || null,
@@ -1349,7 +1356,7 @@ async function generateLicenciaDoc() {
     instrumento_planeamiento: siotuga.plan_title || null,
     fecha_aprobacion: siotuga.approval_date || null,
     tipo_operacion: 'cambio_uso_local_a_vivienda',
-    superficies: props.footprint_m2 ? { superficie_ocupada_m2: props.footprint_m2 } : {},
+    superficies: footprint ? { superficie_ocupada_m2: footprint } : {},
   };
   try {
     const response = await fetch(`${API}/licencia/documentacion`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -1405,15 +1412,18 @@ function showCostEstimator() {
   if (existing) { existing.scrollIntoView({ behavior: 'smooth' }); return; }
   const feature = window._selectedBuildingFeature || {};
   const props = feature.properties || {};
-  const footprint = props.footprint_m2 || '';
+  let footprint = props.footprint_m2 || '';
+  if (!footprint && feature.geometry) {
+    try { footprint = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
+  }
   const panel = document.getElementById('info-panel');
   const wrapper = document.createElement('div');
   wrapper.id = 'cost-form';
   wrapper.className = 'habitability-form';
   wrapper.innerHTML = `<h2>Estimación de costes de conversión</h2>
-    <div class="hint">Los valores son aportados por ti; no son datos de mercado verificados.</div>
+    <div class="hint">La superficie se rellena desde el edificio. Los precios los aportas tú; no son datos de mercado verificados.</div>
     <div class="info-card">
-      <label>Superficie útil (m²)</label><input id="ce-area" type="number" min="0" step="0.01" value="${footprint}">
+      <label>Superficie útil (m²) <span class="hint" style="display:inline">— auto desde edificio</span></label><input id="ce-area" type="number" min="0" step="0.01" value="${footprint}">
       <label>Coste de obra (€/m²)</label><input id="ce-cost-m2" type="number" min="0" step="1" placeholder="800">
       <label>Coste fijo adicional (€)</label><input id="ce-fixed" type="number" min="0" step="100" placeholder="5000">
       <label>Tasas municipales (€)</label><input id="ce-fees" type="number" min="0" step="100" placeholder="300">
@@ -1549,6 +1559,8 @@ async function selectBuilding(feature) {
   const pilot = props.normative_status === 'pilot';
   let footprint = null;
   try { footprint = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
+  if (footprint != null) props.footprint_m2 = footprint;
+  if (!props.municipio && activeMunicipio) props.municipio = activeMunicipio;
 
   let html = `<h2>${escapeHtml(props.name || 'Edificio #' + (props.osm_id || 'OSM'))}</h2>`;
   html += `<div style="margin-bottom:8px"><span class="badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span></div>`;
