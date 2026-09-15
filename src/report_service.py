@@ -481,6 +481,68 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 )
     except Exception:
         shadow_html = ''
+    solar_html = ''
+    try:
+        from src.solar_analysis import analyze_solar_exposure, render_solar_exposure_html
+        parcel_geom = body.get('geometry') if isinstance(body, dict) else None
+        env_feat = None
+        if hasattr(res, 'feature') and res.feature:
+            env_feat = res.feature
+        elif isinstance(res, dict) and res.get('feature'):
+            env_feat = res.get('feature')
+        solar_geom = None
+        if env_feat and isinstance(env_feat, dict):
+            solar_geom = env_feat.get('geometry')
+        if solar_geom is None and parcel_geom:
+            solar_geom = parcel_geom
+        if solar_geom:
+            from src.zoning_assess import centroid_lonlat_from_geojson
+            s_lon, s_lat = centroid_lonlat_from_geojson(solar_geom)
+            if s_lon is not None and s_lat is not None:
+                solar_res = analyze_solar_exposure(s_lat, s_lon)
+                solar_inner = render_solar_exposure_html(solar_res)
+                solar_html = (
+                    "<section id='sec-5b'>"
+                    "<h2><span class='section-num'>5.1</span>Soleamiento por orientación</h2>"
+                    f"{solar_inner}"
+                    "</section>"
+                )
+    except Exception:
+        solar_html = ''
+    cost_html = ''
+    try:
+        cost_input = body.get('costes') if isinstance(body, dict) else None
+        if isinstance(cost_input, dict):
+            from src.cost_estimator import estimate_conversion_costs
+            cost_res = estimate_conversion_costs(cost_input)
+            cost_rows = []
+            if cost_res.coste_obra_total is not None:
+                cost_rows.append(f"<tr><td>Coste de obra</td><td>{esc(cost_res.coste_obra_total)} €</td></tr>")
+            if cost_res.coste_total_inversion is not None:
+                cost_rows.append(f"<tr><td>Inversión total</td><td>{esc(cost_res.coste_total_inversion)} €</td></tr>")
+            if cost_res.coste_por_m2_total is not None:
+                cost_rows.append(f"<tr><td>Coste total/m²</td><td>{esc(cost_res.coste_por_m2_total)} €/m²</td></tr>")
+            if cost_res.beneficio_bruto_venta is not None:
+                cost_rows.append(f"<tr><td>Beneficio bruto (venta)</td><td>{esc(cost_res.beneficio_bruto_venta)} €</td></tr>")
+            if cost_res.roi_venta_pct is not None:
+                cost_rows.append(f"<tr><td>ROI (venta)</td><td>{esc(cost_res.roi_venta_pct)}%</td></tr>")
+            if cost_res.payback_alquiler_meses is not None:
+                cost_rows.append(f"<tr><td>Payback (alquiler)</td><td>{esc(cost_res.payback_alquiler_meses)} meses</td></tr>")
+            if cost_res.rentabilidad_alquiler_anual_pct is not None:
+                cost_rows.append(f"<tr><td>Rentabilidad alq. anual</td><td>{esc(cost_res.rentabilidad_alquiler_anual_pct)}%</td></tr>")
+            cost_rows_html = ''.join(cost_rows)
+            cost_warnings = ''.join(f"<div class='muted' style='color:#f57f17'>{esc(w)}</div>" for w in cost_res.advertencias)
+            cost_limits = ''.join(f"<div class='muted'>{esc(l)}</div>" for l in cost_res.limitaciones)
+            cost_source = f"<div class='muted'>Fuente: {esc(cost_res.fuente_costes)}</div>" if cost_res.fuente_costes else ''
+            cost_html = (
+                "<section id='sec-5c'>"
+                "<h2><span class='section-num'>5.2</span>Estimación de costes de conversión</h2>"
+                f"<table><thead><tr><th>Concepto</th><th>Valor</th></tr></thead><tbody>{cost_rows_html}</tbody></table>"
+                f"{cost_source}{cost_warnings}{cost_limits}"
+                "</section>"
+            )
+    except Exception:
+        cost_html = ''
     official_html = ''
     if official_context:
         try:
@@ -686,6 +748,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         {f'<li><a href="#sec-3c">Verificación de habitabilidad</a></li>' if habitability_html else ''}
         {f'<li><a href="#sec-4">Estimación económica preliminar</a></li>' if economic_html else ''}
         {f'<li><a href="#sec-5">Análisis de sombras</a></li>' if shadow_html else ''}
+        {f'<li><a href="#sec-5b">Soleamiento por orientación</a></li>' if solar_html else ''}
+        {f'<li><a href="#sec-5c">Estimación de costes de conversión</a></li>' if cost_html else ''}
         {f'<li><a href="#sec-6">Datos oficiales y contexto</a></li>' if official_html else ''}
         <li><a href="#sec-7">Parámetros efectivos</a></li>
         <li><a href="#sec-8">Ficha técnica</a></li>
@@ -720,6 +784,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
       <h2><span class="section-num">5</span>Análisis de sombras</h2>
       {shadow_html or '<div class="muted">Sin datos de altura o geometría para el análisis de sombras.</div>'}
     </section>
+    {solar_html}
+    {cost_html}
     <section id="sec-6">
       <h2><span class="section-num">6</span>Datos oficiales y contexto</h2>
       {official_html or '<div class="muted">Sin contexto oficial disponible.</div>'}
