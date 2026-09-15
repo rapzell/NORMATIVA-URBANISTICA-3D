@@ -276,6 +276,35 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             )
     except Exception:
         surface_html = ''
+    # Datos del edificio desde OSM
+    building_html = ''
+    try:
+        bld = body.get('edificio_osm') if isinstance(body, dict) else None
+        if isinstance(bld, dict):
+            bld_rows = ''
+            if bld.get('nombre'): bld_rows += f"<tr><td>Nombre</td><td>{esc(bld['nombre'])}</td></tr>"
+            if bld.get('tipo'): bld_rows += f"<tr><td>Tipo de edificio (OSM)</td><td>{esc(bld['tipo'])}</td></tr>"
+            if bld.get('altura_m') is not None: bld_rows += f"<tr><td>Altura</td><td>{esc(bld['altura_m'])} m</td></tr>"
+            if bld.get('altura_fuente'): bld_rows += f"<tr><td>Procedencia de la altura</td><td>{esc(bld['altura_fuente'])}</td></tr>"
+            if bld.get('plantas'): bld_rows += f"<tr><td>Plantas (OSM)</td><td>{esc(bld['plantas'])}</td></tr>"
+            if bld.get('huella_m2') is not None: bld_rows += f"<tr><td>Huella aproximada</td><td>{esc(bld['huella_m2'])} m²</td></tr>"
+            if bld.get('osm_id'):
+                osm_url = f"https://www.openstreetmap.org/way/{esc(bld['osm_id'])}"
+                bld_rows += f"<tr><td>OSM ID</td><td><a href=\"{osm_url}\" target=\"_blank\" rel=\"noopener\">{esc(bld['osm_id'])}</a></td></tr>"
+            if bld_rows:
+                building_html = (
+                    "<section>"
+                    "<h2>Datos del edificio (OpenStreetMap)</h2>"
+                    "<table><tbody>"
+                    f"{bld_rows}"
+                    "</tbody></table>"
+                    "<div class='muted' style='margin-top:8px'>"
+                    "Datos procedentes de OpenStreetMap. La altura puede ser estimada por plantas, tipo o valor genérico. "
+                    "No sustituye un levantamiento topográfico.</div>"
+                    "</section>"
+                )
+    except Exception:
+        building_html = ''
     # Diagnóstico comparativo edificio vs subzona
     diagnostic_html = ''
     try:
@@ -744,6 +773,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         <li><a href="#sec-1">Resumen ejecutivo</a></li>
         {f'<li><a href="#sec-2">Composición cartográfica</a></li>' if carto_html else ''}
         {f'<li><a href="#sec-3">Cuadro de superficies</a></li>' if surface_html else ''}
+        {f'<li><a href="#sec-3a">Datos del edificio (OSM)</a></li>' if building_html else ''}
         {f'<li><a href="#sec-3b">Diagnóstico comparativo</a></li>' if diagnostic_html else ''}
         {f'<li><a href="#sec-3c">Verificación de habitabilidad</a></li>' if habitability_html else ''}
         {f'<li><a href="#sec-4">Estimación económica preliminar</a></li>' if economic_html else ''}
@@ -771,6 +801,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
       <h2><span class="section-num">3</span>Cuadro de superficies</h2>
       {surface_html or '<div class="muted">Sin datos de superficie disponibles.</div>'}
     </section>
+    {building_html}
     <section id="sec-3b">
       <h2><span class="section-num">3.1</span>Diagnóstico comparativo edificio vs subzona</h2>
       {diagnostic_html or '<div class="muted">Sin datos de subzona o edificio para el diagnóstico.</div>'}

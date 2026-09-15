@@ -1524,6 +1524,15 @@ async function generateReport() {
     height_m: height,
     footprint_m2: footprint,
     habitabilidad: habitabilidad,
+    edificio_osm: {
+      tipo: props.building || null,
+      altura_m: height,
+      altura_fuente: props.height_source || null,
+      plantas: props.levels || null,
+      huella_m2: footprint,
+      osm_id: props.osm_id || null,
+      nombre: props.name || null,
+    },
   };
 
   try {
