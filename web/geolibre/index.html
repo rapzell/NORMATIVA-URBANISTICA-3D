@@ -981,9 +981,19 @@ function renderOfficialContext(ctx) {
   html += '</div>';
   // Planeamiento vigente destacado
   const siotuga = (ctx && ctx.siotuga) || {};
-  if (rows.length || siotuga.plan_title) {
+  const clas = (ctx && ctx.clasificacion_siotuga) || {};
+  if (rows.length || siotuga.plan_title || clas.clasificacion_ley) {
     html += '<div class="info-card">';
     html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Planeamiento vigente</div>';
+    if (clas.clasificacion_ley_label) {
+      html += `<div class="info-row"><span class="key">Clasificación</span><span class="val" style="font-weight:600">${escapeHtml(clas.clasificacion_ley_label)}</span></div>`;
+    }
+    if (clas.id_recinto) {
+      html += `<div class="info-row"><span class="key">Recinto</span><span class="val">${escapeHtml(clas.id_recinto)}</span></div>`;
+    }
+    if (clas.observaciones_zona) {
+      html += `<div class="info-row"><span class="key">Observaciones</span><span class="val">${escapeHtml(clas.observaciones_zona)}</span></div>`;
+    }
     if (siotuga.plan_title) {
       const planLabel = String(siotuga.plan_title).startsWith('_') ? `PXOM de ${ctx.municipio || 'municipio'}` : siotuga.plan_title;
       html += `<div class="info-row"><span class="key">Plan</span><span class="val">${escapeHtml(planLabel)}</span></div>`;
@@ -1362,7 +1372,7 @@ async function generateLicenciaDoc() {
   }
   const height = props.height || null;
 
-  // Parámetros urbanísticos desde la subzona (si disponible) o el edificio
+  // Parámetros urbanísticos desde la subzona (si disponible), el edificio y fuentes oficiales
   const paramsUrbanisticos = {};
   if (props.altura_maxima_subzona_m != null) paramsUrbanisticos['Altura máxima (m)'] = props.altura_maxima_subzona_m;
   else if (height) paramsUrbanisticos['Altura del edificio (m)'] = height;
@@ -1375,6 +1385,12 @@ async function generateLicenciaDoc() {
   if (cat.uso_principal) paramsUrbanisticos['Uso principal (Catastro)'] = cat.uso_principal;
   if (cat.anio_construccion) paramsUrbanisticos['Año construcción (Catastro)'] = cat.anio_construccion;
   if (cat.superficie_comercial_m2) paramsUrbanisticos['Sup. no residencial (Catastro)'] = cat.superficie_comercial_m2;
+  if (cat.superficie_parcela_m2) paramsUrbanisticos['Sup. parcela (Catastro)'] = cat.superficie_parcela_m2;
+  // Clasificación SIOTUGA
+  const clas = ctx.clasificacion_siotuga || {};
+  if (clas.clasificacion_ley_label) paramsUrbanisticos['Clasificación suelo (SIOTUGA)'] = clas.clasificacion_ley_label;
+  if (clas.id_recinto) paramsUrbanisticos['ID recinto (SIOTUGA)'] = clas.id_recinto;
+  if (clas.observaciones_zona) paramsUrbanisticos['Observaciones zona'] = clas.observaciones_zona;
   if (Object.keys(paramsUrbanisticos).length === 0 && siotuga.plan_title) {
     paramsUrbanisticos['Planeamiento'] = siotuga.plan_title;
   }

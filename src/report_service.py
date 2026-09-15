@@ -835,6 +835,17 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     f"<li><a href=\"{siotuga_link}\" target=\"_blank\" rel=\"noopener\">{esc(siotuga_label)}</a></li>",
                     f"<li><a href=\"{siose_link}\" target=\"_blank\" rel=\"noopener\">{esc(siose_label)}</a></li>",
                 ])
+            # Clasificación SIOTUGA (WFS)
+            clas = (official_context or {}).get('clasificacion_siotuga') or {}
+            clas_rows = ''
+            if clas.get('clasificacion_ley') or clas.get('clasificacion_plan'):
+                clas_rows += f"<tr><td>Clasificación del suelo (SIOTUGA)</td><td>{esc(clas.get('clasificacion_ley_label') or clas.get('clasificacion_ley') or '—')}</td></tr>"
+                if clas.get('id_recinto'):
+                    clas_rows += f"<tr><td>ID de recinto</td><td>{esc(clas['id_recinto'])}</td></tr>"
+                if clas.get('observaciones_zona'):
+                    clas_rows += f"<tr><td>Observaciones</td><td>{esc(clas['observaciones_zona'])}</td></tr>"
+                if clas.get('area_zona_m2'):
+                    clas_rows += f"<tr><td>Área de la zona</td><td>{esc(round(clas['area_zona_m2'], 0))} m²</td></tr>"
             official_html = (
                 "<section>"
                 "<h2>Datos oficiales y contexto</h2>"
@@ -845,6 +856,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 f"<tr><td>Contexto SIOTUGA</td><td>{esc(si.get('note') or '—')}</td></tr>"
                 f"<tr><td>Afecciones preliminares</td><td>{esc(af.get('available'))}</td></tr>"
                 f"{cat_rows}"
+                f"{clas_rows}"
                 "</tbody></table>"
                 f"{usos_html}"
                 f"{unidades_html}"

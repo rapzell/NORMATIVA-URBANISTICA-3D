@@ -2614,6 +2614,75 @@ def _build_siotuga_wms_getmap_url(ine_code: str, lon: float, lat: float, layer_n
   )
 
 
+def _fetch_siotuga_classification(lon: float, lat: float, ine_code: str) -> dict:
+  """Consulta la clasificación urbanística de SIOTUGA para un punto via WFS."""
+  cache_key = ('siotuga', 'clas', ine_code, round(lon, 5), round(lat, 5))
+  cached = _official_cache_get(cache_key)
+  if cached is not None:
+    return cached
+  wms_info = _fetch_siotuga_wms_layer(ine_code)
+  layer = wms_info.get('layer_name')
+  if not layer:
+    return {}
+  delta = 0.002  # ~200m
+  url = (
+    f'https://siotuga.xunta.gal/siotuga/ws?codine={ine_code}&SERVICE=WFS'
+    f'&REQUEST=GetFeature&version=1.1.0&typename={layer}'
+    f'&maxfeatures=1&srsname=EPSG:4326'
+    f'&bbox={lon-delta},{lat-delta},{lon+delta},{lat+delta}'
+  )
+  req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+  try:
+    with urlopen(req, timeout=15) as resp:
+      raw = resp.read()
+  except Exception:
+    return {}
+  try:
+    root = ET.fromstring(raw)
+  except Exception:
+    return {}
+  result: dict = {}
+  for feat in root.iter():
+    tag = feat.tag.split('}')[-1]
+    if tag.startswith('_') and tag != layer:
+      continue
+    for child in feat:
+      field = child.tag.split('}')[-1]
+      val = (child.text or '').strip()
+      if val and field not in ('msGeometry', 'boundedBy'):
+        if field == 'cat_ley':
+          result['clasificacion_ley'] = val
+        elif field == 'cat_homo':
+          result['clasificacion_homo'] = val
+        elif field == 'cat_plan':
+          result['clasificacion_plan'] = val
+        elif field == 'uso':
+          result['uso_zona'] = val
+        elif field == 'denom':
+          result['denominacion_zona'] = val
+        elif field == 'obsv':
+          result['observaciones_zona'] = val
+        elif field == 'id_recinto':
+          result['id_recinto'] = val
+        elif field == 'geom_area':
+          result['area_zona_m2'] = _try_float(val)
+  # Mapear códigos a etiquetas legibles
+  code_labels = {
+    'SUC': 'Suelo Urbano Consolidado',
+    'SUNC': 'Suelo Urbano No Consolidado',
+    'SNU': 'Suelo No Urbanizable',
+    'SUN': 'Suelo Urbanizable',
+    'SUR': 'Suelo Urbano Residencial',
+    'SUT': 'Suelo Urbano Terciario',
+    'SUI': 'Suelo Urbano Industrial',
+  }
+  for key in ('clasificacion_ley', 'clasificacion_homo', 'clasificacion_plan'):
+    if key in result and result[key] in code_labels:
+      result[f'{key}_label'] = code_labels[result[key]]
+  _official_cache_set(cache_key, result)
+  return result
+
+
 def _is_in_galicia(lon: float, lat: float) -> bool:
   """Valida si unas coordenadas están dentro del bounding box de Galicia."""
   return (
@@ -2964,15 +3033,24 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
         ctx['catastro'] = {'available': False, 'error': str(e)}
         return ctx
   if lon is not None and lat is not None:
-    # Paralelizar consultas a Catastro y SIOSE para reducir tiempo total
+    # Paralelizar consultas a Catastro, SIOSE y clasificación SIOTUGA
     from concurrent.futures import ThreadPoolExecutor, as_completed
     results: dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=2) as pool:
-      futures = {
-        'catastro': pool.submit(_safe_fetch_catastro, lon, lat),
-        'siose': pool.submit(_safe_fetch_siose, lon, lat),
-      }
+    ine_code = _get_ine_for_municipio(municipio)
+    futures = {
+      'catastro': None,
+      'siose': None,
+      'siotuga_clas': None,
+    }
+    with ThreadPoolExecutor(max_workers=3) as pool:
+      futures['catastro'] = pool.submit(_safe_fetch_catastro, lon, lat)
+      futures['siose'] = pool.submit(_safe_fetch_siose, lon, lat)
+      if ine_code:
+        futures['siotuga_clas'] = pool.submit(_fetch_siotuga_classification, lon, lat, ine_code)
       for name, fut in futures.items():
+        if fut is None:
+          results[name] = {}
+          continue
         try:
           results[name] = fut.result(timeout=15)
         except Exception as e:
@@ -2996,13 +3074,17 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
       ctx['catastro'] = cat
     siose = results.get('siose') or {}
     ctx['afecciones_preliminares'] = siose
-    # Indicador de calidad de datos
-    sources_ok = sum([
-      1 if cat.get('found') else 0,
-      1 if siose.get('available') else 0,
-      1 if ctx.get('planeamiento', {}).get('available') else 0,
-    ])
-    ctx['data_quality'] = 'alta' if sources_ok >= 2 else ('media' if sources_ok == 1 else 'baja')
+    # Clasificación SIOTUGA
+    clas = results.get('siotuga_clas') or {}
+    if clas:
+      ctx['clasificacion_siotuga'] = clas
+      # Actualizar la calidad de datos si la clasificación respondió
+      sources_ok = sum([
+        1 if cat.get('found') else 0,
+        1 if siose.get('available') else 0,
+        1 if clas.get('clasificacion_ley') else 0,
+      ])
+      ctx['data_quality'] = 'alta' if sources_ok >= 2 else ('media' if sources_ok == 1 else 'baja')
     # Construir enlaces específicos a fuentes oficiales con datos de la parcela
     links: list[dict] = []
     # Catastro: URL directa a la ficha de la parcela por coordenadas

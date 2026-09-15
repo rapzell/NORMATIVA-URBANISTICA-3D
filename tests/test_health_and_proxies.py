@@ -146,12 +146,16 @@ def test_official_context_includes_data_quality(monkeypatch):
     monkeypatch.setattr(_m, '_fetch_siose_precheck', lambda lon, lat, delta=0.0015: {
         'available': True, 'land_cover_labels': [], 'alerts': [],
     }, raising=True)
+    monkeypatch.setattr(_m, '_fetch_siotuga_classification', lambda lon, lat, ine: {
+        'clasificacion_ley': 'SUC', 'clasificacion_ley_label': 'Suelo Urbano Consolidado',
+    }, raising=True)
     r = client.get('/official/context', params={'municipio': 'Vigo', 'lon': -8.72, 'lat': 42.23})
     assert r.status_code == 200, r.text
     j = r.json()
     assert 'data_quality' in j
     assert j['data_quality'] in ('alta', 'media', 'baja')
     assert 'coord_consistency' in j['catastro']
+    assert 'clasificacion_siotuga' in j
 
 
 def test_building_diagnostic_compatible(monkeypatch):
