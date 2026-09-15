@@ -940,10 +940,18 @@ async function loadBuildings(municipio) {
   loadingMsg.id = 'buildings-loading';
   loadingMsg.textContent = 'Cargando edificios 3D de OpenStreetMap…';
   if (panel) panel.appendChild(loadingMsg);
+  const startTime = Date.now();
+  const timer = setInterval(() => {
+    const el = document.getElementById('buildings-loading');
+    if (!el) { clearInterval(timer); return; }
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    el.textContent = `Cargando edificios 3D de OpenStreetMap… (${elapsed}s)`;
+  }, 1000);
   try {
     await waitForMap();
-    const resp = await fetch(`${API}/proxy/osm-buildings?municipio=${encodeURIComponent(municipio)}&limit=3000`);
+    const resp = await fetch(`${API}/proxy/osm-buildings?municipio=${encodeURIComponent(municipio)}&limit=500`);
     const geojson = await resp.json();
+    clearInterval(timer);
     if (activeMunicipio !== municipio) return;
     const features = geojson.features || [];
     const loadingEl = document.getElementById('buildings-loading');
@@ -1040,6 +1048,7 @@ async function loadBuildings(municipio) {
     applyBuildingFilter();
     console.log(`Cargados ${features.length} edificios`);
   } catch (e) {
+    clearInterval(timer);
     const loadingEl = document.getElementById('buildings-loading');
     if (loadingEl) loadingEl.remove();
     console.error('Error cargando edificios:', e);

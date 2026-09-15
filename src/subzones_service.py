@@ -136,11 +136,11 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
     delta = float(cfg.get("delta") or 0.01)
     raw = None
     last_error = None
-    for factor in (0.22, 0.15):
+    for factor in (0.15, 0.22):
         qd = delta * factor
         south, west, north, east = lat - qd, lon - qd, lat + qd, lon + qd
         query = (
-            "[out:json][timeout:8];"
+            "[out:json][timeout:25];"
             f"way['building']({south},{west},{north},{east});"
             "out geom;"
         )
@@ -152,7 +152,7 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 headers={"User-Agent": "NormativaGalicia/1.0", "Content-Type": "application/x-www-form-urlencoded"},
                 method="POST",
             )
-            with urlopen(req, timeout=10) as resp:
+            with urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode("utf-8", errors="replace"))
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -222,19 +222,13 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
 
 def _find_subzone_for_ring(coords: list[list[float]], municipio: str | None) -> dict[str, Any] | None:
     try:
-        from shapely.geometry import Polygon
-        poly = Polygon(coords)
-        pt = poly.representative_point()
-        return find_subzone_for_point(float(pt.x), float(pt.y))
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        lon = (min(xs) + max(xs)) / 2.0
+        lat = (min(ys) + max(ys)) / 2.0
+        return find_subzone_for_point(float(lon), float(lat))
     except Exception:
-        try:
-            xs = [c[0] for c in coords]
-            ys = [c[1] for c in coords]
-            lon = (min(xs) + max(xs)) / 2.0
-            lat = (min(ys) + max(ys)) / 2.0
-            return find_subzone_for_point(float(lon), float(lat))
-        except Exception:
-            return None
+        return None
 
 
 def _classify_building_compliance(height: float, subzone_props: dict[str, Any] | None) -> dict[str, str]:
