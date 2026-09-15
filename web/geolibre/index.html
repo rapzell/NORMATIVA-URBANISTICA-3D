@@ -969,10 +969,13 @@ function renderOfficialContext(ctx) {
   html += `<div class="info-row"><span class="key">Dirección</span><span class="val">${escapeHtml(cat.direccion || 'No disponible')}</span></div>`;
   if (cat.error) html += `<div class="hint">Catastro: ${escapeHtml(cat.error)}</div>`;
   if (cat.superficie_terreno_m2) html += `<div class="info-row"><span class="key">Sup. terreno</span><span class="val">${escapeHtml(cat.superficie_terreno_m2)} m²</span></div>`;
+  if (cat.superficie_parcela_m2) html += `<div class="info-row"><span class="key">Sup. parcela</span><span class="val">${escapeHtml(cat.superficie_parcela_m2)} m²</span></div>`;
   if (cat.superficie_construida_m2) html += `<div class="info-row"><span class="key">Sup. construida</span><span class="val">${escapeHtml(cat.superficie_construida_m2)} m²</span></div>`;
   if (cat.uso_principal) html += `<div class="info-row"><span class="key">Uso</span><span class="val">${escapeHtml(cat.uso_principal)}</span></div>`;
   if (cat.anio_construccion) html += `<div class="info-row"><span class="key">Año construc.</span><span class="val">${escapeHtml(cat.anio_construccion)}</span></div>`;
   if (cat.valor_catastral) html += `<div class="info-row"><span class="key">Valor catastral</span><span class="val">${escapeHtml(cat.valor_catastral)} €</span></div>`;
+  if (cat.superficie_comercial_m2) html += `<div class="info-row"><span class="key">Sup. no resid.</span><span class="val">${escapeHtml(cat.superficie_comercial_m2)} m²</span></div>`;
+  if (cat.num_unidades) html += `<div class="info-row"><span class="key">Unidades</span><span class="val">${escapeHtml(cat.num_unidades)}</span></div>`;
   if (cat.coord_consistency) html += `<div class="info-row"><span class="key">Coord. consistentes</span><span class="val">${cat.coord_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
   if (cat.municipio_consistency) html += `<div class="info-row"><span class="key">Muni. consistente</span><span class="val">${cat.municipio_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
   html += '</div>';
@@ -1718,6 +1721,21 @@ async function selectBuilding(feature) {
       fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
     ]);
     window._officialContext = ctx || {};
+    // Dibujar lindero de la parcela catastral si está disponible
+    try {
+      const parcelGeom = (ctx && ctx.catastro && ctx.catastro.geometry) || null;
+      if (parcelGeom && parcelGeom.coordinates) {
+        if (map.getSource('catastro-parcel')) {
+          map.getSource('catastro-parcel').setData({ type: 'Feature', geometry: parcelGeom, properties: {} });
+        } else {
+          map.addSource('catastro-parcel', { type: 'geojson', data: { type: 'Feature', geometry: parcelGeom, properties: {} } });
+          map.addLayer({ id: 'catastro-parcel-fill', type: 'fill', source: 'catastro-parcel',
+            paint: { 'fill-color': '#f5a623', 'fill-opacity': 0.15 } });
+          map.addLayer({ id: 'catastro-parcel-line', type: 'line', source: 'catastro-parcel',
+            paint: { 'line-color': '#f5a623', 'line-width': 2.5, 'line-dasharray': [4, 2] } });
+        }
+      }
+    } catch (e) {}
     let diagHtml = '';
     if (diagResp && diagResp.available && diagResp.comparisons && diagResp.comparisons.length > 0) {
       diagHtml = '<div class="info-card">';
