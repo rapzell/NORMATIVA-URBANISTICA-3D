@@ -252,6 +252,28 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         f"<tr><td>Ocupación máx</td><td>{_fmt(ocu)}</td></tr>",
         f"<tr><td>Edificabilidad máx</td><td>{_fmt(edi)}</td></tr>",
     ])
+    # Datos del edificio en la ficha técnica
+    try:
+        bld = body.get('edificio_osm') if isinstance(body, dict) else None
+        if isinstance(bld, dict) and bld:
+            if bld.get('tipo'): ficha_rows += f"<tr><td>Tipo de edificio (OSM)</td><td>{esc(bld['tipo'])}</td></tr>"
+            if bld.get('altura_m') is not None: ficha_rows += f"<tr><td>Altura del edificio (m)</td><td>{esc(bld['altura_m'])}</td></tr>"
+            if bld.get('altura_fuente'): ficha_rows += f"<tr><td>Procedencia altura</td><td>{esc(bld['altura_fuente'])}</td></tr>"
+            if bld.get('plantas'): ficha_rows += f"<tr><td>Plantas (OSM)</td><td>{esc(bld['plantas'])}</td></tr>"
+            if bld.get('huella_m2') is not None: ficha_rows += f"<tr><td>Huella del edificio (m²)</td><td>{esc(bld['huella_m2'])}</td></tr>"
+    except Exception:
+        pass
+    # Datos de Catastro en la ficha técnica
+    try:
+        cat_ctx = (official_context or {}).get('catastro') or {}
+        if cat_ctx.get('available'):
+            if cat_ctx.get('refcat'): ficha_rows += f"<tr><td>Referencia catastral</td><td>{esc(cat_ctx['refcat'])}</td></tr>"
+            if cat_ctx.get('direccion'): ficha_rows += f"<tr><td>Dirección catastral</td><td>{esc(cat_ctx['direccion'])}</td></tr>"
+            if cat_ctx.get('superficie_construida_m2'): ficha_rows += f"<tr><td>Sup. construida (Catastro)</td><td>{esc(cat_ctx['superficie_construida_m2'])} m²</td></tr>"
+            if cat_ctx.get('uso_principal'): ficha_rows += f"<tr><td>Uso principal</td><td>{esc(cat_ctx['uso_principal'])}</td></tr>"
+            if cat_ctx.get('anio_construccion'): ficha_rows += f"<tr><td>Año construcción</td><td>{esc(cat_ctx['anio_construccion'])}</td></tr>"
+    except Exception:
+        pass
     src_row = ''
     if source_ref:
         try:
