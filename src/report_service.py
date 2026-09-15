@@ -356,14 +356,16 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     surface_html = ''
     try:
         parcel_area = _num((res.geometry_summary or {}).get('area') or (res.geometry_summary or {}).get('area_m2'))
+        cat_parcel_area = _num(((official_context or {}).get('catastro') or {}).get('superficie_parcela_m2'))
         buildable_area = _num(((res.feature or {}) if hasattr(res, 'feature') else (res.get('feature') if isinstance(res, dict) else {})).get('properties', {}).get('area_m2'))
         occ_ratio = _num(ocu)
         occ_cap_area = parcel_area * occ_ratio if parcel_area is not None and occ_ratio is not None else None
         occupied_area = buildable_area if buildable_area is not None else occ_cap_area
         free_area = max(parcel_area - occupied_area, 0.0) if parcel_area is not None and occupied_area is not None else None
-        if any(v is not None for v in (parcel_area, buildable_area, occ_cap_area, free_area)):
+        if any(v is not None for v in (parcel_area, buildable_area, occ_cap_area, free_area, cat_parcel_area)):
             surface_rows = ''.join([
-                f"<tr><td>Superficie de parcela</td><td>{_fmt(parcel_area)} m²</td></tr>",
+                f"<tr><td>Superficie de parcela (geométrica)</td><td>{_fmt(parcel_area)} m²</td></tr>",
+                f"<tr><td>Superficie parcela oficial (Catastro)</td><td>{_fmt(cat_parcel_area)} m²</td></tr>" if cat_parcel_area else '',
                 f"<tr><td>Superficie ocupada estimada</td><td>{_fmt(occupied_area)} m²</td></tr>",
                 f"<tr><td>Superficie libre estimada</td><td>{_fmt(free_area)} m²</td></tr>",
                 f"<tr><td>Envolvente edificable</td><td>{_fmt(buildable_area)} m²</td></tr>",
