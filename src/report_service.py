@@ -425,10 +425,15 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     try:
         edi_ratio = _num(edi)
         alt_m = _num(alt)
+        bld_footprint = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
+        bld_height = _num(body.get('height_m')) if isinstance(body, dict) else None
         footprint = buildable_area if buildable_area is not None else occ_cap_area
+        if footprint is None and bld_footprint is not None:
+            footprint = bld_footprint
+        eff_alt = alt_m if alt_m is not None else bld_height
         total_buildable_m2 = None
-        if footprint is not None and alt_m is not None:
-            floors = max(int(round(alt_m / 3.0)), 1) if alt_m > 0 else 1
+        if footprint is not None and eff_alt is not None:
+            floors = max(int(round(eff_alt / 3.0)), 1) if eff_alt > 0 else 1
             total_buildable_m2 = footprint * floors
         elif edi_ratio is not None and parcel_area is not None:
             total_buildable_m2 = parcel_area * edi_ratio
@@ -439,18 +444,19 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         if any(v is not None for v in (total_buildable_m2, dwellings, edi_ratio)):
             econ_rows = ''.join([
                 f"<tr><td>Superficie edificable total estimada</td><td>{_fmt(total_buildable_m2)} m²</td></tr>",
-                f"<tr><td>Plantas estimadas (h/3m)</td><td>{_fmt(int(round(alt_m / 3.0)) if alt_m else None)}</td></tr>" if alt_m else '',
+                f"<tr><td>Plantas estimadas (h/3m)</td><td>{_fmt(int(round(eff_alt / 3.0)) if eff_alt else None)}</td></tr>" if eff_alt else '',
                 f"<tr><td>Edificabilidad (m²/m²)</td><td>{_fmt(edi_ratio)}</td></tr>" if edi_ratio is not None else '',
                 f"<tr><td>Viviendas potenciales (≈{int(avg_dwelling_m2)} m²/viv)</td><td>{_fmt(dwellings)}</td></tr>" if dwellings is not None else '',
             ])
+            econ_source = "Estimación orientativa basada en la envolvente, altura y edificabilidad." if buildable_area is not None else "Estimación orientativa basada en la huella y altura del edificio (sin datos de subzona)."
             economic_html = (
                 "<section>"
                 "<h2>Estimación económica preliminar</h2>"
                 "<table><thead><tr><th>Concepto</th><th>Valor</th></tr></thead><tbody>"
                 f"{econ_rows}"
                 "</tbody></table>"
-                "<div class='muted' style='margin-top:8px'>"
-                "Estimación orientativa basada en la envolvente, altura y edificabilidad. "
+                f"<div class='muted' style='margin-top:8px'>"
+                f"{econ_source} "
                 "No sustituye un estudio económico ni de mercado. La superficie media por vivienda es una hipótesis por defecto.</div>"
                 "</section>"
             )
@@ -471,7 +477,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             shadow_geom = env_feat.get('geometry')
         if shadow_geom is None and parcel_geom:
             shadow_geom = parcel_geom
-        if shadow_geom and alt:
+        shadow_alt = _num(alt) or _num(body.get('height_m')) if isinstance(body, dict) else _num(alt)
+        if shadow_geom and shadow_alt:
             centroid_lon = None
             centroid_lat = None
             try:
@@ -482,7 +489,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if centroid_lon is not None and centroid_lat is not None:
                 winter = _sdt.date(_sdt.date.today().year, 12, 21)
                 shadow_res = shadow_analysis_multi_hour(
-                    shadow_geom, float(alt), centroid_lat, centroid_lon, winter,
+                    shadow_geom, float(shadow_alt), centroid_lat, centroid_lon, winter,
                     hours=[8, 10, 12, 14, 16, 18],
                 )
                 shadow_rows = ''
