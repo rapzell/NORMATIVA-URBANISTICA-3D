@@ -3201,13 +3201,13 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
     clas = results.get('siotuga_clas') or {}
     if clas:
       ctx['clasificacion_siotuga'] = clas
-      # Actualizar la calidad de datos si la clasificación respondió
-      sources_ok = sum([
-        1 if cat.get('found') else 0,
-        1 if siose.get('available') else 0,
-        1 if clas.get('clasificacion_ley') else 0,
-      ])
-      ctx['data_quality'] = 'alta' if sources_ok >= 2 else ('media' if sources_ok == 1 else 'baja')
+    # Calidad de datos siempre presente
+    sources_ok = sum([
+      1 if cat.get('found') or cat.get('available') else 0,
+      1 if siose.get('available') else 0,
+      1 if clas.get('clasificacion_ley') else 0,
+    ])
+    ctx['data_quality'] = 'alta' if sources_ok >= 2 else ('media' if sources_ok == 1 else 'baja')
     # Construir enlaces específicos a fuentes oficiales con datos de la parcela
     links: list[dict] = []
     # Catastro: URL directa a la ficha de la parcela por coordenadas
