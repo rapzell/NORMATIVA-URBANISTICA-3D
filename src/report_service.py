@@ -389,10 +389,15 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 from src.zoning_assess import centroid_lonlat_from_geojson
                 c_lon, c_lat = centroid_lonlat_from_geojson(parcel_geom)
                 if c_lon is not None and c_lat is not None:
+                    cat_link = (
+                        f'https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCBusqueda.aspx'
+                        f'?pest=coordenadas&latitud={c_lat}&longitud={c_lon}&tipoCoordenadas=2'
+                    )
                     osm_link = (
                         f'<div class="muted" style="margin-top:6px">'
                         f'<a href="https://www.openstreetmap.org/#map=18/{c_lat:.6f}/{c_lon:.6f}" '
-                        f'target="_blank" rel="noopener">Ver ubicación en OpenStreetMap</a>'
+                        f'target="_blank" rel="noopener">Ver en OpenStreetMap</a>'
+                        f' · <a href="{cat_link}" target="_blank" rel="noopener">Ver en Catastro</a>'
                         f' · Coordenadas: {c_lon:.6f}, {c_lat:.6f}</div>'
                     )
             except Exception:
