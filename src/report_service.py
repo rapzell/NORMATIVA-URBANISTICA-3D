@@ -121,6 +121,22 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     color = {'APTO':'#2e7d32','CONDICIONADO':'#f57f17','NO APTO':'#c62828'}.get(v, (brand_color or '#37474f'))
     reasons = ''.join(f"<li>{esc(r)}</li>" for r in (res.reasons or []))
     pe = res.params_effective or {}
+    # Detectar si los parámetros provienen de un CSV local (datos orientativos, no oficiales)
+    try:
+        from src.plans_service import get_plan_provider_kind as _prov_kind
+        _prov = (_prov_kind() or '').lower()
+    except Exception:
+        _prov = ''
+    _csv_orientativo = _prov in ('csv', 'local', 'uploaded')
+    plan_source = pe.get('plan_source') or ''
+    if _csv_orientativo or 'csv' in str(plan_source).lower():
+        v = f"{v} (ORIENTATIVO)" if v else 'ORIENTATIVO'
+        color = '#f57f17'
+        reasons += (
+            "<li><b>Parámetros normativos orientativos:</b> provienen de un CSV local "
+            "(<code>plan_uploaded.csv</code>), no de la ordenanza oficial. "
+            "La viabilidad mostrada es solo volumétrica; verifique siempre la normativa municipal vigente.</li>"
+        )
     rows = ''
     pe_labels = {
         'altura_maxima_m': 'Altura máxima (m)',
@@ -141,6 +157,15 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if bld.get('altura_m') is not None: rows += f"<tr><td>altura_edificio_m</td><td>{esc(bld['altura_m'])}</td></tr>"
             if bld.get('huella_m2') is not None: rows += f"<tr><td>huella_edificio_m2</td><td>{esc(bld['huella_m2'])}</td></tr>"
             if bld.get('plantas'): rows += f"<tr><td>plantas_edificio</td><td>{esc(bld['plantas'])}</td></tr>"
+    except Exception:
+        pass
+    # Edificabilidad oficial de SIOTUGA cuando no hay parámetro del plan
+    try:
+        clas_pe = (official_context or {}).get('clasificacion_siotuga') or {}
+        if clas_pe.get('edificabilidad_ficha') is not None and pe.get('edificabilidad_max_m2_m2') is None:
+            rows += f"<tr><td>Edificabilidad oficial (SIOTUGA)</td><td>{esc(clas_pe['edificabilidad_ficha'])}</td></tr>"
+        if clas_pe.get('uso_zona'):
+            rows += f"<tr><td>Uso permitido (SIOTUGA)</td><td>{esc(clas_pe['uso_zona'])}</td></tr>"
     except Exception:
         pass
     area_txt = ''
@@ -251,6 +276,24 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 cat_summary = f"<p class=muted>Catastro: {' · '.join(parts)}.</p>"
     except Exception:
         pass
+    # Clasificación SIOTUGA para el resumen
+    siotuga_summary = ''
+    try:
+        clas_ctx = (official_context or {}).get('clasificacion_siotuga') or {}
+        if clas_ctx.get('clasificacion_ley') or clas_ctx.get('clasificacion_plan'):
+            parts = []
+            if clas_ctx.get('clasificacion_ley_label'):
+                parts.append(f"Clasificación: {esc(clas_ctx['clasificacion_ley_label'])}")
+            if clas_ctx.get('denominacion_zona'):
+                parts.append(f"Zona: {esc(clas_ctx['denominacion_zona'])}")
+            if clas_ctx.get('uso_zona'):
+                parts.append(f"Uso: {esc(clas_ctx['uso_zona'])}")
+            if clas_ctx.get('edificabilidad_ficha') is not None:
+                parts.append(f"Edificabilidad: {esc(clas_ctx['edificabilidad_ficha'])}")
+            if parts:
+                siotuga_summary = f"<p class=muted>SIOTUGA (oficial): {' · '.join(parts)}.</p>"
+    except Exception:
+        pass
     # Indicador de disponibilidad de datos
     data_flags = []
     data_flags.append(('Subzona/normativa', subz is not None and subz != ''))
@@ -263,7 +306,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         for name, ok in data_flags
     )
     avail_html = f"<p class=muted style='margin-top:6px'>Disponibilidad de datos: {avail_items}</p>"
-    resumen_html = bld_summary + cat_summary + resumen_html + avail_html
+    resumen_html = bld_summary + cat_summary + siotuga_summary + resumen_html + avail_html
     ficha_rows = ''.join([
         f"<tr><td>Municipio</td><td>{muni or '—'}</td></tr>",
         f"<tr><td>Subzona</td><td>{subz or '—'}</td></tr>",
@@ -572,6 +615,13 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     economic_html = ''
     try:
         edi_ratio = _num(edi)
+        # Fallback a la edificabilidad oficial de SIOTUGA si el plan no la tiene
+        if edi_ratio is None:
+            try:
+                clas_ec = (official_context or {}).get('clasificacion_siotuga') or {}
+                edi_ratio = _num(clas_ec.get('edificabilidad_ficha'))
+            except Exception:
+                pass
         alt_m = _num(alt)
         bld_footprint = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
         bld_height = _num(body.get('height_m')) if isinstance(body, dict) else None
@@ -597,6 +647,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 f"<tr><td>Viviendas potenciales (≈{int(avg_dwelling_m2)} m²/viv)</td><td>{_fmt(dwellings)}</td></tr>" if dwellings is not None else '',
             ])
             econ_source = "Estimación orientativa basada en la envolvente, altura y edificabilidad." if buildable_area is not None else "Estimación orientativa basada en la huella y altura del edificio (sin datos de subzona)."
+            if edi_ratio is not None and pe.get('edificabilidad_max_m2_m2') is None:
+                econ_source += " Edificabilidad procedente de la clasificación SIOTUGA oficial."
             economic_html = (
                 "<section>"
                 "<h2>Estimación económica preliminar</h2>"
