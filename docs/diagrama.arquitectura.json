@@ -1,0 +1,484 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Visor Arquitectos — Plataforma de análisis urbanístico de Galicia",
+    "output": "diagrama-arquitectura.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    },
+    "viewBox": [
+      1080,
+      500
+    ],
+    "repository": {
+      "url": "https://github.com/rapzell/NORMATIVA-URBANISTICA-3D",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "aeb7d342d8b57d76c38de757959ce76995456fd9"
+    },
+    "views": [
+      {
+        "id": "flujo-principal",
+        "label": "Flujo principal",
+        "focus": [
+          "user",
+          "viewer",
+          "api"
+        ],
+        "note": "El arquitecto interactúa con el visor 3D, que consulta la API FastAPI en :8002."
+      },
+      {
+        "id": "fuentes-oficiales",
+        "label": "Fuentes oficiales",
+        "focus": [
+          "api",
+          "catastro",
+          "siotuga",
+          "siose"
+        ],
+        "note": "El backend consulta Catastro, SIOTUGA y SIOSE en paralelo y construye el contexto oficial con data_quality."
+      },
+      {
+        "id": "analisis-y-docs",
+        "label": "Análisis y documentos",
+        "focus": [
+          "api",
+          "analysis",
+          "reports"
+        ],
+        "note": "El motor de análisis alimenta el informe de viabilidad y la documentación de licencia."
+      },
+      {
+        "id": "datos-locales",
+        "label": "Datos locales",
+        "focus": [
+          "api",
+          "normdata",
+          "osmcache"
+        ],
+        "note": "Subzonas piloto, inventario de planeamiento, ordenanzas y la caché de edificios OSM."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "overpass",
+      "type": "external",
+      "label": "Overpass API",
+      "sublabel": "edificios OpenStreetMap",
+      "pos": [
+        280,
+        60
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "catastro",
+      "type": "external",
+      "label": "Catastro",
+      "sublabel": "OVC DNPRC · INSPIRE WFS",
+      "pos": [
+        480,
+        60
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "oficial"
+    },
+    {
+      "id": "siotuga",
+      "type": "external",
+      "label": "SIOTUGA (Xunta)",
+      "sublabel": "WMS + WFS clasificación",
+      "pos": [
+        680,
+        60
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "oficial"
+    },
+    {
+      "id": "siose",
+      "type": "external",
+      "label": "SIOSE / IDEE",
+      "sublabel": "ocupación del suelo WFS",
+      "pos": [
+        880,
+        60
+      ],
+      "size": [
+        150,
+        56
+      ],
+      "tag": "oficial"
+    },
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Arquitecto",
+      "sublabel": "AC8 · uso profesional",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "viewer",
+      "type": "frontend",
+      "label": "Visor GeoLibre / MapLibre GL",
+      "sublabel": "mapa 3D · panel · formularios",
+      "pos": [
+        220,
+        290
+      ],
+      "size": [
+        190,
+        74
+      ],
+      "tag": "index.html",
+      "sources": [
+        {
+          "path": "web/geolibre/index.html",
+          "label": "visor completo"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI",
+      "sublabel": "endpoints · proxy HTTP",
+      "pos": [
+        470,
+        290
+      ],
+      "size": [
+        160,
+        74
+      ],
+      "tag": "app/main.py :8002",
+      "sources": [
+        {
+          "path": "app/main.py",
+          "label": "_build_official_context"
+        }
+      ]
+    },
+    {
+      "id": "reports",
+      "type": "backend",
+      "label": "Informes y licencias",
+      "sublabel": "viabilidad HTML · doc. licencia",
+      "pos": [
+        800,
+        180
+      ],
+      "size": [
+        200,
+        66
+      ],
+      "sources": [
+        {
+          "path": "src/report_service.py",
+          "label": "informe"
+        },
+        {
+          "path": "src/licencia_docs.py",
+          "label": "licencia"
+        }
+      ]
+    },
+    {
+      "id": "analysis",
+      "type": "backend",
+      "label": "Motor de análisis",
+      "sublabel": "viabilidad · volumen · sombras · NHV",
+      "pos": [
+        800,
+        300
+      ],
+      "size": [
+        200,
+        74
+      ],
+      "sources": [
+        {
+          "path": "src/zoning_assess.py",
+          "label": "viabilidad"
+        },
+        {
+          "path": "src/habitabilidad_checker.py",
+          "label": "Decreto 128/2023"
+        }
+      ]
+    },
+    {
+      "id": "normdata",
+      "type": "database",
+      "label": "Datos normativos locales",
+      "sublabel": "subzonas · inventario · ordenanzas",
+      "pos": [
+        800,
+        404
+      ],
+      "size": [
+        200,
+        66
+      ],
+      "tag": "datos/ · orientativo",
+      "sources": [
+        {
+          "path": "datos/subzonas_piloto.geojson",
+          "label": "subzonas"
+        },
+        {
+          "path": "datos/ordenanzas/_esquema.json",
+          "label": "ordenanzas"
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "localStorage",
+      "sublabel": "proyectos multi-estado",
+      "pos": [
+        230,
+        412
+      ],
+      "size": [
+        170,
+        56
+      ],
+      "sources": [
+        {
+          "path": "web/geolibre/index.html",
+          "label": "panel proyectos"
+        }
+      ]
+    },
+    {
+      "id": "osmcache",
+      "type": "database",
+      "label": "Caché edificios",
+      "sublabel": "memoria + disco · TTL 7d",
+      "pos": [
+        480,
+        412
+      ],
+      "size": [
+        160,
+        56
+      ],
+      "tag": "datos/cache/",
+      "sources": [
+        {
+          "path": "src/subzones_service.py",
+          "label": "get_osm_buildings_geojson"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Cliente — navegador",
+      "wraps": [
+        "viewer",
+        "storage"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Servidor local :8002",
+      "wraps": [
+        "api",
+        "analysis",
+        "reports",
+        "osmcache",
+        "normdata"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Servicios externos (HTTPS)",
+      "wraps": [
+        "overpass",
+        "catastro",
+        "siotuga",
+        "siose"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-viewer",
+      "from": "user",
+      "to": "viewer",
+      "label": "interactúa",
+      "variant": "emphasis"
+    },
+    {
+      "id": "viewer-api",
+      "from": "viewer",
+      "to": "api",
+      "label": "HTTP/JSON",
+      "variant": "emphasis"
+    },
+    {
+      "id": "viewer-storage",
+      "from": "viewer",
+      "to": "storage",
+      "label": "guarda proyectos",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        320,
+        392
+      ]
+    },
+    {
+      "id": "api-analysis",
+      "from": "api",
+      "to": "analysis",
+      "label": "servicios src/",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        715,
+        355
+      ]
+    },
+    {
+      "id": "api-reports",
+      "from": "api",
+      "to": "reports",
+      "label": "informe / licencia",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        740,
+        250
+      ]
+    },
+    {
+      "id": "api-osmcache",
+      "from": "api",
+      "to": "osmcache",
+      "label": "lee / escribe",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        595,
+        392
+      ]
+    },
+    {
+      "id": "analysis-normdata",
+      "from": "analysis",
+      "to": "normdata",
+      "label": "lee datos",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        952,
+        391
+      ]
+    },
+    {
+      "id": "api-overpass",
+      "from": "api",
+      "to": "overpass",
+      "label": "POST query",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        355,
+        145
+      ]
+    },
+    {
+      "id": "api-catastro",
+      "from": "api",
+      "to": "catastro",
+      "label": "REST XML / WFS",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        555,
+        150
+      ]
+    },
+    {
+      "id": "api-siotuga",
+      "from": "api",
+      "to": "siotuga",
+      "label": "WMS / WFS",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        755,
+        150
+      ]
+    },
+    {
+      "id": "api-siose",
+      "from": "api",
+      "to": "siose",
+      "label": "WFS GetFeature",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [
+        [
+          550,
+          170
+        ],
+        [
+          955,
+          170
+        ]
+      ],
+      "labelAt": [
+        955,
+        150
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Análisis y entregables",
+      "items": [
+        "Viabilidad volumétrica, envolvente, sombras y soleamiento",
+        "Habitabilidad NHV — Decreto 128/2023 (prechequeo trazable)",
+        "Informe HTML y doc. de licencia con data_quality por sección",
+        "Formularios auto-rellenados desde el edificio y Catastro"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Procedencia de datos",
+      "items": [
+        "Oficiales: Catastro, SIOTUGA, SIOSE — con enlaces verificables",
+        "Piloto/orientativos: subzonas e inventario local en datos/",
+        "Los parámetros piloto nunca se presentan como oficiales"
+      ]
+    }
+  ]
+}
