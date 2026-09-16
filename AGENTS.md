@@ -165,6 +165,9 @@ Valores verificados (no hardcodear sin fuente):
    - `src/ordenanzas_service.py` — estructura para ordenanzas municipales (pendiente datos de AC8)
    - `src/report_service.py` — integra habitabilidad, soleamiento y costes
    - Performance: Overpass timeout 8s→25s, eliminado Shapely por edificio, límite 3000→500
+   - **Caché de edificios OSM**: doble nivel — memoria (`_OVERPASS_CACHE`) + disco (`datos/cache/osm_buildings/{muni}_{limit}.json`, TTL 7 días, gitignored). Un municipio cacheado carga en ~0.04s en vez de 5-50s. Las 7 capitales + Ferrol están precalentadas.
+   - **GZipMiddleware** activo (`minimum_size=4096`): GeoJSON 356KB → ~26KB comprimido.
+   - El frontend lanza el fetch de edificios en paralelo con la carga del mapa (no espera a `waitForMap`).
 
 7. **Auto-rellenado de formularios e informes**:
    - Botón "Generar informe de viabilidad" con formulario inline y vista previa de datos
