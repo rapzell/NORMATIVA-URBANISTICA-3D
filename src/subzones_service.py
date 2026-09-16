@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from functools import lru_cache
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -18,7 +19,44 @@ _OVERPASS_CACHE: dict[tuple[str, int], dict[str, Any]] = {}
 _OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-] 
+]
+_OVERPASS_DISK_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos", "cache", "osm_buildings"
+)
+_OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
+
+
+def _overpass_disk_path(muni_key: str, limit: int) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in muni_key)
+    return os.path.join(_OVERPASS_DISK_CACHE_DIR, f"{safe}_{int(limit)}.json")
+
+
+def _overpass_disk_read(muni_key: str, limit: int) -> dict[str, Any] | None:
+    path = _overpass_disk_path(muni_key, limit)
+    try:
+        if not os.path.exists(path):
+            return None
+        if time.time() - os.path.getmtime(path) > _OVERPASS_DISK_TTL_S:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("type") == "FeatureCollection":
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def _overpass_disk_write(muni_key: str, limit: int, data: dict[str, Any]) -> None:
+    try:
+        os.makedirs(_OVERPASS_DISK_CACHE_DIR, exist_ok=True)
+        path = _overpass_disk_path(muni_key, limit)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, path)
+    except Exception:
+        pass
 
 MUNICIPIO_CENTERS = {
     "vigo": {"center": [-8.722, 42.232], "delta": 0.02},
@@ -717,6 +755,10 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
     cached = _OVERPASS_CACHE.get(cache_key)
     if cached is not None:
         return cached
+    disk_cached = _overpass_disk_read(muni_key, int(limit))
+    if disk_cached is not None:
+        _OVERPASS_CACHE[cache_key] = disk_cached
+        return disk_cached
 
     lon, lat = cfg["center"]
     delta = float(cfg.get("delta") or 0.01)
@@ -803,6 +845,7 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
             break
     result = {"type": "FeatureCollection", "features": features}
     _OVERPASS_CACHE[cache_key] = result
+    _overpass_disk_write(muni_key, int(limit), result)
     return result
 
 

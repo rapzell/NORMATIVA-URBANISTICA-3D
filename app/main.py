@@ -115,6 +115,9 @@ except Exception:
 
 app = FastAPI(title="Asistente Normativa Galicia API", version=API_VERSION, lifespan=lifespan)
 
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=4096)
+
 # Servir visor Three.js como estático para evitar CORS (same-origin)
 try:
     app.mount(

@@ -1124,9 +1124,11 @@ async function loadBuildings(municipio) {
     el.textContent = `Cargando edificios 3D de OpenStreetMap… (${elapsed}s)`;
   }, 1000);
   try {
+    // Lanzar el fetch sin esperar al mapa: la red es lo lento, el mapa carga en paralelo
+    const fetchPromise = fetch(`${API}/proxy/osm-buildings?municipio=${encodeURIComponent(municipio)}&limit=500`)
+      .then(r => r.json());
     await waitForMap();
-    const resp = await fetch(`${API}/proxy/osm-buildings?municipio=${encodeURIComponent(municipio)}&limit=500`);
-    const geojson = await resp.json();
+    const geojson = await fetchPromise;
     clearInterval(timer);
     if (activeMunicipio !== municipio) return;
     const features = geojson.features || [];
