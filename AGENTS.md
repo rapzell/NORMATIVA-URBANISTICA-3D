@@ -6,7 +6,7 @@
 # Arrancar servidor (puerto 8002)
 venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 
-# Tests completos (269 tests, ~8s)
+# Tests completos (268 tests + 1 skip, ~30s)
 venv\Scripts\python.exe -m pytest -q --ignore=tests/test_asistente_normativa_rules.py --ignore=tests/test_evaluar_dataset_helpers.py
 
 # Tests focalizados
