@@ -991,6 +991,18 @@ function renderOfficialContext(ctx) {
     if (clas.id_recinto) {
       html += `<div class="info-row"><span class="key">Recinto</span><span class="val">${escapeHtml(clas.id_recinto)}</span></div>`;
     }
+    if (clas.denominacion_zona) {
+      html += `<div class="info-row"><span class="key">Denominación</span><span class="val">${escapeHtml(clas.denominacion_zona)}</span></div>`;
+    }
+    if (clas.uso_zona) {
+      html += `<div class="info-row"><span class="key">Uso permitido</span><span class="val">${escapeHtml(clas.uso_zona)}</span></div>`;
+    }
+    if (clas.edificabilidad_ficha != null) {
+      html += `<div class="info-row"><span class="key">Edificabilidad</span><span class="val">${clas.edificabilidad_ficha}</span></div>`;
+    }
+    if (clas.sup_ficha_m2) {
+      html += `<div class="info-row"><span class="key">Sup. ficha</span><span class="val">${Math.round(clas.sup_ficha_m2)} m²</span></div>`;
+    }
     if (clas.observaciones_zona) {
       html += `<div class="info-row"><span class="key">Observaciones</span><span class="val">${escapeHtml(clas.observaciones_zona)}</span></div>`;
     }
@@ -1390,6 +1402,10 @@ async function generateLicenciaDoc() {
   const clas = ctx.clasificacion_siotuga || {};
   if (clas.clasificacion_ley_label) paramsUrbanisticos['Clasificación suelo (SIOTUGA)'] = clas.clasificacion_ley_label;
   if (clas.id_recinto) paramsUrbanisticos['ID recinto (SIOTUGA)'] = clas.id_recinto;
+  if (clas.denominacion_zona) paramsUrbanisticos['Denominación zona'] = clas.denominacion_zona;
+  if (clas.uso_zona) paramsUrbanisticos['Uso permitido (SIOTUGA)'] = clas.uso_zona;
+  if (clas.edificabilidad_ficha != null) paramsUrbanisticos['Edificabilidad (ficha)'] = clas.edificabilidad_ficha;
+  if (clas.sup_ficha_m2) paramsUrbanisticos['Sup. ficha (m²)'] = clas.sup_ficha_m2;
   if (clas.observaciones_zona) paramsUrbanisticos['Observaciones zona'] = clas.observaciones_zona;
   if (Object.keys(paramsUrbanisticos).length === 0 && siotuga.plan_title) {
     paramsUrbanisticos['Planeamiento'] = siotuga.plan_title;

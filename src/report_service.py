@@ -842,6 +842,14 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 clas_rows += f"<tr><td>Clasificación del suelo (SIOTUGA)</td><td>{esc(clas.get('clasificacion_ley_label') or clas.get('clasificacion_ley') or '—')}</td></tr>"
                 if clas.get('id_recinto'):
                     clas_rows += f"<tr><td>ID de recinto</td><td>{esc(clas['id_recinto'])}</td></tr>"
+                if clas.get('denominacion_zona'):
+                    clas_rows += f"<tr><td>Denominación</td><td>{esc(clas['denominacion_zona'])}</td></tr>"
+                if clas.get('uso_zona'):
+                    clas_rows += f"<tr><td>Uso permitido</td><td>{esc(clas['uso_zona'])}</td></tr>"
+                if clas.get('edificabilidad_ficha') is not None:
+                    clas_rows += f"<tr><td>Edificabilidad (ficha)</td><td>{esc(clas['edificabilidad_ficha'])}</td></tr>"
+                if clas.get('sup_ficha_m2'):
+                    clas_rows += f"<tr><td>Superficie de ficha</td><td>{esc(round(clas['sup_ficha_m2'], 0))} m²</td></tr>"
                 if clas.get('observaciones_zona'):
                     clas_rows += f"<tr><td>Observaciones</td><td>{esc(clas['observaciones_zona'])}</td></tr>"
                 if clas.get('area_zona_m2'):

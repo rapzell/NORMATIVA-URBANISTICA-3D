@@ -2624,12 +2624,14 @@ def _fetch_siotuga_classification(lon: float, lat: float, ine_code: str) -> dict
   layer = wms_info.get('layer_name')
   if not layer:
     return {}
-  delta = 0.002  # ~200m
+  # La capa usa EPSG:25829 (UTM 29N), transformar el bbox
+  x, y = _lonlat_to_utm29(lon, lat)
+  delta = 200  # ~200m en metros UTM
   url = (
     f'https://siotuga.xunta.gal/siotuga/ws?codine={ine_code}&SERVICE=WFS'
     f'&REQUEST=GetFeature&version=1.1.0&typename={layer}'
-    f'&maxfeatures=1&srsname=EPSG:4326'
-    f'&bbox={lon-delta},{lat-delta},{lon+delta},{lat+delta}'
+    f'&maxfeatures=10&srsname=EPSG:25829'
+    f'&bbox={x-delta},{y-delta},{x+delta},{y+delta},EPSG:25829'
   )
   req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
   try:
@@ -2641,31 +2643,114 @@ def _fetch_siotuga_classification(lon: float, lat: float, ine_code: str) -> dict
     root = ET.fromstring(raw)
   except Exception:
     return {}
-  result: dict = {}
+  # Parsear todas las features y verificar point-in-polygon
+  candidates: list[dict] = []
   for feat in root.iter():
     tag = feat.tag.split('}')[-1]
-    if tag.startswith('_') and tag != layer:
+    if tag != layer:
       continue
+    # Verificar si el punto está dentro del polígono (GML 2.x: coordinates, GML 3.x: posList)
+    ring = feat.find('.//{http://www.opengis.net/gml}LinearRing/{http://www.opengis.net/gml}coordinates')
+    if ring is None:
+      ring = feat.find('.//{http://www.opengis.net/gml}LinearRing/{http://www.opengis.net/gml}posList')
+    if ring is None:
+      # Buscar en el primer LinearRing exterior
+      for lr in feat.iter():
+        if lr.tag.split('}')[-1] == 'LinearRing':
+          ring = lr.find('{http://www.opengis.net/gml}coordinates') or lr.find('{http://www.opengis.net/gml}posList')
+          if ring is not None:
+            break
+    if ring is None:
+      continue
+    coords_text = (ring.text or '').strip()
+    if not coords_text:
+      continue
+    xs, ys = [], []
+    # posList usa espacios: "x1 y1 x2 y2 ...", coordinates usa "x1,y1 x2,y2 ..."
+    if ',' in coords_text:
+      # GML 2.x coordinates format
+      for c in coords_text.split():
+        parts = c.split(',')
+        if len(parts) >= 2:
+          try:
+            xs.append(float(parts[0]))
+            ys.append(float(parts[1]))
+          except ValueError:
+            continue
+    else:
+      # GML 3.x posList format
+      vals = coords_text.split()
+      for i in range(0, len(vals) - 1, 2):
+        try:
+          xs.append(float(vals[i]))
+          ys.append(float(vals[i + 1]))
+        except (ValueError, IndexError):
+          continue
+    if len(xs) < 3:
+      continue
+    # Ray casting point-in-polygon
+    inside = False
+    n = len(xs)
+    j = n - 1
+    for i in range(n):
+      if ((ys[i] > y) != (ys[j] > y)) and (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]):
+        inside = not inside
+      j = i
+    if not inside:
+      continue
+    # Extraer atributos
+    feat_data: dict = {}
     for child in feat:
       field = child.tag.split('}')[-1]
       val = (child.text or '').strip()
       if val and field not in ('msGeometry', 'boundedBy'):
-        if field == 'cat_ley':
-          result['clasificacion_ley'] = val
-        elif field == 'cat_homo':
-          result['clasificacion_homo'] = val
-        elif field == 'cat_plan':
-          result['clasificacion_plan'] = val
-        elif field == 'uso':
-          result['uso_zona'] = val
-        elif field == 'denom':
-          result['denominacion_zona'] = val
-        elif field == 'obsv':
-          result['observaciones_zona'] = val
-        elif field == 'id_recinto':
-          result['id_recinto'] = val
-        elif field == 'geom_area':
-          result['area_zona_m2'] = _try_float(val)
+        feat_data[field] = val
+    candidates.append(feat_data)
+  if not candidates:
+    _official_cache_set(cache_key, {})
+    return {}
+  # Preferir la feature con más datos específicos (edif_ficha > denom > uso)
+  def _score(f: dict) -> int:
+    s = 0
+    if f.get('edif_ficha'):
+      s += 3
+    if f.get('denom'):
+      s += 2
+    if f.get('uso'):
+      s += 1
+    return s
+  candidates.sort(key=_score, reverse=True)
+  feat_data = candidates[0]
+  result: dict = {}
+  for field, val in feat_data.items():
+    if field == 'cat_ley':
+      result['clasificacion_ley'] = val
+    elif field == 'cat_homo':
+      result['clasificacion_homo'] = val
+    elif field == 'cat_plan':
+      result['clasificacion_plan'] = val
+    elif field == 'cla_ley':
+      result['clase_ley'] = val
+    elif field == 'cla_homo':
+      result['clase_homo'] = val
+    elif field == 'uso':
+      result['uso_zona'] = val
+    elif field == 'denom':
+      result['denominacion_zona'] = val
+    elif field == 'obsv':
+      result['observaciones_zona'] = val
+    elif field == 'id_recinto':
+      result['id_recinto'] = val
+    elif field == 'geom_area':
+      result['area_zona_m2'] = _try_float(val)
+    elif field == 'sup_ficha':
+      result['sup_ficha_m2'] = _try_float(val)
+    elif field == 'edif_ficha':
+      result['edificabilidad_ficha'] = _try_float(val)
+    elif field == 'estado':
+      result['estado_zona'] = val
+    elif field == 'cat_wiug':
+      result['categoria_wiug'] = val
   # Mapear códigos a etiquetas legibles
   code_labels = {
     'SUC': 'Suelo Urbano Consolidado',
@@ -2675,8 +2760,21 @@ def _fetch_siotuga_classification(lon: float, lat: float, ine_code: str) -> dict
     'SUR': 'Suelo Urbano Residencial',
     'SUT': 'Suelo Urbano Terciario',
     'SUI': 'Suelo Urbano Industrial',
+    'SUB': 'Suelo Urbanizable',
+    'SU': 'Suelo Urbano',
+    'SNUC': 'Suelo No Urbanizable Común',
+    'SNUP': 'Suelo No Urbanizable Protegido',
+    'SR': 'Suelo Rústico',
+    'SRP': 'Suelo Rústico Protegido',
+    'SRPA': 'Suelo Rústico de Protección Agraria',
+    'SRPP': 'Suelo Rústico de Protección Paisajística',
+    'SRPEN': 'Suelo Rústico de Protección de Espacios Naturales',
+    'SRPAU': 'Suelo Rústico de Protección de Aprovechamientos Urbanos',
+    'SRPF': 'Suelo Rústico de Protección Forestal',
+    'SRPPX': 'Suelo Rústico de Protección de Paisaje y Patrimonio',
+    'SRPC': 'Suelo Rústico de Protección de Cauces',
   }
-  for key in ('clasificacion_ley', 'clasificacion_homo', 'clasificacion_plan'):
+  for key in ('clasificacion_ley', 'clasificacion_homo', 'clasificacion_plan', 'clase_ley', 'clase_homo'):
     if key in result and result[key] in code_labels:
       result[f'{key}_label'] = code_labels[result[key]]
   _official_cache_set(cache_key, result)
@@ -2990,6 +3088,31 @@ def _try_int(s: str):
     return int(s)
   except Exception:
     return None
+
+
+def _lonlat_to_utm29(lon: float, lat: float) -> tuple[float, float]:
+  """Convierte lon/lat (EPSG:4326) a UTM 29N (EPSG:25829)."""
+  import math
+  lon0 = math.radians(-9.0)
+  k0 = 0.9996
+  a = 6378137.0
+  e2 = 0.00669437999014
+  lat_rad = math.radians(lat)
+  lon_rad = math.radians(lon)
+  N = a / math.sqrt(1 - e2 * math.sin(lat_rad) ** 2)
+  T = math.tan(lat_rad) ** 2
+  C = e2 * math.cos(lat_rad) ** 2 / (1 - e2)
+  A = math.cos(lat_rad) * (lon_rad - lon0)
+  M = a * ((1 - e2/4 - 3*e2**2/64 - 5*e2**3/256) * lat_rad
+           - (3*e2/8 + 3*e2**2/32 + 45*e2**3/1024) * math.sin(2*lat_rad)
+           + (15*e2**2/256 + 45*e2**3/1024) * math.sin(4*lat_rad)
+           - (35*e2**3/3072) * math.sin(6*lat_rad))
+  x = k0 * N * (A + (1-T+C)*A**3/6 + (5-18*T+T**2+72*C-58*e2)*A**5/120) + 500000
+  y = k0 * (M + N * math.tan(lat_rad) * (A**2/2 + (5-T+9*C+4*C**2)*A**4/24
+           + (61-58*T+T**2+600*C-330*e2)*A**6/720))
+  if lat < 0:
+    y += 10000000
+  return x, y
 
 
 def _build_official_context(municipio: str | None = None, subzona: str | None = None, geometry: dict | None = None, lon: float | None = None, lat: float | None = None) -> dict:
