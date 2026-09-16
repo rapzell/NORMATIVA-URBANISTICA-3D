@@ -256,7 +256,10 @@ def descargar_clasificacion_municipio(
         page_feats = [f for f in page_feats if f]
         features.extend(page_feats)
         fetched_pages += 1
-        if len(page_feats) < PAGE_SIZE:
+        # La condición de fin usa los elementos crudos, no los parseados:
+        # features sin geometría no deben cortar la paginación antes de tiempo.
+        raw_count = sum(1 for _ in _iter_features(root, layer_name))
+        if raw_count < PAGE_SIZE:
             break
 
     import datetime as _dt
