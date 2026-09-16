@@ -3247,6 +3247,18 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
           'approval_date': wms_info.get('approval_date'),
           'wms_layer': wms_info.get('layer_name'),
         })
+        # Enlace WFS a la capa de clasificación (para verificación)
+        if wms_info.get('layer_name'):
+          wfs_url = (
+            f"https://siotuga.xunta.gal/siotuga/ws?codine={ine}&SERVICE=WFS"
+            f"&REQUEST=GetFeature&VERSION=1.1.0&TYPENAME={wms_info['layer_name']}"
+            f"&OUTPUTFORMAT=GML2&MAXFEATURES=1"
+          )
+          links.append({
+            'name': 'SIOTUGA WFS (clasificación)',
+            'url': wfs_url,
+            'label': f'Capa de clasificación {wms_info["layer_name"]}',
+          })
       # Enlace al inventario para descargar documentos
       links.append({
         'name': 'SIOTUGA (documentos)',
