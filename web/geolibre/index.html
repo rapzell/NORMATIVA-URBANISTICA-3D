@@ -1274,10 +1274,14 @@ function showHabitabilityForm() {
   const buildingHeight = props.height || '';
   const ctx = window._officialContext || {};
   const cat = ctx.catastro || {};
-  let defaultSurface = cat.superficie_construida_m2 || props.footprint_m2 || '';
+  const units = cat.unidades_no_residenciales || [];
+  let defaultSurface = cat.superficie_comercial_m2 || props.footprint_m2 || '';
   if (!defaultSurface && feature.geometry) {
     try { defaultSurface = Math.round(turf.area(feature) * 10) / 10; } catch (e) {}
   }
+  const unitOptions = units.map((u, i) =>
+    `<option value="${i}" data-surface="${u.superficie_construida_m2 || ''}">${escapeHtml(u.uso || '?')} — ${u.superficie_construida_m2 || '?'} m², planta ${u.planta || '?'}, puerta ${escapeHtml(u.puerta || '?')}</option>`
+  ).join('');
   const panel = document.getElementById('info-panel');
   const wrapper = document.createElement('div');
   wrapper.id = 'habitability-form';
@@ -1286,6 +1290,7 @@ function showHabitabilityForm() {
     <div class="hint">Los datos del edificio se rellenan automáticamente. Los campos vacíos se marcarán como no verificables.</div>
     <div class="info-card">
       <label>Tipo de operación</label><select id="hab-operation"><option value="cambio_uso_local_a_vivienda">Cambio de uso de local a vivienda</option><option value="rehabilitacion">Rehabilitación</option><option value="nueva_construccion">Nueva construcción</option></select>
+      ${units.length ? `<label>Unidad a convertir (Catastro)</label><select id="hab-unit" onchange="habitabilityUnitSelect()"><option value="">— seleccionar unidad —</option>${unitOptions}</select>` : ''}
       <label>Altura libre terminada (m) <span class="hint" style="display:inline">— auto desde edificio</span></label><input id="hab-height" type="number" min="0" step="0.01" value="${buildingHeight}">
       <label>Número de estancias (incluida estancia mayor)</label><select id="hab-room-count" onchange="updateHabitabilityRooms()">${[1,2,3,4,5,6].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
       <label><input id="hab-complete" type="checkbox" style="width:auto"> El programa introducido está completo</label>
@@ -1300,6 +1305,17 @@ function showHabitabilityForm() {
     if (e1Area) e1Area.value = defaultSurface;
   }
   wrapper.scrollIntoView({ behavior: 'smooth' });
+}
+
+function habitabilityUnitSelect() {
+  const sel = document.getElementById('hab-unit');
+  if (!sel || sel.value === '') return;
+  const opt = sel.options[sel.selectedIndex];
+  const surface = opt ? opt.dataset.surface : '';
+  if (surface) {
+    const e1Area = document.getElementById('hab-e1-area');
+    if (e1Area) e1Area.value = surface;
+  }
 }
 
 function habitabilityNumber(id) {
