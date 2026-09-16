@@ -115,6 +115,23 @@ Diagrama interactivo: `docs/diagrama-arquitectura.html` (fuente:
 | `funko_api.py`, `funko_scanner.py` | — | Herencia del repo original (funkos); no relacionados con el visor. |
 | `geo.py` | 57 | Utilidades geográficas. |
 
+### Capa de datos reales (añadida)
+
+| Módulo | Función |
+|---|---|
+| `src/data_quality.py` | `DataPoint`/`DataQuality` (official/measured/estimated/unavailable). Cada dato expone `value, unit, data_quality, source, source_ref, notes`. |
+| `src/cache.py` | Caché unificada en disco `datos/cache/{source}/{key}.json` con TTL + `http_get` con reintentos y backoff exponencial. |
+| `src/siotuga/vector_downloader.py` | Descarga la capa `*_AD_3CLAS_*` completa por municipio (WFS 1.1.0 paginado, maxfeatures+startindex), parsea GML→GeoJSON (corrige orden de ejes lat,lon→lon,lat), cachea 30 días, resuelve punto-en-polígono local y sirve recortes al visor. |
+| `src/catastro/client.py` | Cliente consolidado: RCCOOR, CPMRC, DNPRC (unidades), INSPIRE CP (parcela), INSPIRE BU (edificios oficiales: huella, uso, año, plantas), feed ATOM. `fetch` inyectable para tests. |
+| `src/building_data/height_extractor.py` | Altura real PNOA LiDAR: LAZ en `datos/cache/lidar/` → P90 sobre huella − terreno (ground clase 2 o MDT 5m WCS IDEE). Huellas Overture vía duckdb. Sin cobertura → `unavailable` (sin fallback silencioso). |
+
+### Endpoints nuevos
+
+- `GET /official/siotuga-clasificacion?municipio=X[&bbox=]` → capa vectorial oficial GeoJSON (o `unavailable`).
+- `GET /official/building-data?lon&lat[&refcat&osm_height&osm_levels]` → cada campo como `DataPoint` con `data_quality`.
+- `_build_official_context` añade `data_points` (trazabilidad por campo) y `edificios_oficiales`/`plantas_oficiales` de Catastro BU.
+- Visor: botón "Clasificación" dibuja los polígonos oficiales (colores por clase) con consulta al clic; badges de calidad en el panel.
+
 ---
 
 ## 4. Frontend — web/geolibre/index.html (~2000 líneas)

@@ -970,6 +970,26 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     sources_items += f"<li>{name} ({stype}) — <a href=\"{esc(url)}\" target=\"_blank\" rel=\"noopener\">{esc(url)}</a></li>"
                 else:
                     sources_items += f"<li>{name} ({stype})</li>"
+            dps = (official_context or {}).get('data_points') or {}
+            dps_rows = ''
+            if dps:
+                labels = {'official': 'Oficial', 'measured': 'Medido',
+                          'estimated': 'Estimado', 'unavailable': 'No disponible'}
+                for field, dp in dps.items():
+                    q = dp.get('data_quality') or 'unavailable'
+                    val = dp.get('value')
+                    unit = dp.get('unit') or ''
+                    dps_rows += (
+                        f"<tr><td>{esc(field)}</td>"
+                        f"<td>{esc(val if val is not None else '—')} {esc(unit)}</td>"
+                        f"<td>{esc(labels.get(q, q))}</td>"
+                        f"<td>{esc(dp.get('source') or '—')}{' · ' + esc(dp['source_ref']) if dp.get('source_ref') else ''}</td></tr>"
+                    )
+                dps_rows = (
+                    "<div class='muted' style='margin-top:10px'>Trazabilidad por dato:</div>"
+                    "<table><thead><tr><th>Dato</th><th>Valor</th><th>Calidad</th><th>Fuente</th></tr></thead>"
+                    f"<tbody>{dps_rows}</tbody></table>"
+                )
             provenance_html = (
                 "<section>"
                 "<h2>Proveniencia de los datos</h2>"
@@ -978,6 +998,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 "</tbody></table>"
                 "<div class='muted' style='margin-top:8px'>Fuentes consultadas y su tipo:</div>"
                 f"<ul>{sources_items}</ul>"
+                f"{dps_rows}"
                 "<div class='muted' style='margin-top:8px'>"
                 "Los datos oficiales se consultan en tiempo real. La disponibilidad depende del servicio externo en el momento de la consulta.</div>"
                 "</section>"

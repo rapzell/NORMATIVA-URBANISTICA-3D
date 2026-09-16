@@ -18,3 +18,8 @@ shapely>=2.0.0
 pyproj>=3.6.0
 prometheus-client>=0.19.0
 truststore>=0.10.4
+# Capa de datos reales (opcionales: el código degrada a "unavailable" sin ellas)
+duckdb>=1.1.0
+rasterio>=1.4.0
+laspy>=2.5.0
+lazrs>=0.6.0

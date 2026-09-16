@@ -2618,7 +2618,12 @@ def _build_siotuga_wms_getmap_url(ine_code: str, lon: float, lat: float, layer_n
 
 
 def _fetch_siotuga_classification(lon: float, lat: float, ine_code: str) -> dict:
-  """Consulta la clasificación urbanística de SIOTUGA para un punto via WFS."""
+  """Clasificación urbanística SIOTUGA de un punto.
+
+  Delega en ``src.siotuga.vector_downloader``: usa la copia vectorial
+  local del municipio cuando está cacheada y, si no, la consulta WFS
+  puntual de siempre.
+  """
   cache_key = ('siotuga', 'clas', ine_code, round(lon, 5), round(lat, 5))
   cached = _official_cache_get(cache_key)
   if cached is not None:
@@ -2627,159 +2632,15 @@ def _fetch_siotuga_classification(lon: float, lat: float, ine_code: str) -> dict
   layer = wms_info.get('layer_name')
   if not layer:
     return {}
-  # La capa usa EPSG:25829 (UTM 29N), transformar el bbox
-  x, y = _lonlat_to_utm29(lon, lat)
-  delta = 200  # ~200m en metros UTM
-  url = (
-    f'https://siotuga.xunta.gal/siotuga/ws?codine={ine_code}&SERVICE=WFS'
-    f'&REQUEST=GetFeature&version=1.1.0&typename={layer}'
-    f'&maxfeatures=10&srsname=EPSG:25829'
-    f'&bbox={x-delta},{y-delta},{x+delta},{y+delta},EPSG:25829'
-  )
-  req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
-  try:
+  from src.siotuga.vector_downloader import consultar_clasificacion_punto
+
+  def _fetch(url: str) -> bytes:
+    req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
     with urlopen(req, timeout=15) as resp:
-      raw = resp.read()
-  except Exception:
-    return {}
-  try:
-    root = ET.fromstring(raw)
-  except Exception:
-    return {}
-  # Parsear todas las features y verificar point-in-polygon
-  candidates: list[dict] = []
-  for feat in root.iter():
-    tag = feat.tag.split('}')[-1]
-    if tag != layer:
-      continue
-    # Verificar si el punto está dentro del polígono (GML 2.x: coordinates, GML 3.x: posList)
-    ring = feat.find('.//{http://www.opengis.net/gml}LinearRing/{http://www.opengis.net/gml}coordinates')
-    if ring is None:
-      ring = feat.find('.//{http://www.opengis.net/gml}LinearRing/{http://www.opengis.net/gml}posList')
-    if ring is None:
-      # Buscar en el primer LinearRing exterior
-      for lr in feat.iter():
-        if lr.tag.split('}')[-1] == 'LinearRing':
-          ring = lr.find('{http://www.opengis.net/gml}coordinates') or lr.find('{http://www.opengis.net/gml}posList')
-          if ring is not None:
-            break
-    if ring is None:
-      continue
-    coords_text = (ring.text or '').strip()
-    if not coords_text:
-      continue
-    xs, ys = [], []
-    # posList usa espacios: "x1 y1 x2 y2 ...", coordinates usa "x1,y1 x2,y2 ..."
-    if ',' in coords_text:
-      # GML 2.x coordinates format
-      for c in coords_text.split():
-        parts = c.split(',')
-        if len(parts) >= 2:
-          try:
-            xs.append(float(parts[0]))
-            ys.append(float(parts[1]))
-          except ValueError:
-            continue
-    else:
-      # GML 3.x posList format
-      vals = coords_text.split()
-      for i in range(0, len(vals) - 1, 2):
-        try:
-          xs.append(float(vals[i]))
-          ys.append(float(vals[i + 1]))
-        except (ValueError, IndexError):
-          continue
-    if len(xs) < 3:
-      continue
-    # Ray casting point-in-polygon
-    inside = False
-    n = len(xs)
-    j = n - 1
-    for i in range(n):
-      if ((ys[i] > y) != (ys[j] > y)) and (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]):
-        inside = not inside
-      j = i
-    if not inside:
-      continue
-    # Extraer atributos
-    feat_data: dict = {}
-    for child in feat:
-      field = child.tag.split('}')[-1]
-      val = (child.text or '').strip()
-      if val and field not in ('msGeometry', 'boundedBy'):
-        feat_data[field] = val
-    candidates.append(feat_data)
-  if not candidates:
-    _official_cache_set(cache_key, {})
-    return {}
-  # Preferir la feature con más datos específicos (edif_ficha > denom > uso)
-  def _score(f: dict) -> int:
-    s = 0
-    if f.get('edif_ficha'):
-      s += 3
-    if f.get('denom'):
-      s += 2
-    if f.get('uso'):
-      s += 1
-    return s
-  candidates.sort(key=_score, reverse=True)
-  feat_data = candidates[0]
-  result: dict = {}
-  for field, val in feat_data.items():
-    if field == 'cat_ley':
-      result['clasificacion_ley'] = val
-    elif field == 'cat_homo':
-      result['clasificacion_homo'] = val
-    elif field == 'cat_plan':
-      result['clasificacion_plan'] = val
-    elif field == 'cla_ley':
-      result['clase_ley'] = val
-    elif field == 'cla_homo':
-      result['clase_homo'] = val
-    elif field == 'uso':
-      result['uso_zona'] = val
-    elif field == 'denom':
-      result['denominacion_zona'] = val
-    elif field == 'obsv':
-      result['observaciones_zona'] = val
-    elif field == 'id_recinto':
-      result['id_recinto'] = val
-    elif field == 'geom_area':
-      result['area_zona_m2'] = _try_float(val)
-    elif field == 'sup_ficha':
-      result['sup_ficha_m2'] = _try_float(val)
-    elif field == 'edif_ficha':
-      result['edificabilidad_ficha'] = _try_float(val)
-    elif field == 'estado':
-      result['estado_zona'] = val
-    elif field == 'cat_wiug':
-      result['categoria_wiug'] = val
-  # Mapear códigos a etiquetas legibles
-  code_labels = {
-    'SUC': 'Suelo Urbano Consolidado',
-    'SUNC': 'Suelo Urbano No Consolidado',
-    'SNU': 'Suelo No Urbanizable',
-    'SUN': 'Suelo Urbanizable',
-    'SUR': 'Suelo Urbano Residencial',
-    'SUT': 'Suelo Urbano Terciario',
-    'SUI': 'Suelo Urbano Industrial',
-    'SUB': 'Suelo Urbanizable',
-    'SU': 'Suelo Urbano',
-    'SNUC': 'Suelo No Urbanizable Común',
-    'SNUP': 'Suelo No Urbanizable Protegido',
-    'SR': 'Suelo Rústico',
-    'SRP': 'Suelo Rústico Protegido',
-    'SRPA': 'Suelo Rústico de Protección Agraria',
-    'SRPP': 'Suelo Rústico de Protección Paisajística',
-    'SRPEN': 'Suelo Rústico de Protección de Espacios Naturales',
-    'SRPAU': 'Suelo Rústico de Protección de Aprovechamientos Urbanos',
-    'SRPF': 'Suelo Rústico de Protección Forestal',
-    'SRPPX': 'Suelo Rústico de Protección de Paisaje y Patrimonio',
-    'SRPC': 'Suelo Rústico de Protección de Cauces',
-  }
-  for key in ('clasificacion_ley', 'clasificacion_homo', 'clasificacion_plan', 'clase_ley', 'clase_homo'):
-    if key in result and result[key] in code_labels:
-      result[f'{key}_label'] = code_labels[result[key]]
+      return resp.read()
+
+  result = consultar_clasificacion_punto(
+    lon, lat, ine_code, layer_name=layer, fetch=_fetch)
   _official_cache_set(cache_key, result)
   return result
 
@@ -3204,6 +3065,21 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
     clas = results.get('siotuga_clas') or {}
     if clas:
       ctx['clasificacion_siotuga'] = clas
+    # Enriquecer Catastro con edificios oficiales INSPIRE BU
+    refcat = cat.get('refcat')
+    if refcat and len(refcat) >= 14:
+      try:
+        from src.catastro.client import obtener_edificios_por_parcela
+        bu = obtener_edificios_por_parcela(refcat)
+        if bu.get('num_edificios'):
+          cat['edificios_oficiales'] = bu['num_edificios']
+          eds = bu.get('edificios') or []
+          for ed in eds:
+            if ed.get('plantas') and not cat.get('plantas_oficiales'):
+              cat['plantas_oficiales'] = ed['plantas']
+          ctx['catastro'] = cat
+      except Exception:
+        pass
     # Calidad de datos siempre presente
     sources_ok = sum([
       1 if cat.get('found') or cat.get('available') else 0,
@@ -3211,6 +3087,37 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
       1 if clas.get('clasificacion_ley') else 0,
     ])
     ctx['data_quality'] = 'alta' if sources_ok >= 2 else ('media' if sources_ok == 1 else 'baja')
+    # Etiquetado de calidad por campo (sistema DataPoint)
+    try:
+      from src.data_quality import DataPoint, DataQuality
+      dps: dict = {}
+      if cat.get('refcat'):
+        dps['referencia_catastral'] = DataPoint(
+          cat['refcat'], None, DataQuality.OFFICIAL, 'Catastro OVC').to_dict()
+      if cat.get('superficie_construida_m2'):
+        dps['superficie_construida_m2'] = DataPoint(
+          cat['superficie_construida_m2'], 'm²', DataQuality.OFFICIAL,
+          'Catastro OVC DNPRC').to_dict()
+      if cat.get('superficie_parcela_m2'):
+        dps['superficie_parcela_m2'] = DataPoint(
+          cat['superficie_parcela_m2'], 'm²', DataQuality.OFFICIAL,
+          'Catastro INSPIRE WFS').to_dict()
+      if cat.get('anio_construccion'):
+        dps['anio_construccion'] = DataPoint(
+          cat['anio_construccion'], None, DataQuality.OFFICIAL,
+          'Catastro OVC DNPRC').to_dict()
+      if clas.get('clasificacion_ley'):
+        dps['clasificacion_suelo'] = DataPoint(
+          clas.get('clasificacion_ley_label') or clas['clasificacion_ley'],
+          None, DataQuality.OFFICIAL, 'SIOTUGA WFS',
+          source_ref='EPSG:25829' if not clas.get('vectorial_local') else 'vectorial local').to_dict()
+      if clas.get('edificabilidad_ficha') is not None:
+        dps['edificabilidad_ficha'] = DataPoint(
+          clas['edificabilidad_ficha'], 'm²/m²', DataQuality.OFFICIAL,
+          'SIOTUGA WFS').to_dict()
+      ctx['data_points'] = dps
+    except Exception:
+      pass
     # Construir enlaces específicos a fuentes oficiales con datos de la parcela
     links: list[dict] = []
     # Catastro: URL directa a la ficha de la parcela por coordenadas
@@ -3683,6 +3590,80 @@ def official_siotuga_wms_tile(z: int, x: int, y: int, ine: str, layer: str):
     return Response(content=img_data, media_type='image/png')
   except Exception as e:
     raise HTTPException(status_code=502, detail=f'Error proxy WMS SIOTUGA: {e}')
+
+
+@app.get('/official/siotuga-clasificacion')
+def official_siotuga_clasificacion(municipio: Optional[str] = None,
+                                 bbox: Optional[str] = None):
+  """Capa vectorial oficial de clasificación del suelo (SIOTUGA WFS).
+
+  Descarga la capa ``*_AD_3CLAS_*`` del plan vigente del municipio,
+  la cachea en disco 30 días y la devuelve como GeoJSON EPSG:4326.
+  Si se pasa ``bbox`` (minx,miny,maxx,maxy) recorta a esa extensión.
+  Sin datos vectoriales oficiales devuelve ``data_quality: unavailable``
+  — nunca sustituye por geometrías piloto.
+  """
+  ine = _get_ine_for_municipio(municipio) if municipio else None
+  if not ine:
+    return {
+      'type': 'FeatureCollection', 'features': [],
+      'metadata': {'error': 'Municipio no encontrado en el mapeo INE',
+                   'data_quality': 'unavailable'},
+    }
+  wms_info = _fetch_siotuga_wms_layer(ine)
+  layer = wms_info.get('layer_name')
+  if not layer:
+    return {
+      'type': 'FeatureCollection', 'features': [],
+      'metadata': {
+        'error': wms_info.get('error') or 'Sin capa de clasificación vigente',
+        'data_quality': 'unavailable', 'source': 'SIOTUGA',
+      },
+    }
+  bb = None
+  if bbox:
+    try:
+      parts = [float(v) for v in bbox.split(',')]
+      if len(parts) == 4:
+        bb = (parts[0], parts[1], parts[2], parts[3])
+    except Exception:
+      bb = None
+  from src.siotuga.vector_downloader import obtener_capa_geojson
+  try:
+    return obtener_capa_geojson(ine, layer, bbox=bb)
+  except Exception as e:
+    return {
+      'type': 'FeatureCollection', 'features': [],
+      'metadata': {'error': str(e), 'data_quality': 'unavailable',
+                   'source': 'SIOTUGA WFS'},
+    }
+
+
+@app.get('/official/building-data')
+def official_building_data(lon: float, lat: float,
+                           refcat: Optional[str] = None,
+                           osm_height: Optional[float] = None,
+                           osm_levels: Optional[int] = None):
+  """Datos reales del edificio en un punto con etiquetado de calidad.
+
+  Cada campo devuelve ``{value, unit, data_quality, source, ...}``:
+  altura medida por PNOA LiDAR (P90), plantas/uso oficiales de
+  Catastro INSPIRE BU, y como referencia la altura estimada OSM.
+  """
+  cat_ref = refcat
+  if not cat_ref:
+    try:
+      cat = _fetch_catastro_by_coords(lon, lat)
+      cat_ref = cat.get('refcat')
+    except Exception:
+      cat_ref = None
+  from src.building_data.height_extractor import obtener_datos_edificio
+  try:
+    return obtener_datos_edificio(
+      lon, lat, refcat=cat_ref,
+      osm_height=osm_height, osm_levels=osm_levels)
+  except Exception as e:
+    return {'error': str(e)}
 
 
 # ------------------------------

@@ -123,6 +123,25 @@
   #toggle-projects:hover { background: #21262d; }
   #toggle-projects.active { background: #1f6feb; color: #fff; }
 
+  #toggle-clasificacion {
+    position: absolute; top: 12px; right: 415px; z-index: 10;
+    padding: 8px 14px; background: #161b22; border: 1px solid #2da44e;
+    color: #2da44e; border-radius: 8px; cursor: pointer; font-size: 13px;
+    font-weight: 600;
+  }
+  #toggle-clasificacion:hover { background: #21262d; }
+  #toggle-clasificacion.active { background: #2da44e; color: #fff; }
+
+  .q-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 6px;
+    font-size: 10px; font-weight: 700; margin-left: 6px;
+    vertical-align: middle;
+  }
+  .q-official { background: #1a7f37; color: #fff; }
+  .q-measured { background: #0969da; color: #fff; }
+  .q-estimated { background: #9a6700; color: #fff; }
+  .q-unavailable { background: #57606a; color: #fff; }
+
   /* Panel de proyectos */
   #projects-panel {
     position: absolute; top: 52px; right: 12px; z-index: 15;
@@ -229,6 +248,7 @@
     <button id="toggle-afecciones" onclick="toggleAfecciones()">Afecciones: OFF</button>
     <button id="toggle-shadows" onclick="toggleShadows()">Sombras: OFF</button>
     <button id="toggle-projects" onclick="toggleProjects()">Proyectos</button>
+    <button id="toggle-clasificacion" onclick="toggleClasificacion()">Clasificación: OFF</button>
     <div id="shadow-controls" style="display:none;position:absolute;top:50px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
       <div style="font-weight:600;margin-bottom:6px;color:#9b59b6">Hora del día (UTC)</div>
       <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
@@ -265,6 +285,9 @@ let shadowsLoaded = false;
 let showSiotugaWMS = false;
 let siotugaWMSLayer = null;
 let showSubzonasPiloto = true;
+let showClasificacion = false;
+let clasificacionLoaded = false;
+let clasificacionLoading = false;
 
 // Coordenadas de municipios para vuelo inicial
 const MUNI_CENTERS = {
@@ -744,6 +767,118 @@ function toggleAfecciones() {
   }
 }
 
+// ===== Capa vectorial oficial de clasificación SIOTUGA =====
+
+const CLASIF_COLORES = {
+  'SUC': '#e74c3c',   // urbano consolidado — rojo
+  'SU': '#e74c3c',
+  'SUR': '#e74c3c', 'SUT': '#e74c3c', 'SUI': '#e74c3c',
+  'SUNC': '#e67e22',  // urbano no consolidado — naranja
+  'SUB': '#f39c12',   // urbanizable — ámbar
+  'SUN': '#f39c12',
+  'SNR': '#27ae60',   // núcleo rural — verde
+};
+
+async function loadClasificacion() {
+  if (!activeMunicipio || clasificacionLoading) return;
+  clasificacionLoading = true;
+  const btn = document.getElementById('toggle-clasificacion');
+  btn.textContent = 'Clasificación: cargando…';
+  try {
+    const resp = await fetch(`${API}/official/siotuga-clasificacion?municipio=${encodeURIComponent(activeMunicipio)}`);
+    const geojson = await resp.json();
+    const meta = geojson.metadata || {};
+    if (!geojson.features || geojson.features.length === 0) {
+      // Sin fallback silencioso: informar claramente, no rellenar con piloto
+      const panel = document.getElementById('info-panel');
+      panel.innerHTML = '<div class="info-card"><div style="font-size:12px;color:#8b949e;margin-bottom:8px">Clasificación SIOTUGA</div>'
+        + `<div class="hint" style="color:#f85149">Sin datos vectoriales oficiales para ${escapeHtml(activeMunicipio)}${meta.error ? ': ' + escapeHtml(meta.error) : ''}.</div>`
+        + '<div class="hint">Las subzonas piloto siguen siendo solo orientativas.</div></div>';
+      showClasificacion = false;
+      btn.textContent = 'Clasificación: sin datos';
+      btn.classList.remove('active');
+      clasificacionLoading = false;
+      return;
+    }
+    const applyData = () => {
+      const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
+      if (map.getSource('clasificacion')) {
+        map.getSource('clasificacion').setData(geojson);
+      } else {
+        map.addSource('clasificacion', { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: 'clasificacion-fill', type: 'fill', source: 'clasificacion',
+          paint: {
+            'fill-color': ['match', ['get', 'clase_ley'],
+              'SUC', '#e74c3c', 'SU', '#e74c3c',
+              'SUR', '#e74c3c', 'SUT', '#e74c3c', 'SUI', '#e74c3c',
+              'SUNC', '#e67e22', 'SUB', '#f39c12', 'SUN', '#f39c12',
+              'SNR', '#27ae60',
+              '#95a5a6'],  // rústico / resto — gris
+            'fill-opacity': 0.35
+          }
+        }, beforeId);
+        map.addLayer({
+          id: 'clasificacion-line', type: 'line', source: 'clasificacion',
+          paint: { 'line-color': '#2da44e', 'line-width': 0.6, 'line-opacity': 0.7 }
+        }, beforeId);
+        map.on('click', 'clasificacion-fill', (e) => {
+          if (!e.features || !e.features.length) return;
+          const p = e.features[0].properties || {};
+          const panel = document.getElementById('info-panel');
+          let h = '<h2>Clasificación del suelo</h2>';
+          h += '<div class="info-card">';
+          h += `<div class="info-row"><span class="key">Clase</span><span class="val" style="font-weight:600">${escapeHtml(p.clasificacion || p.clase_ley || '—')}</span></div>`;
+          if (p.clase_ley) h += `<div class="info-row"><span class="key">Categoría</span><span class="val">${escapeHtml(p.clase_ley)}</span></div>`;
+          if (p.cat_plan) h += `<div class="info-row"><span class="key">Cat. plan</span><span class="val">${escapeHtml(p.cat_plan)}</span></div>`;
+          if (p.denom) h += `<div class="info-row"><span class="key">Denominación</span><span class="val">${escapeHtml(p.denom)}</span></div>`;
+          if (p.uso) h += `<div class="info-row"><span class="key">Uso permitido</span><span class="val">${escapeHtml(p.uso)}</span></div>`;
+          if (p.edif_ficha) h += `<div class="info-row"><span class="key">Edificabilidad</span><span class="val">${escapeHtml(p.edif_ficha)} m²/m²</span></div>`;
+          if (p.sup_ficha) h += `<div class="info-row"><span class="key">Sup. ficha</span><span class="val">${escapeHtml(Math.round(parseFloat(p.sup_ficha)))} m²</span></div>`;
+          if (p.id_recinto) h += `<div class="info-row"><span class="key">Recinto</span><span class="val">${escapeHtml(p.id_recinto)}</span></div>`;
+          h += `<div class="info-row"><span class="key">Fuente</span><span class="val">${escapeHtml(p.fuente || 'SIOTUGA WFS')} <span class="q-badge q-official">Oficial</span></span></div>`;
+          h += '</div>';
+          h += '<div class="hint">Datos vectoriales oficiales del planeamiento vigente (Xunta de Galicia). La clasificación no sustituye la consulta de la ordenanza completa.</div>';
+          panel.innerHTML = h;
+        });
+        map.on('mouseenter', 'clasificacion-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'clasificacion-fill', () => { map.getCanvas().style.cursor = ''; });
+      }
+    };
+    if (!mapReady) await waitForMap();
+    applyData();
+    clasificacionLoaded = true;
+    btn.textContent = 'Clasificación: ON';
+    btn.classList.add('active');
+    console.log(`Clasificación SIOTUGA: ${geojson.features.length} polígonos (${meta.layer || 'capa oficial'})`);
+  } catch (e) {
+    console.error('Error cargando clasificación SIOTUGA:', e);
+    btn.textContent = 'Clasificación: error';
+    showClasificacion = false;
+  }
+  clasificacionLoading = false;
+}
+
+function toggleClasificacion() {
+  showClasificacion = !showClasificacion;
+  const btn = document.getElementById('toggle-clasificacion');
+  if (showClasificacion) {
+    if (!clasificacionLoaded) {
+      loadClasificacion();
+    } else {
+      btn.textContent = 'Clasificación: ON';
+      btn.classList.add('active');
+      if (map.getLayer('clasificacion-fill')) map.setLayoutProperty('clasificacion-fill', 'visibility', 'visible');
+      if (map.getLayer('clasificacion-line')) map.setLayoutProperty('clasificacion-line', 'visibility', 'visible');
+    }
+  } else {
+    btn.textContent = 'Clasificación: OFF';
+    btn.classList.remove('active');
+    if (map.getLayer('clasificacion-fill')) map.setLayoutProperty('clasificacion-fill', 'visibility', 'none');
+    if (map.getLayer('clasificacion-line')) map.setLayoutProperty('clasificacion-line', 'visibility', 'none');
+  }
+}
+
 let currentShadowHour = 12;
 
 async function loadShadows(hour) {
@@ -950,11 +1085,18 @@ async function fetchOfficialContext({ municipio=null, subzona=null, lon=null, la
   return await resp.json();
 }
 
+function qualityBadge(q) {
+  const map = { official: ['q-official', 'Oficial'], measured: ['q-measured', 'Medido'], estimated: ['q-estimated', 'Estimado'], unavailable: ['q-unavailable', 'No disponible'] };
+  const m = map[q] || map.unavailable;
+  return `<span class="q-badge ${m[0]}">${m[1]}</span>`;
+}
+
 function renderOfficialContext(ctx) {
   const cat = (ctx && ctx.catastro) || {};
   const plan = (ctx && ctx.planeamiento) || {};
   const aff = (ctx && ctx.afecciones_preliminares) || {};
   const rows = plan.rows || [];
+  const dps = (ctx && ctx.data_points) || {};
   let html = '<div class="info-card">';
   html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Contexto oficial</div>';
   // Indicador de calidad de datos
@@ -965,19 +1107,35 @@ function renderOfficialContext(ctx) {
     html += `<div class="info-row"><span class="key">Cobertura de fuentes</span><span class="val" style="color:${qColor};font-weight:600">${qLabel}</span></div>`;
     html += `<div class="hint">${quality === 'alta' ? 'Dos o más fuentes oficiales respondieron.' : quality === 'media' ? 'Solo una fuente oficial respondió.' : 'Datos oficiales incompletos; no emitir conclusiones normativas.'}</div>`;
   }
-  html += `<div class="info-row"><span class="key">Ref. catastral</span><span class="val">${escapeHtml(cat.refcat || 'No disponible')}</span></div>`;
+  html += `<div class="info-row"><span class="key">Ref. catastral</span><span class="val">${escapeHtml(cat.refcat || 'No disponible')}${cat.refcat ? qualityBadge('official') : ''}</span></div>`;
   html += `<div class="info-row"><span class="key">Dirección</span><span class="val">${escapeHtml(cat.direccion || 'No disponible')}</span></div>`;
   if (cat.error) html += `<div class="hint">Catastro: ${escapeHtml(cat.error)}</div>`;
   if (cat.superficie_terreno_m2) html += `<div class="info-row"><span class="key">Sup. terreno</span><span class="val">${escapeHtml(cat.superficie_terreno_m2)} m²</span></div>`;
-  if (cat.superficie_parcela_m2) html += `<div class="info-row"><span class="key">Sup. parcela</span><span class="val">${escapeHtml(cat.superficie_parcela_m2)} m²</span></div>`;
-  if (cat.superficie_construida_m2) html += `<div class="info-row"><span class="key">Sup. construida</span><span class="val">${escapeHtml(cat.superficie_construida_m2)} m²</span></div>`;
-  if (cat.uso_principal) html += `<div class="info-row"><span class="key">Uso</span><span class="val">${escapeHtml(cat.uso_principal)}</span></div>`;
-  if (cat.anio_construccion) html += `<div class="info-row"><span class="key">Año construc.</span><span class="val">${escapeHtml(cat.anio_construccion)}</span></div>`;
+  if (cat.superficie_parcela_m2) html += `<div class="info-row"><span class="key">Sup. parcela</span><span class="val">${escapeHtml(cat.superficie_parcela_m2)} m²${qualityBadge('official')}</span></div>`;
+  if (cat.superficie_construida_m2) html += `<div class="info-row"><span class="key">Sup. construida</span><span class="val">${escapeHtml(cat.superficie_construida_m2)} m²${qualityBadge('official')}</span></div>`;
+  if (cat.uso_principal) html += `<div class="info-row"><span class="key">Uso</span><span class="val">${escapeHtml(cat.uso_principal)}${qualityBadge('official')}</span></div>`;
+  if (cat.anio_construccion) html += `<div class="info-row"><span class="key">Año construc.</span><span class="val">${escapeHtml(cat.anio_construccion)}${qualityBadge('official')}</span></div>`;
   if (cat.valor_catastral) html += `<div class="info-row"><span class="key">Valor catastral</span><span class="val">${escapeHtml(cat.valor_catastral)} €</span></div>`;
-  if (cat.superficie_comercial_m2) html += `<div class="info-row"><span class="key">Sup. no resid.</span><span class="val">${escapeHtml(cat.superficie_comercial_m2)} m²</span></div>`;
+  if (cat.superficie_comercial_m2) html += `<div class="info-row"><span class="key">Sup. no resid.</span><span class="val">${escapeHtml(cat.superficie_comercial_m2)} m²${qualityBadge('official')}</span></div>`;
   if (cat.num_unidades) html += `<div class="info-row"><span class="key">Unidades</span><span class="val">${escapeHtml(cat.num_unidades)}</span></div>`;
+  if (cat.edificios_oficiales) html += `<div class="info-row"><span class="key">Edificios Catastro</span><span class="val">${escapeHtml(cat.edificios_oficiales)}${qualityBadge('official')}</span></div>`;
+  if (cat.plantas_oficiales) html += `<div class="info-row"><span class="key">Plantas (Catastro)</span><span class="val">${escapeHtml(cat.plantas_oficiales)}${qualityBadge('official')}</span></div>`;
   if (cat.coord_consistency) html += `<div class="info-row"><span class="key">Coord. consistentes</span><span class="val">${cat.coord_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
   if (cat.municipio_consistency) html += `<div class="info-row"><span class="key">Muni. consistente</span><span class="val">${cat.municipio_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
+  // Altura medida por LiDAR / estimada OSM (de /official/building-data)
+  const bdata = (ctx && ctx.building_data) || {};
+  if (bdata.altura) {
+    const a = bdata.altura;
+    if (a.data_quality === 'measured') {
+      html += `<div class="info-row"><span class="key">Altura medida</span><span class="val">${a.value} m${qualityBadge('measured')}</span></div>`;
+      html += `<div class="hint">${escapeHtml(a.source)}${a.source_ref ? ' · ' + escapeHtml(a.source_ref) : ''}</div>`;
+    } else {
+      html += `<div class="hint">Altura medida LiDAR: no disponible${a.notes ? ' — ' + escapeHtml(a.notes) : ''}</div>`;
+    }
+  }
+  if (bdata.altura_osm) {
+    html += `<div class="info-row"><span class="key">Altura OSM</span><span class="val">${bdata.altura_osm.value} m${qualityBadge('estimated')}</span></div>`;
+  }
   html += '</div>';
   // Planeamiento vigente destacado
   const siotuga = (ctx && ctx.siotuga) || {};
@@ -1741,7 +1899,7 @@ async function selectBuilding(feature) {
   if (pilot) html += '<div class="hint" style="color:#d29922;margin-bottom:8px">Comparación piloto, no oficial. Verifica la parcela y la ordenanza en SIOTUGA/Catastro antes de tomar decisiones.</div>';
   html += '<div class="info-card">';
   html += `<div class="info-row"><span class="key">Tipo OSM</span><span class="val">${escapeHtml(buildingTypeLabel(props.building))}</span></div>`;
-  html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}</span></div>`;
+  html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}${props.height != null ? qualityBadge(props.height_source === 'osm' ? 'estimated' : 'estimated') : ''}</span></div>`;
   html += `<div class="info-row"><span class="key">Procedencia altura</span><span class="val">${escapeHtml(heightSourceLabel(props.height_source))}</span></div>`;
   html += `<div class="info-row"><span class="key">Plantas OSM</span><span class="val">${escapeHtml(levels)}</span></div>`;
   if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
@@ -1767,10 +1925,12 @@ async function selectBuilding(feature) {
     const center = turf.centerOfMass(feature);
     const coords = center.geometry.coordinates;
     // Cargar diagnóstico comparativo y contexto oficial en paralelo
-    const [diagResp, ctx] = await Promise.all([
+    const [diagResp, ctx, bdata] = await Promise.all([
       fetch(`${API}/zoning/building-diagnostic?height_m=${props.height || ''}&levels=${props.levels || ''}&footprint_m2=${footprint || ''}&subzona=${encodeURIComponent(props.subzona || '')}&municipio=${encodeURIComponent(props.municipio || activeMunicipio || '')}&lon=${coords[0]}&lat=${coords[1]}`).then(r => r.json()).catch(() => null),
       fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
+      fetch(`${API}/official/building-data?lon=${coords[0]}&lat=${coords[1]}&osm_height=${props.height || ''}&osm_levels=${props.levels || ''}`).then(r => r.json()).catch(() => null),
     ]);
+    if (ctx && bdata) ctx.building_data = bdata;
     window._officialContext = ctx || {};
     // Dibujar lindero de la parcela catastral si está disponible
     try {

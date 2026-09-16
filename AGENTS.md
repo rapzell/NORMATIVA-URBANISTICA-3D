@@ -42,6 +42,11 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Ordenanzas municipales (cambio de uso) | `src/ordenanzas_service.py`, `datos/ordenanzas/` |
 | Panel multi-proyecto | `web/geolibre/index.html` (localStorage) |
 | Gateway IA | `src/model_gateway.py` |
+| Etiquetado de calidad de datos | `src/data_quality.py` |
+| Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
+| Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
+| Cliente Catastro (OVC/INSPIRE/BU/ATOM) | `src/catastro/client.py` |
+| Alturas LiDAR + huellas Overture | `src/building_data/height_extractor.py` |
 
 ## Patrones del código
 
@@ -145,19 +150,25 @@ Valores verificados (no hardcodear sin fuente):
 
 ## Próximos pasos recomendados
 
-1. **Polígonos reales de subzonas** — HECHO: el WFS de SIOTUGA devuelve la clasificación real por coordenadas (`_fetch_siotuga_classification`). Extrae `edif_ficha`, `sup_ficha`, `uso`, `denom` para zonas SUB/SUNC. Para parámetros normativos detallados (altura, retranqueos, ocupación) habría que:
-   - Parsear los PDFs del planeamiento municipal y asociar parámetros a cada polígono
-   - O usar el WFS como referencia oficial de clasificación + ordenanzas aportadas por AC8
+1. **Polígonos reales de subzonas** — HECHO (doble vía):
+   - `_fetch_siotuga_classification` → `src/siotuga/vector_downloader.consultar_clasificacion_punto`: usa la copia vectorial local si está cacheada, si no consulta WFS puntual (bbox UTM 25829).
+   - `descargar_clasificacion_municipio(ine, layer)` baja la capa `*_AD_3CLAS_*` completa paginando (`maxfeatures=2000`+`startindex`), parsea GML→GeoJSON (invierte lat,lon→lon,lat cuando srsName es 4326) y cachea en `datos/cache/siotuga/` 30 días.
+   - `GET /official/siotuga-clasificacion?municipio=X[&bbox=]` sirve la capa al visor (botón "Clasificación", colores por `clase_ley`, click → clase/categoría/uso/edificabilidad). Sin datos → `data_quality: unavailable`, nunca rellena con piloto.
+   - Pendiente: parámetros finos (altura máx, retranqueos) solo existen en SIOTUGA para zonas SUB/SUNC (`edif_ficha`, `sup_ficha`, `uso`); el resto sigue siendo piloto u ordenanzas aportadas por AC8.
 
-2. ~~**Más municipios**~~ — HECHO: `_MUNICIPIO_INE` ahora tiene los 313 municipios de Galicia (fuente: INE) con alias. Se corrigieron errores graves: Pontevedra era 36042 (en realidad Ponteareas, correcto 36038), Santiago era 27059 (en realidad Sober, correcto 15078), Porriño era 36041 (en realidad Poio, correcto 36039), y muchos municipios de A Coruña tenían códigos de Pontevedra.
+2. **Capa de calidad de datos** — HECHO: `src/data_quality.py` (`DataPoint`/`DataQuality`: official|measured|estimated|unavailable). El contexto expone `data_points` por campo; la UI muestra badges y el informe una tabla "Trazabilidad por dato".
 
-3. **RAG normativo** — indexar los PDFs en `datos/normativa/` y permitir consultas en lenguaje natural
+3. **Datos reales de edificios** — HECHO parcial: `src/building_data/height_extractor.py` (PNOA LiDAR LAZ en `datos/cache/lidar/` → altura P90 − terreno; MDT 5m vía WCS IDEE como cota de terreno; Overture vía duckdb) + `src/catastro/client.py` (BU WFS: edificios oficiales por parcela con uso/año/plantas). `GET /official/building-data` devuelve todo con DataPoint. Sin LAZ → `unavailable` (sin fallback silencioso a OSM).
 
-4. ~~**Ampliar `MUNICIPIO_CENTERS`**~~ — HECHO: 337 municipios (principales + aliases). Cubre las 4 provincias.
+4. ~~**Más municipios**~~ — HECHO: `_MUNICIPIO_INE` ahora tiene los 313 municipios de Galicia (fuente: INE) con alias. Se corrigieron errores graves: Pontevedra era 36042 (en realidad Ponteareas, correcto 36038), Santiago era 27059 (en realidad Sober, correcto 15078), Porriño era 36041 (en realidad Poio, correcto 36039), y muchos municipios de A Coruña tenían códigos de Pontevedra.
 
-5. **Panel multi-proyecto** — HECHO: `localStorage` para guardar proyectos con estado (viabilidad/licencia/obra), plazo y navegación.
+5. **RAG normativo** — indexar los PDFs en `datos/normativa/` y permitir consultas en lenguaje natural
 
-6. **Módulos completados en esta fase**:
+6. ~~**Ampliar `MUNICIPIO_CENTERS`**~~ — HECHO: 337 municipios (principales + aliases). Cubre las 4 provincias.
+
+7. **Panel multi-proyecto** — HECHO: `localStorage` para guardar proyectos con estado (viabilidad/licencia/obra), plazo y navegación.
+
+8. **Módulos completados en esta fase**:
    - `src/habitabilidad_checker.py` — NHV/Decreto 128/2023 (reglas verificadas contra DOG)
    - `src/licencia_docs.py` — plantillas de documentación de licencia
    - `src/solar_analysis.py` — soleamiento por orientación (preliminar)
@@ -169,7 +180,7 @@ Valores verificados (no hardcodear sin fuente):
    - **GZipMiddleware** activo (`minimum_size=4096`): GeoJSON 356KB → ~26KB comprimido.
    - El frontend lanza el fetch de edificios en paralelo con la carga del mapa (no espera a `waitForMap`).
 
-7. **Auto-rellenado de formularios e informes**:
+9. **Auto-rellenado de formularios e informes**:
    - Botón "Generar informe de viabilidad" con formulario inline y vista previa de datos
    - Auto-rellena: geometría, altura, huella (turf), municipio, habitabilidad preliminar, datos OSM
    - El servidor rellena desde fuentes oficiales: Catastro, SIOTUGA, SIOSE, soleamiento, sombras
