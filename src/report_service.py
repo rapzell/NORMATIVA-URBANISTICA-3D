@@ -341,6 +341,17 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if cat_ctx.get('superficie_comercial_m2'): ficha_rows += f"<tr><td>Sup. no residencial (Catastro)</td><td>{esc(cat_ctx['superficie_comercial_m2'])} m²</td></tr>"
     except Exception:
         pass
+    # Datos SIOTUGA en la ficha técnica
+    try:
+        clas_ctx = (official_context or {}).get('clasificacion_siotuga') or {}
+        if clas_ctx.get('clasificacion_ley'):
+            ficha_rows += f"<tr><td>Clasificación suelo (SIOTUGA)</td><td>{esc(clas_ctx.get('clasificacion_ley_label') or clas_ctx['clasificacion_ley'])}</td></tr>"
+            if clas_ctx.get('id_recinto'): ficha_rows += f"<tr><td>Recinto SIOTUGA</td><td>{esc(clas_ctx['id_recinto'])}</td></tr>"
+            if clas_ctx.get('denominacion_zona'): ficha_rows += f"<tr><td>Denominación zona</td><td>{esc(clas_ctx['denominacion_zona'])}</td></tr>"
+            if clas_ctx.get('uso_zona'): ficha_rows += f"<tr><td>Uso permitido</td><td>{esc(clas_ctx['uso_zona'])}</td></tr>"
+            if clas_ctx.get('edificabilidad_ficha') is not None: ficha_rows += f"<tr><td>Edificabilidad oficial</td><td>{esc(clas_ctx['edificabilidad_ficha'])}</td></tr>"
+    except Exception:
+        pass
     src_row = ''
     if source_ref:
         try:
@@ -522,18 +533,21 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             # Retranqueo
             if retranqueo_min is not None:
                 diag_rows += f"<tr><td>Retranqueo mín.</td><td>—</td><td>≥ {retranqueo_min} m</td><td>—</td></tr>"
-            verdict_label = {'compatible': 'Compatible', 'supera_altura': 'Supera parámetros', 'sin_dato': 'Sin datos'}.get(verdict, verdict)
+            verdict_label = {'compatible': 'Compatible (orientativo)', 'supera_altura': 'Supera parámetros (orientativo)', 'sin_dato': 'Sin datos'}.get(verdict, verdict)
             verdict_color = '#2e7d32' if verdict == 'compatible' else '#c62828'
             issues_html = ''.join(f"<li>{esc(i)}</li>" for i in issues) if issues else ''
             diagnostic_html = (
                 "<section>"
                 "<h2>Diagnóstico comparativo edificio vs subzona</h2>"
-                f"<div class='muted' style='margin-bottom:8px'>Veredicto: <strong style='color:{verdict_color}'>{esc(verdict_label)}</strong></div>"
+                f"<div class='muted' style='margin-bottom:8px'>Veredicto: <strong style='color:{verdict_color}'>{esc(verdict_label)}</strong> "
+                "<span style='color:#f57f17'>(parámetros de subzona piloto, no oficiales)</span></div>"
                 "<table><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>"
                 f"{diag_rows}"
                 "</tbody></table>"
                 f"{'<ul>' + issues_html + '</ul>' if issues_html else ''}"
-                "<div class='muted' style='margin-top:6px'>Nota: las alturas de edificios existentes pueden ser estimadas a partir de OSM y no sustituyen un levantamiento topográfico.</div>"
+                "<div class='muted' style='margin-top:6px'>Nota: las alturas de edificios existentes pueden ser estimadas a partir de OSM y no sustituyen un levantamiento topográfico. "
+                "Los parámetros de la subzona son orientativos (datos piloto), no oficiales. "
+                "Consulte el planeamiento municipal para los valores normativos reales.</div>"
                 "</section>"
             )
         else:

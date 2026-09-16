@@ -65,6 +65,24 @@ Caché en `_OFFICIAL_CACHE` (TTL 5 min).
 3. Cachea el resultado (TTL 1h)
 4. El visor usa el proxy XYZ→WMS (`/official/siotuga-wms/tile/{z}/{x}/{y}`)
 
+### WFS SIOTUGA clasificación (`_fetch_siotuga_classification` en `app/main.py`)
+
+1. Obtiene la capa 3CLAS del plan vigente vía `_fetch_siotuga_wms_layer`
+2. Convierte lon/lat a UTM 29N (EPSG:25829) — la capa usa ese CRS, no 4326
+3. WFS 1.1.0 con `TYPENAME` (MapServer requiere este parámetro, no `typeNames`)
+4. `maxfeatures=10` — el punto puede estar en varias zonas superpuestas
+5. Point-in-polygon sobre GML (ray casting sobre `coordinates`/`posList`)
+6. Prefiere la feature con más datos específicos (`edif_ficha` > `denom` > `uso`)
+
+Devuelve: `clasificacion_ley`, `clasificacion_homo`, `clasificacion_plan`,
+`clase_ley`, `clase_homo`, `uso_zona`, `denominacion_zona`,
+`edificabilidad_ficha`, `sup_ficha_m2`, `area_zona_m2`, `id_recinto`,
+`observaciones_zona`, `estado_zona`, `categoria_wiug` + etiquetas legibles.
+
+**Limitación**: solo las zonas SUB/SUNC tienen `edif_ficha` y `sup_ficha`
+rellenos. Las zonas SUC no los tienen — esos parámetros están en los PDFs
+del planeamiento municipal, no en el WFS.
+
 ### Enlaces oficiales (`official_links` en el contexto)
 
 Se construyen en `_build_official_context` y se renderizan en:
@@ -127,10 +145,9 @@ Valores verificados (no hardcodear sin fuente):
 
 ## Próximos pasos recomendados
 
-1. **Polígonos reales de subzonas** — el WMS de SIOTUGA devuelve la clasificación pero no es consultable por parcela (GetFeatureInfo devuelve vacío). Para tener parámetros normativos reales por zona, habría que:
-   - Descargar los polígonos de clasificación del WFS de SIOTUGA (si está disponible)
-   - O parsear los PDFs del planeamiento y asociar parámetros a cada polígono
-   - O usar el WMS solo como referencia visual y mantener los parámetros piloto para cálculos
+1. **Polígonos reales de subzonas** — HECHO: el WFS de SIOTUGA devuelve la clasificación real por coordenadas (`_fetch_siotuga_classification`). Extrae `edif_ficha`, `sup_ficha`, `uso`, `denom` para zonas SUB/SUNC. Para parámetros normativos detallados (altura, retranqueos, ocupación) habría que:
+   - Parsear los PDFs del planeamiento municipal y asociar parámetros a cada polígono
+   - O usar el WFS como referencia oficial de clasificación + ordenanzas aportadas por AC8
 
 2. ~~**Más municipios**~~ — HECHO: `_MUNICIPIO_INE` ahora tiene los 313 municipios de Galicia (fuente: INE) con alias. Se corrigieron errores graves: Pontevedra era 36042 (en realidad Ponteareas, correcto 36038), Santiago era 27059 (en realidad Sober, correcto 15078), Porriño era 36041 (en realidad Poio, correcto 36039), y muchos municipios de A Coruña tenían códigos de Pontevedra.
 
