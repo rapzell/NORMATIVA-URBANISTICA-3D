@@ -329,6 +329,70 @@ def _terreno_mdt(lon: float, lat: float) -> float | None:
         return None
 
 
+MALLAS_MAPSERVER = ("https://ideg.xunta.gal/servizos/rest/services/"
+                    "Cendes/Mallas/MapServer")
+LIDAR_LAYERS = {
+    'LIDAR_2015_2016': 69,  # toda Galicia, clasificado, 2×2 km
+    'LIDAR_2009_2010_clasificado': 7,
+    'LIDAR_2009_2010_sen_clasificar': 6,
+}
+DESCARGAS_XUNTA = "https://descargas.xunta.es"
+
+
+def hoja_lidar_para_punto(lon: float, lat: float,
+                          cobertura: str = 'LIDAR_2015_2016',
+                          fetch=None) -> dict:
+    """Tesela LiDAR oficial que cubre el punto (malla IDEGA/CENDES).
+
+    Consulta el MapServer de mallas de descarga de la Xunta y devuelve
+    ``{hoja, arquivo, permalink, url_descarga, cobertura}``. La descarga
+    en sí exige resolver un captcha en ``url_descarga`` (CENDES), por lo
+    que el fichero debe depositarse manualmente en
+    ``datos/cache/lidar/``; todo lo demás es automático.
+    """
+    fetch = fetch or (lambda u: http_get(u, timeout=20, retries=2))
+    layer_id = LIDAR_LAYERS.get(cobertura, 69)
+    url = (
+        f'{MALLAS_MAPSERVER}/{layer_id}/query'
+        f'?geometry={lon},{lat}&geometryType=esriGeometryPoint&inSR=4326'
+        '&spatialRel=esriSpatialRelIntersects&outFields=HOJA,ARQUIVO_CENDES,'
+        'PERMALINK,PRODUTO,ETIQUETA&returnGeometry=false&f=pjson'
+    )
+    cache_key = f'malla_{cobertura}_{lon:.4f}_{lat:.4f}'
+    cached = disk_get('lidar', cache_key, 90 * 24 * 3600)
+    if cached is not None:
+        return cached
+    try:
+        import json as _j
+        data = _j.loads(fetch(url).decode('utf-8'))
+        feats = data.get('features') or []
+        if not feats:
+            result = {'available': False, 'cobertura': cobertura,
+                      'error': 'Punto fuera de la cobertura LiDAR de la Xunta'}
+            return result
+        a = feats[0]['attributes']
+        permalink = a.get('PERMALINK') or ''
+        result = {
+            'available': True,
+            'cobertura': cobertura,
+            'hoja': a.get('HOJA'),
+            'arquivo': a.get('ARQUIVO_CENDES'),
+            'produto': a.get('PRODUTO'),
+            'permalink': permalink,
+            'url_descarga': f'{DESCARGAS_XUNTA}/{permalink}' if permalink else None,
+            'instrucciones': (
+                'Abrir url_descarga, resolver el captcha de CENDES y '
+                'depositar el ZIP descargado en datos/cache/lidar/'),
+            'source': 'CENDES/IDEGA Xunta de Galicia',
+            'data_quality': 'official',
+        }
+        disk_set('lidar', cache_key, result)
+        return result
+    except Exception as e:
+        return {'available': False, 'cobertura': cobertura,
+                'error': str(e)}
+
+
 def obtener_datos_edificio(lon: float, lat: float,
                            refcat: str | None = None,
                            footprint: dict | None = None,
@@ -344,6 +408,12 @@ def obtener_datos_edificio(lon: float, lat: float,
     out: dict[str, Any] = {}
     out['altura'] = obtener_altura_lidar(footprint, lon, lat).to_dict()
     if out['altura']['data_quality'] == DataQuality.UNAVAILABLE.value:
+        try:
+            tile = hoja_lidar_para_punto(lon, lat, fetch=fetch)
+            if tile.get('available'):
+                out['lidar_tile'] = tile
+        except Exception:
+            pass
         if osm_height:
             out['altura_osm'] = estimated(
                 osm_height, 'm', 'OpenStreetMap',

@@ -23,3 +23,5 @@ duckdb>=1.1.0
 rasterio>=1.4.0
 laspy>=2.5.0
 lazrs>=0.6.0
+# RAG normativo sobre PDFs oficiales SIOTUGA
+pypdf>=6.0.0

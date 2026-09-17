@@ -45,6 +45,8 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Etiquetado de calidad de datos | `src/data_quality.py` |
 | Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
+| Documentos oficiales SIOTUGA (PDFs normativa, sesión+token) | `src/siotuga/document_client.py` |
+| RAG normativo sobre PDFs oficiales (índice BM25 + citas) | `src/normativa_rag.py` |
 | Cliente Catastro (OVC/INSPIRE/BU/ATOM) | `src/catastro/client.py` |
 | Alturas LiDAR + huellas Overture | `src/building_data/height_extractor.py` |
 
@@ -164,7 +166,7 @@ Valores verificados (no hardcodear sin fuente):
 
 4. ~~**Más municipios**~~ — HECHO: `_MUNICIPIO_INE` ahora tiene los 313 municipios de Galicia (fuente: INE) con alias. Se corrigieron errores graves: Pontevedra era 36042 (en realidad Ponteareas, correcto 36038), Santiago era 27059 (en realidad Sober, correcto 15078), Porriño era 36041 (en realidad Poio, correcto 36039), y muchos municipios de A Coruña tenían códigos de Pontevedra.
 
-5. **RAG normativo** — indexar los PDFs en `datos/normativa/` y permitir consultas en lenguaje natural
+5. **RAG normativo** — HECHO: `src/normativa_rag.py` indexa los PDFs descargados en `datos/normativa/{ine}/` (chunks por página, BM25, caché `_index.json` invalidado por sha256 del manifiesto) y `POST /normativa/consulta` devuelve respuesta + citas `{fichero, seccion, pagina, extracto}`. Si hay proveedor LLM configurado (`MODEL_PROVIDER`) sintetiza; si no, respuesta extractiva. Documentos SIOTUGA: `src/siotuga/document_client.py` abre sesión (PHPSESSID+token CSRF del HTML de `/siotuga/inventario`), `query_document.php` lista instrumentos (idclase 14=xeral, 13=desenvolvemento, 16=HCO, 18=núcleos), `getIOTPU.php` da `elementos[].componentes[].pathesperado`; URL real: `https://siotuga.xunta.gal/siotuga/{filesroot}{folder}/documents/{pathesperado}`. `GET /official/normativa-docs?municipio=X[&secciones=NU,PORD]` descarga a `datos/normativa/{ine}/` con manifiesto sha256. LiDAR: `hoja_lidar_para_punto(lon,lat)` consulta la malla CENDES (`ideg.xunta.gal/servizos/rest/services/Cendes/Mallas/MapServer`, capa 69=LIDAR_2015_2016 clasificado) y devuelve hoja+fichero+permalink `descargas.xunta.es/{id}`; la descarga exige captcha → depositar el ZIP manualmente en `datos/cache/lidar/` y `obtener_altura_lidar` lo usa automáticamente. `GET /official/lidar-tile?lon=&lat=` expone esto al visor.
 
 6. ~~**Ampliar `MUNICIPIO_CENTERS`**~~ — HECHO: 337 municipios (principales + aliases). Cubre las 4 provincias.
 

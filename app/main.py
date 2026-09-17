@@ -1417,6 +1417,37 @@ def ordenanzas_subzona(municipio: str, subzona: str):
     return get_ordenanza_subzona(municipio, subzona)
 
 
+class NormativaConsultaRequest(BaseModel):
+    municipio: Optional[str] = None
+    ine: Optional[str] = None
+    pregunta: str
+    top_k: int = 6
+    use_llm: bool = True
+
+
+@app.post("/normativa/consulta")
+def normativa_consulta(req: NormativaConsultaRequest):
+    """Consulta en lenguaje natural sobre los PDFs oficiales SIOTUGA.
+
+    Busca en los documentos descargados del municipio
+    (``GET /official/normativa-docs``) y devuelve una respuesta con
+    citas trazables ``{fichero, seccion, pagina, extracto}``. Si hay un
+    proveedor LLM configurado sintetiza la respuesta; si no, devuelve
+    los fragmentos más relevantes. Siempre trazable, nunca inventa.
+    """
+    code = req.ine or (_get_ine_for_municipio(req.municipio)
+                       if req.municipio else None)
+    if not code:
+        return {'error': 'Municipio no encontrado en el mapeo INE',
+                'data_quality': 'unavailable'}
+    from src import normativa_rag
+    try:
+        return normativa_rag.consultar(code, req.pregunta,
+                                       top_k=req.top_k, use_llm=req.use_llm)
+    except Exception as e:
+        return {'ine': code, 'error': str(e), 'data_quality': 'unavailable'}
+
+
 # Solicitud de volumen/params (hoisted antes de usar en /zoning/assess para evitar ForwardRef)
 class VolumeRequest(BaseModel):
     geometry: dict | None = None
@@ -3726,6 +3757,54 @@ def official_building_data(lon: float, lat: float,
       osm_height=osm_height, osm_levels=osm_levels)
   except Exception as e:
     return {'error': str(e)}
+
+
+@app.get('/official/normativa-docs')
+def official_normativa_docs(municipio: Optional[str] = None,
+                            ine: Optional[str] = None,
+                            secciones: Optional[str] = None,
+                            descargar: bool = True):
+  """PDFs oficiales del planeamiento municipal (inventario SIOTUGA).
+
+  Abre sesión contra el inventario documental, localiza el instrumento
+  xeral vigente y descarga los componentes de las secciones pedidas
+  (``secciones=NU,PORD,CAT...``; por defecto todas). Los PDFs se guardan
+  en ``datos/normativa/{ine}/`` con manifiesto de sha256/URL/fecha.
+  Con ``descargar=false`` solo lista los documentos disponibles.
+  """
+  code = ine or (_get_ine_for_municipio(municipio) if municipio else None)
+  if not code:
+    return {'error': 'Municipio no encontrado en el mapeo INE',
+            'data_quality': 'unavailable'}
+  from src.siotuga import document_client as dc
+  try:
+    if not descargar:
+      return dc.listar_documentos(code)
+    secs = None
+    if secciones:
+      secs = tuple(s.strip().upper() for s in secciones.split(',') if s.strip())
+    wms_info = _fetch_siotuga_wms_layer(code)
+    manifest = dc.descargar_documentos(
+        code, secciones=secs, layer_name=wms_info.get('layer_name'))
+    return manifest
+  except Exception as e:
+    return {'ine': code, 'error': str(e), 'data_quality': 'unavailable',
+            'source': 'SIOTUGA inventario documental'}
+
+
+@app.get('/official/lidar-tile')
+def official_lidar_tile(lon: float, lat: float):
+  """Tesela LiDAR oficial que cubre el punto (malla CENDES/IDEGA).
+
+  Devuelve hoja, nombre de fichero y URL de descarga (permalink) del
+  LiDAR 2015-2016 clasificado de la Xunta. La descarga exige captcha en
+  CENDES; el ZIP debe depositarse en ``datos/cache/lidar/``.
+  """
+  from src.building_data.height_extractor import hoja_lidar_para_punto
+  try:
+    return hoja_lidar_para_punto(lon, lat)
+  except Exception as e:
+    return {'available': False, 'error': str(e)}
 
 
 # ------------------------------

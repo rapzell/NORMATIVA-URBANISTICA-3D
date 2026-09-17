@@ -133,6 +133,19 @@ Diagrama interactivo: `docs/diagrama-arquitectura.html` (fuente:
 - Visor: botón "Clasificación" dibuja los polígonos oficiales (colores por clase) con consulta al clic; badges de calidad en el panel. Municipios sin vectorización (Ourense, Ferrol…) muestran el plano raster oficial superpuesto + mensaje claro; nunca datos fabricados.
 - Informe: `submitGenerateReport` abre la pestaña de forma síncrona (gesto de usuario) con placeholder — abrir tras el `await` dispara el bloqueo de popups del navegador; fallback a enlace de descarga.
 
+### Documentos oficiales + RAG normativo (añadida)
+
+| Módulo | Función |
+|---|---|
+| `src/siotuga/document_client.py` | Cliente del inventario documental SIOTUGA. Abre sesión (PHPSESSID + token CSRF del HTML de `/siotuga/inventario?concello={ine}`), lista instrumentos vía `query_document.php` (idclase 14=xeral, 13=desenvolvemento, 16=HCO, 18=núcleos rurales), obtiene componentes vía `getIOTPU.php` y descarga PDFs a `datos/normativa/{ine}/` con manifiesto `_manifest.json` (sha256, URL, fecha, sección). URL real: `https://siotuga.xunta.gal/siotuga/{filesroot}{folder}/documents/{pathesperado}`. |
+| `src/normativa_rag.py` | RAG ligero sobre los PDFs descargados: extracción página a página con pypdf, chunks con solape, ranking BM25 (sin dependencias externas), citas `{fichero, seccion, pagina, extracto}`. Síntesis opcional vía `model_gateway` (proveedor LLM configurado); si no, respuesta extractiva. Índice `_index.json` invalidado por sha256 del manifiesto. |
+
+Endpoints:
+
+- `GET /official/normativa-docs?municipio=X[&secciones=NU,PORD,CAT][&descargar=false]` → descarga (o lista) los PDFs oficiales del plan vigente; devuelve el manifiesto con sha256/URL/estado por fichero.
+- `POST /normativa/consulta` `{municipio|ine, pregunta, top_k, use_llm}` → respuesta con citas trazables al PDF/página oficial.
+- `GET /official/lidar-tile?lon&lat` → tesela LiDAR 2015-2016 de la Xunta que cubre el punto (malla `Cendes/Mallas/MapServer` capa 69): hoja, nombre de fichero y permalink `descargas.xunta.es/{id}`. **La descarga CENDES exige captcha** — abrir la URL, resolver y depositar el ZIP en `datos/cache/lidar/`; `obtener_altura_lidar` lo detecta y usa automáticamente.
+
 ---
 
 ## 4. Frontend — web/geolibre/index.html (~2000 líneas)
