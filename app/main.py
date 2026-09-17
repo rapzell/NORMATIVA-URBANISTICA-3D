@@ -2599,6 +2599,25 @@ def _fetch_siotuga_wms_layer(ine_code: str) -> dict:
         'approval_date': best_date,
         'wms_base': wms_base,
       }
+      # Otras capas 3CLAS no históricas (modificaciones puntuales con
+      # vectorial propio, planes anteriores publicados en paralelo).
+      alt = []
+      for lname, title in blocks:
+        if lname == best_layer:
+          continue
+        if 'Hco:' in title or 'Hco.' in title:
+          continue
+        alt.append(lname)
+      if alt:
+        result['alt_layers'] = alt
+      # Capa raster PORD_02CL del mismo plan (planes antiguos sin
+      # vectorización IET: la clasificación solo existe escaneada).
+      iddoc = re.search(r'_(\d+)$', best_layer)
+      if iddoc:
+        raster = re.findall(
+          r'<Name>([^<]*_AD_PORD_02CL_' + iddoc.group(1) + r')</Name>', xml)
+        if raster:
+          result['raster_layer'] = raster[0]
       _SIOTUGA_WMS_CACHE[cache_key] = {**result, '_ts': time.time()}
       return result
     return {'error': 'No se encontró capa de clasificación vigente'}
@@ -3635,13 +3654,51 @@ def official_siotuga_clasificacion(municipio: Optional[str] = None,
       bb = None
   from src.siotuga.vector_downloader import obtener_capa_geojson
   try:
-    return obtener_capa_geojson(ine, layer, bbox=bb)
+    fc = obtener_capa_geojson(ine, layer, bbox=bb)
   except Exception as e:
     return {
       'type': 'FeatureCollection', 'features': [],
       'metadata': {'error': str(e), 'data_quality': 'unavailable',
-                   'source': 'SIOTUGA WFS'},
+                   'source': 'SIOTUGA WFS', 'ine': ine},
     }
+  feats = list(fc.get('features') or [])
+  meta = dict(fc.get('metadata') or {})
+  meta['ine'] = ine
+  if not feats:
+    # Plan base sin vectorizar (planes antiguos solo raster): probar
+    # capas alternativas como modificaciones puntuales publicadas.
+    for alt in (wms_info.get('alt_layers') or []):
+      try:
+        alt_fc = obtener_capa_geojson(ine, alt, bbox=bb)
+      except Exception:
+        continue
+      for f in (alt_fc.get('features') or []):
+        props = f.setdefault('properties', {})
+        props['plan_modificacion'] = True
+        props['fuente'] = f'SIOTUGA WFS ({alt})'
+        feats.append(f)
+    if feats:
+      meta['feature_count'] = len(feats)
+      meta['note'] = ('Cobertura parcial: solo hay vectorial de '
+                      'modificaciones puntuales; el plan base no está '
+                      'vectorizado por la IET')
+      if wms_info.get('raster_layer'):
+        meta['raster_layer'] = wms_info['raster_layer']
+  if feats:
+    return {'type': 'FeatureCollection', 'features': feats, 'metadata': meta}
+  # Sin vectorial: si el plan solo existe escaneado, exponer la capa
+  # raster oficial para que el visor la superponga como referencia.
+  meta.update({
+    'error': 'Sin datos vectoriales oficiales para este municipio',
+    'data_quality': 'unavailable',
+    'source': 'SIOTUGA',
+  })
+  if wms_info.get('raster_layer'):
+    meta['raster_layer'] = wms_info['raster_layer']
+    meta['raster_note'] = ('El plan vigente solo existe como plano '
+                           'escaneado oficial (raster); la IET no ha '
+                           'vectorizado su clasificación')
+  return {'type': 'FeatureCollection', 'features': [], 'metadata': meta}
 
 
 @app.get('/official/building-data')

@@ -154,6 +154,8 @@ Valores verificados (no hardcodear sin fuente):
    - `_fetch_siotuga_classification` → `src/siotuga/vector_downloader.consultar_clasificacion_punto`: usa la copia vectorial local si está cacheada, si no consulta WFS puntual (bbox UTM 25829).
    - `descargar_clasificacion_municipio(ine, layer)` baja la capa `*_AD_3CLAS_*` completa paginando (`maxfeatures=2000`+`startindex`), parsea GML→GeoJSON (invierte lat,lon→lon,lat cuando srsName es 4326) y cachea en `datos/cache/siotuga/` 30 días.
    - `GET /official/siotuga-clasificacion?municipio=X[&bbox=]` sirve la capa al visor (botón "Clasificación", colores por `clase_ley`, click → clase/categoría/uso/edificabilidad). Sin datos → `data_quality: unavailable`, nunca rellena con piloto.
+   - `consultar_clasificacion_punto` sin `layer_name` resuelve desde cualquier capa cacheada del municipio (`capa_cacheada`), sin red — funciona con SIOTUGA caído y sin GetCapabilities.
+   - **Planes sin vectorizar (Ourense, Ferrol, antiguos)**: `3CLAS`/`1DEL` vacíos en el servidor; la clasificación solo existe como plano escaneado (`*_AD_PORD_02CL_{iddoc}`). `_fetch_siotuga_wms_layer` devuelve `raster_layer` + `alt_layers` (otras 3CLAS no históricas, p.ej. MP). El endpoint prueba las alternativas (features etiquetadas `plan_modificacion`), y cuando no hay vectorial devuelve `raster_layer` en metadata: el visor superpone el plano oficial como capa raster ("Clasificación: raster"). La consulta por punto sigue `unavailable` — correcto.
    - Pendiente: parámetros finos (altura máx, retranqueos) solo existen en SIOTUGA para zonas SUB/SUNC (`edif_ficha`, `sup_ficha`, `uso`); el resto sigue siendo piloto u ordenanzas aportadas por AC8.
 
 2. **Capa de calidad de datos** — HECHO: `src/data_quality.py` (`DataPoint`/`DataQuality`: official|measured|estimated|unavailable). El contexto expone `data_points` por campo; la UI muestra badges y el informe una tabla "Trazabilidad por dato".
@@ -190,6 +192,7 @@ Valores verificados (no hardcodear sin fuente):
    - Habitabilidad: pre-rellena altura (OSM) y superficie (Catastro o huella)
    - Costes: pre-rellena superficie (huella del edificio) y guarda inputs para el informe
    - Licencia: pre-rellena huella (turf) para el cuadro de superficies
+   - **Popup del informe**: `submitGenerateReport` abre la pestaña de forma síncrona (gesto de usuario) con placeholder y escribe el HTML al llegar — abrirla tras el `await` la bloquea el navegador. Fallback: enlace de descarga del HTML.
 
 ## Notas sobre datos y reproducibilidad
 

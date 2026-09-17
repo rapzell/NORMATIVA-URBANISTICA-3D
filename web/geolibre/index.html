@@ -288,6 +288,7 @@ let showSubzonasPiloto = true;
 let showClasificacion = false;
 let clasificacionLoaded = false;
 let clasificacionLoading = false;
+let clasificacionMode = null;
 
 // Coordenadas de municipios para vuelo inicial
 const MUNI_CENTERS = {
@@ -494,6 +495,13 @@ async function loadMunicipios() {
 async function goToMunicipio(municipio) {
   activeMunicipio = municipio;
   updateSelectedBuilding(null);
+  clasificacionLoaded = false;
+  clasificacionMode = null;
+  showClasificacion = false;
+  const clasBtn = document.getElementById('toggle-clasificacion');
+  if (clasBtn) { clasBtn.textContent = 'Clasificación: OFF'; clasBtn.classList.remove('active'); }
+  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster'])
+    if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
 
   // Marcar boton activo
   document.querySelectorAll('.zone-btn').forEach(b => b.classList.remove('active'));
@@ -788,7 +796,8 @@ async function loadClasificacion() {
     const resp = await fetch(`${API}/official/siotuga-clasificacion?municipio=${encodeURIComponent(activeMunicipio)}`);
     const geojson = await resp.json();
     const meta = geojson.metadata || {};
-    if (!geojson.features || geojson.features.length === 0) {
+    const hasFeatures = geojson.features && geojson.features.length > 0;
+    if (!hasFeatures && !meta.raster_layer) {
       // Sin fallback silencioso: informar claramente, no rellenar con piloto
       const panel = document.getElementById('info-panel');
       panel.innerHTML = '<div class="info-card"><div style="font-size:12px;color:#8b949e;margin-bottom:8px">Clasificación SIOTUGA</div>'
@@ -802,6 +811,20 @@ async function loadClasificacion() {
     }
     const applyData = () => {
       const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
+      if (meta.raster_layer && meta.ine) {
+        // Plano escaneado oficial: overlay raster como referencia visual
+        // (debajo del vectorial si existe). No hay consulta por punto.
+        const tiles = `${API}/official/siotuga-wms/tile/{z}/{x}/{y}?ine=${meta.ine}&layer=${encodeURIComponent(meta.raster_layer)}`;
+        if (map.getSource('clasificacion-raster')) {
+          map.getSource('clasificacion-raster').setTiles([tiles]);
+        } else {
+          map.addSource('clasificacion-raster', { type: 'raster', tiles: [tiles], tileSize: 256 });
+          map.addLayer({ id: 'clasificacion-raster', type: 'raster',
+            source: 'clasificacion-raster',
+            paint: { 'raster-opacity': 0.75 } }, beforeId);
+        }
+      }
+      if (!hasFeatures) return;
       if (map.getSource('clasificacion')) {
         map.getSource('clasificacion').setData(geojson);
       } else {
@@ -848,9 +871,19 @@ async function loadClasificacion() {
     if (!mapReady) await waitForMap();
     applyData();
     clasificacionLoaded = true;
-    btn.textContent = 'Clasificación: ON';
+    clasificacionMode = hasFeatures ? 'vector' : 'raster';
+    btn.textContent = hasFeatures ? 'Clasificación: ON' : 'Clasificación: raster';
     btn.classList.add('active');
-    console.log(`Clasificación SIOTUGA: ${geojson.features.length} polígonos (${meta.layer || 'capa oficial'})`);
+    if (!hasFeatures || meta.note) {
+      const panel = document.getElementById('info-panel');
+      const msg = !hasFeatures
+        ? (meta.raster_note || 'El plan vigente solo existe como plano escaneado oficial (raster).')
+        : meta.note;
+      panel.innerHTML = '<div class="info-card"><div style="font-size:12px;color:#8b949e;margin-bottom:8px">Clasificación SIOTUGA</div>'
+        + `<div class="hint" style="color:#d29922">${escapeHtml(msg)}</div>`
+        + `<div class="hint">Se muestra el plano oficial superpuesto como referencia. <span class="q-badge q-official">Oficial (raster)</span></div></div>`;
+    }
+    console.log(`Clasificación SIOTUGA: ${(geojson.features || []).length} polígonos (${meta.layer || 'capa oficial'})`);
   } catch (e) {
     console.error('Error cargando clasificación SIOTUGA:', e);
     btn.textContent = 'Clasificación: error';
@@ -866,16 +899,16 @@ function toggleClasificacion() {
     if (!clasificacionLoaded) {
       loadClasificacion();
     } else {
-      btn.textContent = 'Clasificación: ON';
+      btn.textContent = clasificacionMode === 'raster' ? 'Clasificación: raster' : 'Clasificación: ON';
       btn.classList.add('active');
-      if (map.getLayer('clasificacion-fill')) map.setLayoutProperty('clasificacion-fill', 'visibility', 'visible');
-      if (map.getLayer('clasificacion-line')) map.setLayoutProperty('clasificacion-line', 'visibility', 'visible');
+      for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster'])
+        if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'visible');
     }
   } else {
     btn.textContent = 'Clasificación: OFF';
     btn.classList.remove('active');
-    if (map.getLayer('clasificacion-fill')) map.setLayoutProperty('clasificacion-fill', 'visibility', 'none');
-    if (map.getLayer('clasificacion-line')) map.setLayoutProperty('clasificacion-line', 'visibility', 'none');
+    for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster'])
+      if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
   }
 }
 

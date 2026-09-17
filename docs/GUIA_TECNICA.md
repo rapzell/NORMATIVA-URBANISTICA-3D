@@ -127,10 +127,11 @@ Diagrama interactivo: `docs/diagrama-arquitectura.html` (fuente:
 
 ### Endpoints nuevos
 
-- `GET /official/siotuga-clasificacion?municipio=X[&bbox=]` → capa vectorial oficial GeoJSON (o `unavailable`).
+- `GET /official/siotuga-clasificacion?municipio=X[&bbox=]` → capa vectorial oficial GeoJSON (o `unavailable`). Cuando el plan base está vacío prueba las capas alternativas (`alt_layers`, p.ej. modificaciones puntuales etiquetadas `plan_modificacion`); si tampoco hay vectorial pero existe el plano escaneado oficial, devuelve `metadata.raster_layer` para que el visor lo superponga como capa raster WMS.
 - `GET /official/building-data?lon&lat[&refcat&osm_height&osm_levels]` → cada campo como `DataPoint` con `data_quality`.
 - `_build_official_context` añade `data_points` (trazabilidad por campo) y `edificios_oficiales`/`plantas_oficiales` de Catastro BU.
-- Visor: botón "Clasificación" dibuja los polígonos oficiales (colores por clase) con consulta al clic; badges de calidad en el panel.
+- Visor: botón "Clasificación" dibuja los polígonos oficiales (colores por clase) con consulta al clic; badges de calidad en el panel. Municipios sin vectorización (Ourense, Ferrol…) muestran el plano raster oficial superpuesto + mensaje claro; nunca datos fabricados.
+- Informe: `submitGenerateReport` abre la pestaña de forma síncrona (gesto de usuario) con placeholder — abrir tras el `await` dispara el bloqueo de popups del navegador; fallback a enlace de descarga.
 
 ---
 
