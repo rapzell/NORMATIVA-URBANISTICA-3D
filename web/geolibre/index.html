@@ -1131,7 +1131,8 @@ function renderOfficialContext(ctx) {
   const rows = plan.rows || [];
   const dps = (ctx && ctx.data_points) || {};
   let html = '<div class="info-card">';
-  html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Contexto oficial</div>';
+  html += '<div style="font-size:12px;color:#8b949e;margin-bottom:4px">Contexto oficial</div>';
+  html += `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${qualityBadge('official')}${qualityBadge('measured')}${qualityBadge('estimated')}${qualityBadge('unavailable')}</div>`;
   // Indicador de calidad de datos
   const quality = ctx.data_quality;
   if (quality) {
@@ -1950,7 +1951,7 @@ async function selectBuilding(feature) {
   if (pilot) html += '<div class="hint" style="color:#d29922;margin-bottom:8px">Comparación piloto, no oficial. Verifica la parcela y la ordenanza en SIOTUGA/Catastro antes de tomar decisiones.</div>';
   html += '<div class="info-card">';
   html += `<div class="info-row"><span class="key">Tipo OSM</span><span class="val">${escapeHtml(buildingTypeLabel(props.building))}</span></div>`;
-  html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}${props.height != null ? qualityBadge(props.height_source === 'osm' ? 'estimated' : 'estimated') : ''}</span></div>`;
+  html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}${props.height != null ? qualityBadge('estimated') : ''}</span></div>`;
   html += `<div class="info-row"><span class="key">Procedencia altura</span><span class="val">${escapeHtml(heightSourceLabel(props.height_source))}</span></div>`;
   html += `<div class="info-row"><span class="key">Plantas OSM</span><span class="val">${escapeHtml(levels)}</span></div>`;
   if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
