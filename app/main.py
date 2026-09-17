@@ -2019,6 +2019,10 @@ _INV_CACHE = {
   'rows': None,
 }
 
+_INVENTARIO_URL = 'https://siotuga.xunta.gal/siotuga/controls/fPutCsvInv.php'
+_INVENTARIO_TTL_S = 7 * 24 * 3600  # 7 días
+
+
 def _get_inventario_path() -> str:
   p = os.getenv('INVENTARIO_PLANEAMENTO_PATH')
   if p and os.path.isfile(p):
@@ -2031,18 +2035,57 @@ def _get_inventario_path() -> str:
       return cand
   return os.path.join('datos', 'inventario_planeamento.csv')
 
+
+def _refresh_inventario_siotuga(path: str) -> bool:
+  """Descarga el inventario municipal oficial de SIOTUGA (CSV ISO-8859-1 sin
+  cabecera: INE;Concello;Instrumento;Data aprobación;Estado) y lo normaliza a
+  UTF-8 con cabecera. Es el mismo ficheiro al que redirige el dataset 0032 de
+  abertos.xunta.gal. Devuelve True si se actualizó."""
+  try:
+    import requests
+    r = requests.get(_INVENTARIO_URL, timeout=30)
+    if not r.ok or len(r.content) < 2000:
+      return False
+    r.encoding = 'ISO-8859-1'
+    lines = [l for l in r.text.splitlines() if l.strip()]
+    rows = [l.split(';') for l in lines]
+    if not all(len(c) >= 5 for c in rows[:10]):
+      return False
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8', newline='') as f:
+      w = csv.writer(f, delimiter=';')
+      w.writerow(['INE', 'CONCELLO', 'INSTRUMENTO', 'DATA_APROBACION', 'ESTADO'])
+      for c in rows:
+        w.writerow([x.strip().strip('"') for x in c[:5]])
+    return True
+  except Exception:
+    return False
+
+
 def _load_inventario() -> list[dict]:
   path = _get_inventario_path()
   try:
     mtime = os.path.getmtime(path)
   except Exception:
+    mtime = 0
+  stale = (time.time() - mtime) > _INVENTARIO_TTL_S
+  if stale and path.endswith('inventario_planeamento.csv'):
+    if _refresh_inventario_siotuga(path):
+      try:
+        mtime = os.path.getmtime(path)
+      except Exception:
+        mtime = 0
+  if not mtime:
     return []
   if _INV_CACHE['rows'] is not None and _INV_CACHE['path'] == path and _INV_CACHE['mtime'] == mtime:
     return _INV_CACHE['rows'] or []
   rows: list[dict] = []
   try:
     with open(path, 'r', encoding='utf-8-sig') as f:
-      rdr = csv.DictReader(f)
+      first = f.readline()
+      delim = ';' if ';' in first else ','
+      f.seek(0)
+      rdr = csv.DictReader(f, delimiter=delim)
       for r in rdr:
         rows.append(r)
     _INV_CACHE.update({'path': path, 'mtime': mtime, 'rows': rows})
@@ -2052,12 +2095,22 @@ def _load_inventario() -> list[dict]:
 
 @app.get('/planeamento/inventario')
 def planeamento_inventario(municipio: Optional[str] = None):
-  """Devuelve el inventario de planeamiento (CSV Xunta). Si se indica municipio, filtra por coincidencia case-insensitive.
-  Respuesta: { count, rows }
-  """
+  """Inventario municipal de planeamiento (CSV oficial SIOTUGA, auto-descargado).
+  Con ``municipio`` filtra por nombre o código INE. Incluye fuente y fecha de
+  descarga para evaluar la frescura del dato."""
+  path = _get_inventario_path()
   rows = _load_inventario()
+  meta = {
+    'source': 'SIOTUGA inventario municipal (CSV oficial)',
+    'source_url': _INVENTARIO_URL,
+    'data_quality': 'official' if rows else 'unavailable',
+  }
+  try:
+    meta['ultima_descarga'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(path)))
+  except Exception:
+    pass
   if not rows:
-    return {'count': 0, 'rows': []}
+    return {'count': 0, 'rows': [], **meta}
   if municipio:
     target = (municipio or '').strip()
     def _norm(s: str) -> str:
@@ -2066,9 +2119,10 @@ def planeamento_inventario(municipio: Optional[str] = None):
         return ''.join(ch for ch in _ud.normalize('NFD', s.lower()) if _ud.category(ch) != 'Mn')
       except Exception:
         return s.lower()
-    out = [r for r in rows if _norm(str(r.get('CONCELLO') or r.get('Concello') or r.get('municipio') or '')) == _norm(target)]
-    return {'count': len(out), 'rows': out}
-  return {'count': len(rows), 'rows': rows[:5000]}
+    out = [r for r in rows if _norm(str(r.get('CONCELLO') or r.get('Concello') or r.get('municipio') or '')) == _norm(target)
+           or str(r.get('INE') or '').strip() == target]
+    return {'count': len(out), 'rows': out, **meta}
+  return {'count': len(rows), 'rows': rows[:5000], **meta}
 
 
 def _norm_text(s: str) -> str:
@@ -3069,6 +3123,16 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
       'count': len(rows),
       'rows': rows[:5],
     }
+    # Ordenanzas del PGOM extraídas de los PDFs normativos oficiales
+    try:
+      from src.normativa_params import parametros_subzona
+      ine_ord = _get_ine_for_municipio(municipio)
+      if ine_ord:
+        prs_ord = parametros_subzona(ine_ord, subzona)
+        if prs_ord.get('available'):
+          ctx['ordenanzas_pgom'] = prs_ord
+    except Exception:
+      pass
   if lon is None or lat is None:
     if geometry:
       try:
@@ -3192,6 +3256,20 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
       edif_alt = (ctx.get('edificio_datos') or {}).get('altura') or {}
       if edif_alt.get('value') is not None or edif_alt.get('data_quality'):
         dps['altura_edificio'] = edif_alt
+      # Parámetros normativos oficiales de la ordenanza (PGOM en PDF)
+      prs_ord = ctx.get('ordenanzas_pgom') or {}
+      ord_p = prs_ord.get('params') or {}
+      ord_src = f"PGOM {municipio or ''}".strip()
+      ord_ref = (prs_ord.get('resultado') or {}).get('fuente') or 'PDF oficial SIOTUGA'
+      if ord_p.get('ocupacion_max_pct') is not None:
+        dps['ocupacion_max_ordenanza'] = DataPoint(
+          ord_p['ocupacion_max_pct'], '%', DataQuality.OFFICIAL, ord_src, ord_ref).to_dict()
+      if ord_p.get('edificabilidad_max_m2_m2') is not None:
+        dps['edificabilidad_max_ordenanza'] = DataPoint(
+          ord_p['edificabilidad_max_m2_m2'], 'm²/m²', DataQuality.OFFICIAL, ord_src, ord_ref).to_dict()
+      if ord_p.get('retranqueo_lateral_m') is not None:
+        dps['retranqueo_min_ordenanza'] = DataPoint(
+          ord_p['retranqueo_lateral_m'], 'm', DataQuality.OFFICIAL, ord_src, ord_ref).to_dict()
       ctx['data_points'] = dps
     except Exception:
       pass
@@ -3812,6 +3890,30 @@ def official_normativa_docs(municipio: Optional[str] = None,
   except Exception as e:
     return {'ine': code, 'error': str(e), 'data_quality': 'unavailable',
             'source': 'SIOTUGA inventario documental'}
+
+
+@app.get('/normativa/parametros-subzona')
+def normativa_parametros_subzona(municipio: Optional[str] = None,
+                                 ine: Optional[str] = None,
+                                 ordenanza: Optional[str] = None,
+                                 subzona: Optional[str] = None):
+  """Parámetros urbanísticos extraídos de la normativa oficial en PDF.
+
+  Lee los PDFs descargados por ``/official/normativa-docs``, segmenta las
+  ordenanzas del plan y extrae ocupación, edificabilidad, retranqueos,
+  altura y parcela mínima con trazabilidad (fichero + página + fragmento).
+  Con ``ordenanza``/``subzona`` filtra por código (U4, U.4, RZ-2...);
+  sin ellos devuelve todas las ordenanzas extraídas.
+  """
+  code = ine or (_get_ine_for_municipio(municipio) if municipio else None)
+  if not code:
+    return {'error': 'Municipio no encontrado en el mapeo INE',
+            'data_quality': 'unavailable'}
+  from src.normativa_params import parametros_subzona
+  try:
+    return parametros_subzona(code, subzona or ordenanza)
+  except Exception as e:
+    return {'ine': code, 'error': str(e), 'data_quality': 'unavailable'}
 
 
 @app.get('/official/lidar-tile')

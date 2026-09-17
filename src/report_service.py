@@ -536,11 +536,25 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 diag_subzone = find_subzone_for_point(lon, lat)
             except Exception:
                 pass
-        if diag_subzone:
-            altura_max = diag_subzone.get('altura_maxima_m')
-            ocupacion_max = diag_subzone.get('ocupacion_max')
-            edificabilidad_max = diag_subzone.get('edificabilidad_max_m2_m2')
-            retranqueo_min = diag_subzone.get('retranqueo_min_m')
+        # Parámetros oficiales del PGOM: si la subzona coincide con una
+        # ordenanza extraída de la normativa, tienen prioridad sobre el piloto.
+        norma_oficial = None
+        try:
+            from app.main import _get_ine_for_municipio
+            from src.normativa_params import parametros_subzona
+            _ine = _get_ine_for_municipio(muni) if muni else None
+            if _ine and subz:
+                _prs = parametros_subzona(_ine, subz)
+                if _prs.get('params'):
+                    norma_oficial = _prs
+        except Exception:
+            norma_oficial = None
+        op = (norma_oficial or {}).get('params') or {}
+        if diag_subzone or op:
+            altura_max = op.get('altura_maxima_m') or (diag_subzone or {}).get('altura_maxima_m')
+            ocupacion_max = (op.get('ocupacion_max_pct') / 100.0) if op.get('ocupacion_max_pct') is not None else (diag_subzone or {}).get('ocupacion_max')
+            edificabilidad_max = op.get('edificabilidad_max_m2_m2') or (diag_subzone or {}).get('edificabilidad_max_m2_m2')
+            retranqueo_min = op.get('retranqueo_lateral_m') or (diag_subzone or {}).get('retranqueo_min_m')
             # Valores del edificio/proyecto desde body; la altura medida (MDSN/LiDAR) tiene preferencia sobre la estimada OSM
             edif = (official_context or {}).get('edificio_datos') or {}
             alt_meas = (edif.get('altura') or {})
@@ -644,12 +658,18 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     diag_rows += f"<tr><td>Retranqueo mín.</td><td>—</td><td>≥ {retranqueo_min} m</td><td>—</td></tr>"
             verdict_label = {'compatible': 'Compatible (orientativo)', 'supera_altura': 'Supera parámetros (orientativo)', 'sin_dato': 'Sin datos'}.get(verdict, verdict)
             verdict_color = '#2e7d32' if verdict == 'compatible' else '#c62828'
+            if norma_oficial:
+                _ord = esc((norma_oficial.get('resultado') or {}).get('ordenanza') or subz or '')
+                _fn = esc((norma_oficial.get('resultado') or {}).get('fuente') or 'PGOM')
+                norma_tag = f"<span style='color:#2e7d32'>(ordenanza {_ord}, oficial PGOM — {_fn})</span>"
+            else:
+                norma_tag = "<span style='color:#f57f17'>(parámetros de subzona piloto, no oficiales)</span>"
             issues_html = ''.join(f"<li>{esc(i)}</li>" for i in issues) if issues else ''
             diagnostic_html = (
                 "<section>"
                 "<h2>Diagnóstico comparativo edificio vs subzona</h2>"
                 f"<div class='muted' style='margin-bottom:8px'>Veredicto: <strong style='color:{verdict_color}'>{esc(verdict_label)}</strong> "
-                "<span style='color:#f57f17'>(parámetros de subzona piloto, no oficiales)</span></div>"
+                f"{norma_tag}</div>"
                 "<table><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>"
                 f"{diag_rows}"
                 "</tbody></table>"
@@ -695,6 +715,52 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 )
     except Exception:
         diagnostic_html = ''
+    # Parámetros oficiales por ordenanza extraídos del PGOM (PDFs SIOTUGA)
+    ordenanzas_html = ''
+    try:
+        from app.main import _get_ine_for_municipio
+        from src.normativa_params import parametros_subzona
+        _ine = _get_ine_for_municipio(muni) if muni else None
+        _ords = {}
+        if _ine:
+            _prs = parametros_subzona(_ine)
+            _ords = _prs.get('ordenanzas') or {}
+            if _prs.get('resultado'):
+                _ords = {_prs['ordenanza']: _prs['resultado']}
+        if _ords:
+            rows_o = ''
+            for _code, _o in sorted(_ords.items()):
+                _p = _o.get('params') or {}
+                _oc = f"{_p['ocupacion_max_pct']:g}%" if _p.get('ocupacion_max_pct') is not None else '—'
+                _ed = f"{_p['edificabilidad_max_m2_m2']:g}" if _p.get('edificabilidad_max_m2_m2') is not None else '—'
+                _alt = f"{_p['altura_maxima_m']:g} m" if _p.get('altura_maxima_m') is not None else '—'
+                _ret_parts = []
+                if _p.get('retranqueo_frontal_m') is not None:
+                    _ret_parts.append(f"frente {_p['retranqueo_frontal_m']:g}")
+                if _p.get('retranqueo_lateral_m') is not None:
+                    _ret_parts.append(f"lat {_p['retranqueo_lateral_m']:g}")
+                if _p.get('retranqueo_posterior_m') is not None:
+                    _ret_parts.append(f"post {_p['retranqueo_posterior_m']:g}")
+                _ret = ' / '.join(_ret_parts) + ' m' if _ret_parts else '—'
+                _pm = f"{_p['parcela_minima_m2']:g} m²" if _p.get('parcela_minima_m2') is not None else '—'
+                rows_o += (
+                    f"<tr><td><b>{esc(_code)}</b></td><td>{esc(_o.get('titulo') or '—')}</td>"
+                    f"<td>{_oc}</td><td>{_ed}</td><td>{_alt}</td><td>{_ret}</td><td>{_pm}</td>"
+                    f"<td class='muted' style='font-size:10px'>{esc(_o.get('fuente') or '')}</td></tr>")
+            ordenanzas_html = (
+                "<section id=\"sec-3d\">"
+                "<h2>Parámetros por ordenanza (PGOM oficial)</h2>"
+                "<table><thead><tr><th>Ordenanza</th><th>Denominación</th><th>Ocupación</th>"
+                "<th>Edificabilidad</th><th>Altura</th><th>Recuados (m)</th><th>Parcela mín.</th><th>Fuente</th></tr></thead>"
+                f"<tbody>{rows_o}</tbody></table>"
+                "<div class='muted' style='margin-top:8px'>Parámetros extraídos automáticamente de la normativa urbanística oficial "
+                "(PDF del plan vigente descargado de SIOTUGA), con trazabilidad de página. "
+                "Para conocer la ordenanza aplicable a la parcela consulte el plano de ordenación del plan. "
+                "No sustituye la consulta del planeamiento municipal.</div>"
+                "</section>"
+            )
+    except Exception:
+        ordenanzas_html = ''
     habitability_html = ''
     try:
         habitability_input = body.get('habitabilidad') if isinstance(body, dict) else None
@@ -1210,6 +1276,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         {f'<li><a href="#sec-3a">Datos del edificio (OSM)</a></li>' if building_html else ''}
         {f'<li><a href="#sec-3aa">Altura medida (IDEE/LiDAR)</a></li>' if measured_html else ''}
         {f'<li><a href="#sec-3b">Diagnóstico comparativo</a></li>' if diagnostic_html else ''}
+        {f'<li><a href="#sec-3d">Ordenanzas PGOM</a></li>' if ordenanzas_html else ''}
         {f'<li><a href="#sec-3c">Verificación de habitabilidad</a></li>' if habitability_html else ''}
         {f'<li><a href="#sec-4">Estimación económica preliminar</a></li>' if economic_html else ''}
         {f'<li><a href="#sec-5">Análisis de sombras</a></li>' if shadow_html else ''}
@@ -1242,6 +1309,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
       <h2><span class="section-num">3.1</span>Diagnóstico comparativo edificio vs subzona</h2>
       {diagnostic_html or '<div class="muted">Sin datos de subzona o edificio para el diagnóstico.</div>'}
     </section>
+    {ordenanzas_html}
     {habitability_html}
     <section id="sec-4">
       <h2><span class="section-num">4</span>Estimación económica preliminar</h2>
