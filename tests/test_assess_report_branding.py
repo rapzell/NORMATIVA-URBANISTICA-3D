@@ -108,6 +108,47 @@ def test_assess_report_without_geometry_omits_cartographic():
     assert "Sin geometría para mostrar" in html
 
 
+def test_assess_report_includes_trazabilidad_y_bu(monkeypatch):
+    """El informe rinde data_points con calidad/fuente y datos Catastro BU."""
+    import app.main as _m
+    monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {
+        'data_quality': 'alta',
+        'catastro': {
+            'available': True, 'refcat': '1234567AB1234C',
+            'edificios_oficiales': 2, 'plantas_oficiales': 4,
+        },
+        'planeamiento': {'available': False},
+        'siotuga': {'available': True, 'note': 'x'},
+        'afecciones_preliminares': {'available': False, 'alerts': []},
+        'provenance': {
+            'query_timestamp': '2026-09-17T00:00:00Z',
+            'api_version': '0.2.1',
+            'sources': [],
+        },
+        'data_points': {
+            'clasificacion_suelo': {
+                'value': 'Suelo Urbano Consolidado', 'unit': None,
+                'data_quality': 'official', 'source': 'SIOTUGA WFS',
+                'source_ref': 'vectorial local', 'notes': None,
+            },
+            'altura': {
+                'value': 14.2, 'unit': 'm', 'data_quality': 'measured',
+                'source': 'PNOA LiDAR', 'source_ref': 'P90', 'notes': None,
+            },
+        },
+    })
+    b64 = _b64url({"geometry": None, "municipio": "Vigo"})
+    r = client.get("/zoning/assess-report", params={"body_b64": b64})
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert "Trazabilidad por dato" in html
+    assert "Suelo Urbano Consolidado" in html
+    assert "Oficial" in html and "Medido" in html
+    assert "SIOTUGA WFS" in html and "PNOA LiDAR" in html
+    assert "Edificios en parcela (Catastro INSPIRE BU)" in html
+    assert "Plantas (Catastro INSPIRE BU)" in html
+
+
 def test_assess_report_includes_official_context(monkeypatch):
     import app.main as _m
     monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {

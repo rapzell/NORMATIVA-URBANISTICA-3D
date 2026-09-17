@@ -49,6 +49,32 @@ MAX_HEIGHT_M = 60.0
 PCT = 90  # percentil recomendado por la guía (P90/P95)
 
 
+def _latest_overture_buildings(con) -> str | None:
+    """Release Overture más reciente con edificios (los antiguos expiran).
+
+    El bucket solo conserva los últimos releases; un patrón fijado deja
+    de existir en meses. Descubrimos el más nuevo listando un part-00000.
+    """
+    try:
+        rows = con.execute(
+            "SELECT * FROM glob("
+            "'s3://overturemaps-us-west-2/release/*/"
+            "theme=buildings/type=building/part-00000-*')"
+        ).fetchall()
+        best = None
+        for (path,) in rows:
+            for part in str(path).split('/'):
+                if part.count('-') >= 2 and part[0].isdigit():
+                    if best is None or part > best:
+                        best = part
+        if best:
+            return (f"s3://overturemaps-us-west-2/release/{best}/"
+                    "theme=buildings/type=building/*")
+    except Exception:
+        pass
+    return None
+
+
 def _percentile(sorted_vals: list[float], pct: float) -> float | None:
     """Percentil con interpolación lineal sobre lista ordenada."""
     if not sorted_vals:
@@ -100,6 +126,7 @@ def obtener_huellas_municipio(codigo_ine: str,
         con.execute("INSTALL httpfs; LOAD httpfs;")
         con.execute("INSTALL spatial; LOAD spatial;")
         con.execute("SET s3_region='us-west-2';")
+        parquet = _latest_overture_buildings(con) or OVERTURE_PARQUET
         rows = con.execute(
             """
             SELECT id, height, num_floors, class,
@@ -109,7 +136,7 @@ def obtener_huellas_municipio(codigo_ine: str,
               AND bbox.ymin < ? AND bbox.ymax > ?
             LIMIT ?
             """,
-            [OVERTURE_PARQUET, bbox[2], bbox[0], bbox[3], bbox[1], limite],
+            [parquet, bbox[2], bbox[0], bbox[3], bbox[1], limite],
         ).fetchall()
     except Exception as e:
         return {'available': False, 'features': [],
@@ -128,10 +155,14 @@ def obtener_huellas_municipio(codigo_ine: str,
                 'class': cls, 'source': 'Overture Maps',
             },
         })
+    release = OVERTURE_RELEASE
+    for part in str(parquet).split('/'):
+        if part.count('-') >= 2 and part[0].isdigit():
+            release = part
     result = {
         'available': bool(features),
         'features': features,
-        'source': f'Overture Maps release {OVERTURE_RELEASE}',
+        'source': f'Overture Maps release {release}',
     }
     if features:
         disk_set('overture', cache_key, result)
