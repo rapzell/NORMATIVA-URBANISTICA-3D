@@ -145,6 +145,14 @@ Endpoints:
 - `GET /official/normativa-docs?municipio=X[&secciones=NU,PORD,CAT][&descargar=false]` → descarga (o lista) los PDFs oficiales del plan vigente; devuelve el manifiesto con sha256/URL/estado por fichero.
 - `POST /normativa/consulta` `{municipio|ine, pregunta, top_k, use_llm}` → respuesta con citas trazables al PDF/página oficial.
 - `GET /official/lidar-tile?lon&lat` → tesela LiDAR 2015-2016 de la Xunta que cubre el punto (malla `Cendes/Mallas/MapServer` capa 69): hoja, nombre de fichero y permalink `descargas.xunta.es/{id}`. **La descarga CENDES exige captcha** — abrir la URL, resolver y depositar el ZIP en `datos/cache/lidar/`; `obtener_altura_lidar` lo detecta y usa automáticamente.
+- `GET /official/lidar-preparar[?municipio]` → checklist de teselas pendientes/descargadas con `url_descarga` cada una.
+- `POST /official/lidar-procesar` → descomprime los ZIPs CENDES del directorio, valida con laspy y actualiza estados.
+
+### Alturas medidas sin captcha: WCS MDS del IDEE (añadida)
+
+`src/building_data/mds_wcs.py` — el WCS público `wcs-mds.idee.es/mds` (WCS 2.0.1) sirve el Modelo Digital de Superficies **normalizado de edificación** (`mdsn_e025`, 2,5 m, EPSG:3042): altura sobre rasante derivada del LiDAR PNOA 1ª cobertura. Para cada consulta se descarga un GeoTIFF del área (huella + 15 m buffer), se enmascara por el polígono y se toma el P90 → `measured` con `source: IDEE WCS MDSN`. Cache de GeoTIFF 30 días en `datos/cache/wcs/`.
+
+Cadena de altura en `obtener_altura_lidar`: **LAZ local** (si existe, máxima precisión) → **MDSN WCS** (automático, medido) → `unavailable`. El captcha de CENDES queda solo como mejora de precisión opcional; ya no es necesario para obtener alturas medidas.
 
 ---
 

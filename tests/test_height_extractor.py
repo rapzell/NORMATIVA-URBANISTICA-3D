@@ -11,8 +11,18 @@ def test_percentile():
     assert he._percentile([], 90) is None
 
 
+def _no_mdsn(monkeypatch):
+    """Fuerza el fallback WCS MDSN a unavailable (sin red en tests)."""
+    from src.building_data import mds_wcs
+    from src.data_quality import unavailable as _un
+    monkeypatch.setattr(
+        mds_wcs, 'altura_mdsn_edificio',
+        lambda *a, **k: _un('IDEE WCS MDSN', 'mocked'))
+
+
 def test_lidar_sin_cobertura_devuelve_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(he, 'LIDAR_CACHE_DIR', str(tmp_path))
+    _no_mdsn(monkeypatch)
     dp = he.obtener_altura_lidar(lon=-8.72, lat=42.23)
     d = dp.to_dict()
     assert d['data_quality'] == 'unavailable'
@@ -27,6 +37,7 @@ def test_lidar_sin_coords():
 
 def test_obtener_datos_edificio_estructura(tmp_path, monkeypatch):
     monkeypatch.setattr(he, 'LIDAR_CACHE_DIR', str(tmp_path))
+    _no_mdsn(monkeypatch)
     out = he.obtener_datos_edificio(-8.72, 42.23, osm_height=12.0,
                                   osm_levels=4)
     assert out['altura']['data_quality'] == 'unavailable'
