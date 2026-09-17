@@ -149,7 +149,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
     }
     for k in ['altura_maxima_m','retranqueo_min_m','setback_front_m','setback_side_m','setback_back_m','front_direction','front_direction_source']:
         label = pe_labels.get(k, k)
-        rows += f"<tr><td>{esc(label)}</td><td>{esc(pe.get(k))}</td></tr>"
+        _pv = pe.get(k)
+        rows += f"<tr><td>{esc(label)}</td><td>{esc(_pv) if _pv is not None else '—'}</td></tr>"
     # Datos del edificio como parámetros efectivos
     try:
         bld = body.get('edificio_osm') if isinstance(body, dict) else None
@@ -221,11 +222,11 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         except Exception:
             sig_html = ''
     try:
-        muni = esc((res.context or {}).get('municipio') or (body.get('municipio') if isinstance(body, dict) else '') or '')
+        muni = esc((pe.get('municipio') or '') or (body.get('municipio') if isinstance(body, dict) else '') or '')
     except Exception:
         muni = ''
     try:
-        subz = esc((res.context or {}).get('subzona') or (body.get('subzona') if isinstance(body, dict) else '') or '')
+        subz = esc((pe.get('subzona') or '') or (body.get('subzona') if isinstance(body, dict) else '') or '')
     except Exception:
         subz = ''
     prov_kind = esc(get_plan_provider_kind())
@@ -553,6 +554,9 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             fp = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
             if fp is None and isinstance(body, dict):
                 fp = _num((body.get('edificio_osm') or {}).get('huella_m2'))
+            pa = _num((res.geometry_summary or {}).get('area') or (res.geometry_summary or {}).get('area_m2'))
+            if pa is None:
+                pa = _num(((official_context or {}).get('catastro') or {}).get('superficie_parcela_m2'))
             diag_rows = ''
             verdict = 'compatible'
             issues = []
@@ -567,33 +571,77 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     issues.append(f'Altura: exceso de {diff} m')
             elif altura_max is not None:
                 diag_rows += f"<tr><td>Altura</td><td>—</td><td>{altura_max} m</td><td>—</td></tr>"
-            # Plantas
+            # Plantas: estimadas desde la altura cuando OSM no las declara
+            lv_eff = lv
+            lv_tag = ''
+            if lv_eff is None and h is not None and h > 0:
+                lv_eff = max(int(round(h / 3.0)), 1)
+                lv_tag = ' <span style="font-size:10px;color:#57606a">(estimadas)</span>'
             if altura_max is not None:
                 max_levels = int(float(altura_max) / 3.2)
-                if lv is not None:
-                    if int(lv) <= max_levels:
-                        diag_rows += f"<tr><td>Plantas</td><td>{lv}</td><td>≤ {max_levels}</td><td style='color:#2e7d32'>✓</td></tr>"
+                if lv_eff is not None:
+                    if int(lv_eff) <= max_levels:
+                        diag_rows += f"<tr><td>Plantas</td><td>{lv_eff}{lv_tag}</td><td>≤ {max_levels}</td><td style='color:#2e7d32'>✓</td></tr>"
                     else:
-                        diag_rows += f"<tr><td>Plantas</td><td>{lv}</td><td>≤ {max_levels}</td><td style='color:#c62828'>✗</td></tr>"
+                        diag_rows += f"<tr><td>Plantas</td><td>{lv_eff}{lv_tag}</td><td>≤ {max_levels}</td><td style='color:#c62828'>✗</td></tr>"
                         if verdict == 'compatible':
                             verdict = 'supera_altura'
                         issues.append(f'Plantas: excede el máximo estimado')
                 else:
                     diag_rows += f"<tr><td>Plantas</td><td>—</td><td>≤ {max_levels}</td><td>—</td></tr>"
-            # Ocupación
+            # Ocupación: % de huella sobre parcela cuando hay superficie disponible
             if ocupacion_max is not None:
                 pct = int(float(ocupacion_max) * 100) if float(ocupacion_max) <= 1 else int(float(ocupacion_max))
-                if fp is not None:
-                    # Sin superficie de parcela no podemos verificar
+                if fp is not None and pa:
+                    occ_pct = round(fp / pa * 100.0, 1)
+                    if occ_pct <= pct:
+                        diag_rows += f"<tr><td>Ocupación</td><td>{occ_pct}% ({fp} m² huella)</td><td>≤ {pct}%</td><td style='color:#2e7d32'>✓</td></tr>"
+                    else:
+                        diag_rows += f"<tr><td>Ocupación</td><td>{occ_pct}% ({fp} m² huella)</td><td>≤ {pct}%</td><td style='color:#c62828'>✗</td></tr>"
+                        if verdict == 'compatible':
+                            verdict = 'supera_altura'
+                        issues.append(f'Ocupación: {occ_pct}% supera el {pct}% permitido')
+                elif fp is not None:
                     diag_rows += f"<tr><td>Ocupación</td><td>{fp} m² (huella)</td><td>≤ {pct}%</td><td>—</td></tr>"
                 else:
                     diag_rows += f"<tr><td>Ocupación</td><td>—</td><td>≤ {pct}%</td><td>—</td></tr>"
-            # Edificabilidad
+            # Edificabilidad existente: huella × plantas / parcela
             if edificabilidad_max is not None:
-                diag_rows += f"<tr><td>Edificabilidad</td><td>—</td><td>≤ {edificabilidad_max} m²/m²</td><td>—</td></tr>"
-            # Retranqueo
+                if fp is not None and pa and lv_eff:
+                    edif_real = round(fp * int(lv_eff) / pa, 2)
+                    if edif_real <= float(edificabilidad_max):
+                        diag_rows += f"<tr><td>Edificabilidad</td><td>{edif_real} m²/m² (exist.)</td><td>≤ {edificabilidad_max} m²/m²</td><td style='color:#2e7d32'>✓</td></tr>"
+                    else:
+                        diag_rows += f"<tr><td>Edificabilidad</td><td>{edif_real} m²/m² (exist.)</td><td>≤ {edificabilidad_max} m²/m²</td><td style='color:#c62828'>✗</td></tr>"
+                        if verdict == 'compatible':
+                            verdict = 'supera_altura'
+                        issues.append(f'Edificabilidad: {edif_real} supera {edificabilidad_max} m²/m²')
+                else:
+                    diag_rows += f"<tr><td>Edificabilidad</td><td>—</td><td>≤ {edificabilidad_max} m²/m²</td><td>—</td></tr>"
+            # Retranqueo: distancia huella→lindero cuando la geometría base es la parcela catastral
             if retranqueo_min is not None:
-                diag_rows += f"<tr><td>Retranqueo mín.</td><td>—</td><td>≥ {retranqueo_min} m</td><td>—</td></tr>"
+                retr_med = None
+                try:
+                    if (body.get('geometria_base') == 'catastro') and isinstance(body, dict):
+                        bgeom = (body.get('edificio_osm') or {}).get('geometria')
+                        if bgeom and body.get('geometry'):
+                            from shapely.geometry import shape as _shp
+                            from src.geo import auto_reproject_to_metric
+                            pg, _ = auto_reproject_to_metric(body['geometry'], body.get('crs') or 'EPSG:4326')
+                            bg, _ = auto_reproject_to_metric(bgeom, body.get('crs') or 'EPSG:4326')
+                            pgeom, bgeom_s = _shp(pg), _shp(bg)
+                            if pgeom.is_valid and not bgeom_s.is_empty:
+                                retr_med = round(float(bgeom_s.distance(pgeom.boundary)), 2)
+                except Exception:
+                    retr_med = None
+                if retr_med is not None:
+                    if retr_med >= float(retranqueo_min) - 0.01:
+                        diag_rows += f"<tr><td>Retranqueo mín.</td><td>{retr_med} m (geom.)</td><td>≥ {retranqueo_min} m</td><td style='color:#2e7d32'>✓</td></tr>"
+                    else:
+                        diag_rows += f"<tr><td>Retranqueo mín.</td><td>{retr_med} m (geom.)</td><td>≥ {retranqueo_min} m</td><td style='color:#c62828'>✗</td></tr>"
+                        issues.append(f'Retranqueo: {retr_med} m < {retranqueo_min} m')
+                else:
+                    diag_rows += f"<tr><td>Retranqueo mín.</td><td>—</td><td>≥ {retranqueo_min} m</td><td>—</td></tr>"
             verdict_label = {'compatible': 'Compatible (orientativo)', 'supera_altura': 'Supera parámetros (orientativo)', 'sin_dato': 'Sin datos'}.get(verdict, verdict)
             verdict_color = '#2e7d32' if verdict == 'compatible' else '#c62828'
             issues_html = ''.join(f"<li>{esc(i)}</li>" for i in issues) if issues else ''
@@ -998,7 +1046,9 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 if clas.get('observaciones_zona'):
                     clas_rows += f"<tr><td>Observaciones</td><td>{esc(clas['observaciones_zona'])}</td></tr>"
                 if clas.get('area_zona_m2'):
-                    clas_rows += f"<tr><td>Área de la zona</td><td>{esc(round(clas['area_zona_m2'], 0))} m²</td></tr>"
+                    _az = round(float(clas['area_zona_m2']))
+                    _az_txt = f"{_az/1e6:,.2f} km²".replace(',', ' ') if _az >= 1e6 else f"{_az:,} m²".replace(',', ' ')
+                    clas_rows += f"<tr><td>Área de la zona</td><td>{_az_txt}</td></tr>"
             official_html = (
                 "<section>"
                 "<h2>Datos oficiales y contexto</h2>"

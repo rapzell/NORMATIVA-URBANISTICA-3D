@@ -1469,6 +1469,7 @@ class VolumeRequest(BaseModel):
     height_m: float | None = None
     footprint_m2: float | None = None
     levels: int | None = None
+    geometria_base: str | None = None  # 'catastro' (parcela) | 'edificio' (huella)
 
 try:
     # Resolver ForwardRefs por uso de `from __future__ import annotations`

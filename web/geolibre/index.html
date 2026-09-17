@@ -1879,15 +1879,18 @@ async function submitGenerateReport() {
     }
   } catch (e) {}
 
+  const usaParcelaCatastro = !!(cat.geometry && cat.geometry.coordinates);
   const body = {
-    geometry: (cat.geometry && cat.geometry.coordinates) ? cat.geometry : feature.geometry,
+    geometry: usaParcelaCatastro ? cat.geometry : feature.geometry,
+    geometria_base: usaParcelaCatastro ? 'catastro' : 'edificio',
     altura_maxima_m: props.altura_maxima_subzona_m || height || null,
-    retranqueo_min_m: null,
+    retranqueo_min_m: props.retranqueo_min_subzona_m ?? null,
     municipio: municipio,
     subzona: subzona,
     crs: 'EPSG:4326',
     height_m: height,
     footprint_m2: footprint,
+    levels: props.levels || null,
     habitabilidad: habitabilidad,
     edificio_osm: {
       tipo: props.building || null,
@@ -1897,6 +1900,7 @@ async function submitGenerateReport() {
       huella_m2: footprint,
       osm_id: props.osm_id || null,
       nombre: props.name || null,
+      geometria: feature.geometry,
     },
     costes: costes,
   };
