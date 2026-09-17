@@ -2621,28 +2621,31 @@ def _fetch_siotuga_classification(lon: float, lat: float, ine_code: str) -> dict
   """Clasificación urbanística SIOTUGA de un punto.
 
   Delega en ``src.siotuga.vector_downloader``: usa la copia vectorial
-  local del municipio cuando está cacheada y, si no, la consulta WFS
-  puntual de siempre.
+  local del municipio cuando está cacheada (sin tocar la red, funciona
+  aunque SIOTUGA esté caído) y, si no, la consulta WFS puntual de
+  siempre tras descubrir la capa vigente vía GetCapabilities.
   """
   cache_key = ('siotuga', 'clas', ine_code, round(lon, 5), round(lat, 5))
   cached = _official_cache_get(cache_key)
   if cached is not None:
     return cached
-  wms_info = _fetch_siotuga_wms_layer(ine_code)
-  layer = wms_info.get('layer_name')
-  if not layer:
-    return {}
   from src.siotuga.vector_downloader import consultar_clasificacion_punto
 
-  def _fetch(url: str) -> bytes:
-    req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
-    with urlopen(req, timeout=15) as resp:
-      return resp.read()
+  # 1) Copia vectorial local de cualquier capa cacheada del municipio.
+  result = consultar_clasificacion_punto(lon, lat, ine_code)
+  if not result:
+    # 2) Sin copia o punto fuera de sus polígonos: capa vigente + WFS vivo.
+    layer = _fetch_siotuga_wms_layer(ine_code).get('layer_name')
+    if layer:
+      def _fetch(url: str) -> bytes:
+        req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+        with urlopen(req, timeout=15) as resp:
+          return resp.read()
 
-  result = consultar_clasificacion_punto(
-    lon, lat, ine_code, layer_name=layer, fetch=_fetch)
-  _official_cache_set(cache_key, result)
-  return result
+      result = consultar_clasificacion_punto(
+        lon, lat, ine_code, layer_name=layer, fetch=_fetch)
+  _official_cache_set(cache_key, result or {})
+  return result or {}
 
 
 def _is_in_galicia(lon: float, lat: float) -> bool:
@@ -3028,12 +3031,14 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
       'catastro': None,
       'siose': None,
       'siotuga_clas': None,
+      'siotuga_wms': None,
     }
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
       futures['catastro'] = pool.submit(_safe_fetch_catastro, lon, lat)
       futures['siose'] = pool.submit(_safe_fetch_siose, lon, lat)
       if ine_code:
         futures['siotuga_clas'] = pool.submit(_fetch_siotuga_classification, lon, lat, ine_code)
+        futures['siotuga_wms'] = pool.submit(_fetch_siotuga_wms_layer, ine_code)
       for name, fut in futures.items():
         if fut is None:
           results[name] = {}
@@ -3139,8 +3144,8 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
     # SIOTUGA: enlace al WMS GetMap centrado en la parcela + inventario
     ine = _get_ine_for_municipio(municipio)
     if ine:
-      # Obtener capa WMS del planeamiento vigente
-      wms_info = _fetch_siotuga_wms_layer(ine)
+      # Capa WMS del planeamiento vigente (ya consultada en paralelo arriba)
+      wms_info = results.get('siotuga_wms') or {}
       if wms_info.get('layer_name') and cat_qlon is not None and cat_qlat is not None:
         getmap_url = _build_siotuga_wms_getmap_url(
           ine, cat_qlon, cat_qlat,

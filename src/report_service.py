@@ -828,6 +828,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 f"<tr><td>Municipio catastral</td><td>{esc(cat.get('municipio_catastral') or '—')}</td></tr>" if cat.get('municipio_catastral') else '',
                 f"<tr><td>Consistencia coordenadas</td><td>{esc(cat.get('coord_consistency') or '—')}</td></tr>" if cat.get('coord_consistency') else '',
                 f"<tr><td>Consistencia municipio</td><td>{esc(cat.get('municipio_consistency') or '—')}</td></tr>" if cat.get('municipio_consistency') else '',
+                f"<tr><td>Edificios en parcela (Catastro INSPIRE BU)</td><td>{esc(cat.get('edificios_oficiales'))}</td></tr>" if cat.get('edificios_oficiales') else '',
+                f"<tr><td>Plantas (Catastro INSPIRE BU)</td><td>{esc(cat.get('plantas_oficiales'))}</td></tr>" if cat.get('plantas_oficiales') else '',
             ])
             # Desglose de usos del inmueble (Catastro DNPRC)
             usos_rows = ''

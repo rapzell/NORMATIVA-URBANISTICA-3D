@@ -1807,7 +1807,18 @@ async function submitGenerateReport() {
   const clientName = (document.getElementById('rpt-client') || {}).value || '';
   const projectName = (document.getElementById('rpt-project') || {}).value || '';
   const resultDiv = document.getElementById('report-result');
-  if (resultDiv) resultDiv.innerHTML = '<div class="loading">Generando informe...</div>';
+  if (resultDiv) resultDiv.innerHTML = '<div class="loading">Generando informe… (consultando Catastro, SIOTUGA y SIOSE; puede tardar unos segundos)</div>';
+
+  // Abrir la pestaña de forma síncrona (dentro del gesto del usuario):
+  // si se espera al await del fetch, el navegador bloquea el popup.
+  let reportWin = null;
+  try {
+    reportWin = window.open('', '_blank');
+    if (reportWin) {
+      reportWin.document.write('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Generando informe…</title><style>body{font-family:system-ui,sans-serif;display:flex;min-height:95vh;align-items:center;justify-content:center;color:#57606a}</style></head><body><div style="text-align:center">Generando informe de viabilidad…<div style="font-size:12px;margin-top:8px;color:#8b949e">Consultando fuentes oficiales (Catastro, SIOTUGA, SIOSE)</div></div></body></html>');
+      reportWin.document.close();
+    }
+  } catch (e) { reportWin = null; }
 
   const habitabilidad = {
     municipio: municipio,
@@ -1870,11 +1881,18 @@ async function submitGenerateReport() {
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const html = await resp.text();
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    if (resultDiv) resultDiv.innerHTML = '<div class="hint" style="color:#2e7d32">Informe generado. Se ha abierto en una nueva pestaña.</div>';
+    if (reportWin && !reportWin.closed) {
+      reportWin.document.open();
+      reportWin.document.write(html);
+      reportWin.document.close();
+      if (resultDiv) resultDiv.innerHTML = '<div class="hint" style="color:#2e7d32">Informe generado. Se ha abierto en una nueva pestaña.</div>';
+    } else {
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      if (resultDiv) resultDiv.innerHTML = `<div class="hint" style="color:#2e7d32">Informe generado. El navegador bloqueó la pestaña nueva: <a href="${url}" download="informe-viabilidad.html">descargar informe</a> · <a href="${url}" target="_blank" rel="noopener">abrir en pestaña</a></div>`;
+    }
   } catch (e) {
+    if (reportWin && !reportWin.closed) reportWin.close();
     if (resultDiv) resultDiv.innerHTML = `<div class="hint check-fail">Error: ${escapeHtml(e.message)}</div>`;
     else alert('No se pudo generar el informe: ' + e.message);
   }

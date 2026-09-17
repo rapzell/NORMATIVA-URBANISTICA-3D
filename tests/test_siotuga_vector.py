@@ -101,6 +101,31 @@ def test_consultar_punto_fuera_recurre_wfs(tmp_path, monkeypatch):
     assert res == {}
 
 
+def test_consultar_punto_sin_layer_ni_red_usa_cache(tmp_path, monkeypatch):
+    """Sin layer_name ni red: resuelve desde cualquier capa cacheada."""
+    from src import cache
+    monkeypatch.setattr(cache, 'CACHE_ROOT', str(tmp_path))
+    vd.descargar_clasificacion_municipio('36057', LAYER, fetch=_fake_fetch)
+
+    def _boom(url):
+        raise RuntimeError('sin red')
+    res = vd.consultar_clasificacion_punto(-8.715, 42.235, '36057',
+                                         layer_name=None, fetch=_boom)
+    assert res['clasificacion_ley'] == 'SUC'
+    assert res['vectorial_local'] is True
+
+
+def test_capa_cacheada_devuelve_la_mas_completa(tmp_path, monkeypatch):
+    from src import cache
+    monkeypatch.setattr(cache, 'CACHE_ROOT', str(tmp_path))
+    assert vd.capa_cacheada('36057') is None
+    vd.descargar_clasificacion_municipio('36057', LAYER, fetch=_fake_fetch)
+    fc = vd.capa_cacheada('36057')
+    assert fc is not None
+    assert len(fc['features']) == 2
+    assert vd.capa_cacheada('99999') is None
+
+
 def test_props_to_result_labels():
     res = vd.props_to_result({'cat_ley': 'SUNC', 'edif_ficha': '0.7',
                               'sup_ficha': '62780', 'uso': 'TER'})

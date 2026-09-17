@@ -285,6 +285,34 @@ def _load_local_layer(ine_code: str, layer: str) -> dict | None:
     return disk_get('siotuga', _cache_key(ine_code, layer), LAYER_TTL_S)
 
 
+def capa_cacheada(ine_code: str) -> dict | None:
+    """FeatureCollection cacheada más completa del municipio, sin tocar la red.
+
+    Recorre ``datos/cache/siotuga/{ine}_*.json`` y devuelve la capa con más
+    features dentro del TTL. Permite resolver la clasificación aunque el
+    servicio esté caído y sin conocer el nombre de capa (GetCapabilities).
+    """
+    import glob
+    import json as _json
+    import os
+    import time as _time
+
+    from src import cache as _cache
+    cache_dir = os.path.join(_cache.CACHE_ROOT, 'siotuga')
+    best: dict | None = None
+    for path in glob.glob(os.path.join(cache_dir, f'{ine_code}_*.json')):
+        try:
+            if _time.time() - os.path.getmtime(path) > LAYER_TTL_S:
+                continue
+            with open(path, encoding='utf-8') as f:
+                fc = _json.load(f).get('data')
+            if fc and len(fc.get('features') or []) > len((best or {}).get('features') or []):
+                best = fc
+        except Exception:
+            continue
+    return best
+
+
 def _score_props(props: dict) -> int:
     s = 0
     if props.get('edif_ficha'):
@@ -424,18 +452,22 @@ def consultar_clasificacion_punto(
     formato que la consulta puntual WFS, añadiendo ``fuente`` y
     ``vectorial_local``. Si no hay copia local hace la consulta WFS
     acotada de siempre; si tampoco hay datos, ``{}``.
+
+    Sin ``layer_name`` solo consulta las capas cacheadas del municipio
+    (nunca red): útil cuando GetCapabilities o el servicio están caídos.
     """
-    if layer_name:
-        fc = _load_local_layer(ine_code, layer_name)
-        if fc and fc.get('features'):
-            best = _pick_best(_point_in_features(lon, lat, fc['features']))
-            if best:
-                result = props_to_result(best['properties'])
-                result['fuente'] = 'SIOTUGA WFS (vectorial local)'
-                result['vectorial_local'] = True
-                return result
-            # Punto fuera de los polígonos descargados: puede ser suelo
-            # no clasificado o borde de municipio; seguimos con consulta viva.
+    fc = _load_local_layer(ine_code, layer_name) if layer_name else None
+    if not (fc and fc.get('features')):
+        fc = capa_cacheada(ine_code)
+    if fc and fc.get('features'):
+        best = _pick_best(_point_in_features(lon, lat, fc['features']))
+        if best:
+            result = props_to_result(best['properties'])
+            result['fuente'] = 'SIOTUGA WFS (vectorial local)'
+            result['vectorial_local'] = True
+            return result
+        # Punto fuera de los polígonos descargados: puede ser suelo
+        # no clasificado o borde de municipio; seguimos con consulta viva.
     if not layer_name:
         return {}
     return _fetch_point_live(lon, lat, ine_code, layer_name, fetch)
