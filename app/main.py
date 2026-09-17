@@ -3807,6 +3807,48 @@ def official_lidar_tile(lon: float, lat: float):
     return {'available': False, 'error': str(e)}
 
 
+@app.get('/official/lidar-preparar')
+def official_lidar_preparar(municipio: Optional[str] = None):
+  """Checklist de teselas LiDAR pendientes/descargadas.
+
+  Sin ``municipio`` devuelve el manifiesto de teselas necesarias
+  (registradas automáticamente al consultar edificios sin cobertura).
+  Con ``municipio`` lista además todas las teselas que cubren su bbox.
+  Cada tesela lleva ``url_descarga`` (CENDES) y ``estado``.
+  """
+  from src.building_data import lidar_prep
+  try:
+    estado = lidar_prep.estado_preparacion()
+    if municipio:
+      ine = _get_ine_for_municipio(municipio)
+      if ine:
+        from src.subzones_service import MUNICIPIO_CENTERS
+        from src.zoning_service import _norm_text as _nt
+        cfg = MUNICIPIO_CENTERS.get(_nt(municipio))
+        if cfg:
+          cx, cy = cfg['center']
+          d = cfg['delta']
+          estado['teselas_municipio'] = lidar_prep.teselas_bbox(
+              cx - d, cy - d, cx + d, cy + d)
+    return estado
+  except Exception as e:
+    return {'error': str(e), 'data_quality': 'unavailable'}
+
+
+@app.post('/official/lidar-procesar')
+def official_lidar_procesar():
+  """Descomprime y valida los ZIPs CENDES en ``datos/cache/lidar/``.
+
+    Extrae .laz/.las, verifica legibilidad con laspy, elimina el ZIP y
+    actualiza el manifiesto de pendientes a ``descargada``.
+  """
+  from src.building_data import lidar_prep
+  try:
+    return lidar_prep.procesar_descargas()
+  except Exception as e:
+    return {'error': str(e), 'data_quality': 'unavailable'}
+
+
 # ------------------------------
 # Análisis de sombras
 # ------------------------------

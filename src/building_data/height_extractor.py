@@ -412,6 +412,11 @@ def obtener_datos_edificio(lon: float, lat: float,
             tile = hoja_lidar_para_punto(lon, lat, fetch=fetch)
             if tile.get('available'):
                 out['lidar_tile'] = tile
+                try:
+                    from src.building_data.lidar_prep import registrar_pendiente
+                    registrar_pendiente(lon, lat, fetch=fetch)
+                except Exception:
+                    pass
         except Exception:
             pass
         if osm_height:
