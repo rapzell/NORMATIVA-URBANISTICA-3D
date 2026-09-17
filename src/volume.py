@@ -341,6 +341,8 @@ def compute_building_envelope(geometry: dict, params: VolumeParams, street_axis:
     except Exception:
         pass
 
+    # Área real en m² calculada en el marco métrico (antes de volver a lon/lat)
+    area_m2 = float(buildable.area)
     # Si trabajamos en espacio métrico sintético, volver a lon/lat antes de devolver
     if used_metric_transform and (cx is not None):
         try:
@@ -383,7 +385,7 @@ def compute_building_envelope(geometry: dict, params: VolumeParams, street_axis:
             "polygon_type": polygon_type,
             "directional_applicability": directional_applicability,
             "directional_not_applied_reason": directional_not_applied_reason,
-            "area_m2": float(buildable.area),
+            "area_m2": area_m2,
             "street_axis_min_distance_m": float(street_axis_min_distance_m) if street_axis_min_distance_m is not None else None,
             "street_axis_side_distances": street_axis_side_distances,
         },

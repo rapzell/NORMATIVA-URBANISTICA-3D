@@ -1,7 +1,7 @@
 from typing import Optional
 
 from src.plans_service import get_plan_params_dynamic
-from src.rules_engine import geometry_checks
+from src.rules_engine import geometry_checks, geometry_checks_with_crs
 from src.volume import VolumeParams, compute_building_envelope
 from src.zoning_service import (
     arcgis_feature_query,
@@ -189,7 +189,7 @@ def evaluate_zoning_assessment(req) -> dict:
 
     geometry_summary = None
     try:
-        _gs = geometry_checks(req.geometry)
+        _gs = geometry_checks_with_crs(req.geometry, crs=getattr(req, 'crs', None))
         try:
             geometry_summary = _gs.model_dump()
         except Exception:

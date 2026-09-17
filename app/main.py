@@ -1466,6 +1466,9 @@ class VolumeRequest(BaseModel):
     habitabilidad: dict | None = None
     edificio_osm: dict | None = None
     costes: dict | None = None
+    height_m: float | None = None
+    footprint_m2: float | None = None
+    levels: int | None = None
 
 try:
     # Resolver ForwardRefs por uso de `from __future__ import annotations`

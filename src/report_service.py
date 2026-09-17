@@ -540,10 +540,19 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             ocupacion_max = diag_subzone.get('ocupacion_max')
             edificabilidad_max = diag_subzone.get('edificabilidad_max_m2_m2')
             retranqueo_min = diag_subzone.get('retranqueo_min_m')
-            # Valores del edificio/proyecto desde body
-            h = _num(body.get('height_m') or body.get('altura_m')) if isinstance(body, dict) else None
+            # Valores del edificio/proyecto desde body; la altura medida (MDSN/LiDAR) tiene preferencia sobre la estimada OSM
+            edif = (official_context or {}).get('edificio_datos') or {}
+            alt_meas = (edif.get('altura') or {})
+            h_meas = _num(alt_meas.get('value')) if alt_meas.get('data_quality') == 'measured' else None
+            h_osm = _num(body.get('height_m') or body.get('altura_m')) if isinstance(body, dict) else None
+            h = h_meas if h_meas is not None else h_osm
+            h_tag = ' <span style="font-size:10px;color:#57606a">(medida)</span>' if h_meas is not None else (' <span style="font-size:10px;color:#57606a">(OSM, estimada)</span>' if h is not None else '')
             lv = body.get('levels') if isinstance(body, dict) else None
+            if lv is None and isinstance(body, dict):
+                lv = (body.get('edificio_osm') or {}).get('plantas')
             fp = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
+            if fp is None and isinstance(body, dict):
+                fp = _num((body.get('edificio_osm') or {}).get('huella_m2'))
             diag_rows = ''
             verdict = 'compatible'
             issues = []
@@ -551,9 +560,9 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if h is not None and altura_max is not None:
                 diff = round(h - float(altura_max), 2)
                 if diff <= 0:
-                    diag_rows += f"<tr><td>Altura</td><td>{h} m</td><td>{altura_max} m</td><td style='color:#2e7d32'>✓ {abs(diff)} m margen</td></tr>"
+                    diag_rows += f"<tr><td>Altura</td><td>{h} m{h_tag}</td><td>{altura_max} m</td><td style='color:#2e7d32'>✓ {abs(diff)} m margen</td></tr>"
                 else:
-                    diag_rows += f"<tr><td>Altura</td><td>{h} m</td><td>{altura_max} m</td><td style='color:#c62828'>✗ {diff} m exceso</td></tr>"
+                    diag_rows += f"<tr><td>Altura</td><td>{h} m{h_tag}</td><td>{altura_max} m</td><td style='color:#c62828'>✗ {diff} m exceso</td></tr>"
                     verdict = 'supera_altura'
                     issues.append(f'Altura: exceso de {diff} m')
             elif altura_max is not None:
@@ -603,13 +612,21 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 "</section>"
             )
         else:
-            # Sin subzona: mostrar datos del edificio disponibles
-            h = _num(body.get('height_m') or body.get('altura_m')) if isinstance(body, dict) else None
+            # Sin subzona: mostrar datos del edificio disponibles (altura medida preferida)
+            edif = (official_context or {}).get('edificio_datos') or {}
+            alt_meas = (edif.get('altura') or {})
+            h_meas = _num(alt_meas.get('value')) if alt_meas.get('data_quality') == 'measured' else None
+            h = h_meas if h_meas is not None else (_num(body.get('height_m') or body.get('altura_m')) if isinstance(body, dict) else None)
             lv = body.get('levels') if isinstance(body, dict) else None
+            if lv is None and isinstance(body, dict):
+                lv = (body.get('edificio_osm') or {}).get('plantas')
             fp = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
+            if fp is None and isinstance(body, dict):
+                fp = _num((body.get('edificio_osm') or {}).get('huella_m2'))
             diag_rows = ''
             if h is not None:
-                diag_rows += f"<tr><td>Altura del edificio</td><td>{h} m</td><td>—</td><td>—</td></tr>"
+                h_tag = ' (medida)' if h_meas is not None else ' (OSM)'
+                diag_rows += f"<tr><td>Altura del edificio</td><td>{h} m{h_tag}</td><td>—</td><td>—</td></tr>"
             if lv is not None:
                 diag_rows += f"<tr><td>Plantas (OSM)</td><td>{lv}</td><td>—</td><td>—</td></tr>"
             if fp is not None:
@@ -691,6 +708,14 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         alt_m = _num(alt)
         bld_footprint = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
         bld_height = _num(body.get('height_m')) if isinstance(body, dict) else None
+        if isinstance(body, dict):
+            _osm = body.get('edificio_osm') or {}
+            if bld_footprint is None:
+                bld_footprint = _num(_osm.get('huella_m2'))
+            if bld_height is None:
+                _edif = (official_context or {}).get('edificio_datos') or {}
+                _alt = _edif.get('altura') or {}
+                bld_height = _num(_alt.get('value')) if _alt.get('data_quality') == 'measured' else _num(_osm.get('altura_m'))
         footprint = buildable_area if buildable_area is not None else occ_cap_area
         if footprint is None and bld_footprint is not None:
             footprint = bld_footprint
