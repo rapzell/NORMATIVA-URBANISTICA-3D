@@ -404,7 +404,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             except Exception:
                 pass
             carto_html = (
-                f"<section>\n      <h2>Composición cartográfica</h2>\n"
+                f"<section>\n"
                 f"      <div>{svg}</div>\n"
                 f"      <div class='muted' style='margin-top:6px'>"
                 f"Vista esquemática de la parcela (azul) y la envolvente edificable (rojo). "
@@ -420,25 +420,31 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         buildable_area = _num(((res.feature or {}) if hasattr(res, 'feature') else (res.get('feature') if isinstance(res, dict) else {})).get('properties', {}).get('area_m2'))
         occ_ratio = _num(ocu)
         occ_cap_area = parcel_area * occ_ratio if parcel_area is not None and occ_ratio is not None else None
-        occupied_area = buildable_area if buildable_area is not None else occ_cap_area
+        # Huella real del edificio si el frontend la aporta; si no, la envolvente
+        footprint = _num(body.get('footprint_m2')) if isinstance(body, dict) else None
+        if footprint is None and isinstance(body, dict):
+            footprint = _num((body.get('edificio_osm') or {}).get('huella_m2'))
+        occupied_area = footprint if footprint is not None else (buildable_area if buildable_area is not None else occ_cap_area)
+        occupied_label = ('Huella real del edificio' if footprint is not None
+                          else 'Superficie ocupada estimada (envolvente)')
         free_area = max(parcel_area - occupied_area, 0.0) if parcel_area is not None and occupied_area is not None else None
         if any(v is not None for v in (parcel_area, buildable_area, occ_cap_area, free_area, cat_parcel_area)):
             surface_rows = ''.join([
                 f"<tr><td>Superficie de parcela (geométrica)</td><td>{_fmt(parcel_area)} m²</td></tr>",
                 f"<tr><td>Superficie parcela oficial (Catastro)</td><td>{_fmt(cat_parcel_area)} m²</td></tr>" if cat_parcel_area else '',
-                f"<tr><td>Superficie ocupada estimada</td><td>{_fmt(occupied_area)} m²</td></tr>",
+                f"<tr><td>{occupied_label}</td><td>{_fmt(occupied_area)} m²</td></tr>",
                 f"<tr><td>Superficie libre estimada</td><td>{_fmt(free_area)} m²</td></tr>",
                 f"<tr><td>Envolvente edificable</td><td>{_fmt(buildable_area)} m²</td></tr>",
                 f"<tr><td>Ocupación máxima teórica</td><td>{_fmt(occ_cap_area)} m²</td></tr>",
             ])
             surface_html = (
                 "<section>"
-                "<h2>Cuadro de superficies</h2>"
                 "<table><thead><tr><th>Concepto</th><th>Valor</th></tr></thead><tbody>"
                 f"{surface_rows}"
                 "</tbody></table>"
                 "<div class='muted' style='margin-top:8px'>"
-                "La superficie ocupada/libre es una estimación preliminar a partir de la envolvente calculada y de la ocupación máxima disponible.</div>"
+                "La superficie libre se estima a partir de la huella del edificio (o de la envolvente si no hay huella) "
+                "sobre la parcela. La envolvente edificable es el área disponible tras retranqueos.</div>"
                 "</section>"
             )
     except Exception:
@@ -667,7 +673,6 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             issues_html = ''.join(f"<li>{esc(i)}</li>" for i in issues) if issues else ''
             diagnostic_html = (
                 "<section>"
-                "<h2>Diagnóstico comparativo edificio vs subzona</h2>"
                 f"<div class='muted' style='margin-bottom:8px'>Veredicto: <strong style='color:{verdict_color}'>{esc(verdict_label)}</strong> "
                 f"{norma_tag}</div>"
                 "<table><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>"
@@ -702,7 +707,6 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if diag_rows:
                 diagnostic_html = (
                     "<section>"
-                    "<h2>Diagnóstico del edificio</h2>"
                     "<div class='muted' style='margin-bottom:8px'>Sin subzona normativa asociada. "
                     "Los parámetros normativos (altura máxima, ocupación, edificabilidad, retranqueo) "
                     "no están disponibles para esta zona.</div>"
@@ -729,8 +733,12 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 _ords = {_prs['ordenanza']: _prs['resultado']}
         if _ords:
             rows_o = ''
+            _empty_ords = []
             for _code, _o in sorted(_ords.items()):
                 _p = _o.get('params') or {}
+                if not _p:
+                    _empty_ords.append(_code)
+                    continue
                 _oc = f"{_p['ocupacion_max_pct']:g}%" if _p.get('ocupacion_max_pct') is not None else '—'
                 _ed = f"{_p['edificabilidad_max_m2_m2']:g}" if _p.get('edificabilidad_max_m2_m2') is not None else '—'
                 _alt = f"{_p['altura_maxima_m']:g} m" if _p.get('altura_maxima_m') is not None else '—'
@@ -747,12 +755,18 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     f"<tr><td><b>{esc(_code)}</b></td><td>{esc(_o.get('titulo') or '—')}</td>"
                     f"<td>{_oc}</td><td>{_ed}</td><td>{_alt}</td><td>{_ret}</td><td>{_pm}</td>"
                     f"<td class='muted' style='font-size:10px'>{esc(_o.get('fuente') or '')}</td></tr>")
+            _empty_note = ''
+            if _empty_ords:
+                _empty_note = (
+                    "<div class='muted' style='margin-top:6px'>Ordenanzas sin parámetros numéricos extraíbles "
+                    f"(conservan la edificabilidad existente o se rigen por planos/licencias): {esc(', '.join(_empty_ords))}.</div>")
             ordenanzas_html = (
                 "<section id=\"sec-3d\">"
                 "<h2>Parámetros por ordenanza (PGOM oficial)</h2>"
                 "<table><thead><tr><th>Ordenanza</th><th>Denominación</th><th>Ocupación</th>"
                 "<th>Edificabilidad</th><th>Altura</th><th>Recuados (m)</th><th>Parcela mín.</th><th>Fuente</th></tr></thead>"
                 f"<tbody>{rows_o}</tbody></table>"
+                f"{_empty_note}"
                 "<div class='muted' style='margin-top:8px'>Parámetros extraídos automáticamente de la normativa urbanística oficial "
                 "(PDF del plan vigente descargado de SIOTUGA), con trazabilidad de página. "
                 "Para conocer la ordenanza aplicable a la parcela consulte el plano de ordenación del plan. "
@@ -856,7 +870,6 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 econ_source += " Edificabilidad procedente de la clasificación SIOTUGA oficial."
             economic_html = (
                 "<section>"
-                "<h2>Estimación económica preliminar</h2>"
                 "<table><thead><tr><th>Concepto</th><th>Valor</th></tr></thead><tbody>"
                 f"{econ_rows}"
                 "</tbody></table>"
@@ -911,7 +924,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     )
                 shadow_html = (
                     "<section>"
-                    "<h2>Análisis de sombras (solsticio de invierno)</h2>"
+                    "<div class='muted' style='margin-bottom:6px'>Solsticio de invierno</div>"
                     "<table><thead><tr><th>Hora</th><th>Elevación solar</th><th>Azimut solar</th><th>Longitud sombra</th><th>Sombra</th></tr></thead><tbody>"
                     f"{shadow_rows}"
                     "</tbody></table>"
@@ -1117,7 +1130,6 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     clas_rows += f"<tr><td>Área de la zona</td><td>{_az_txt}</td></tr>"
             official_html = (
                 "<section>"
-                "<h2>Datos oficiales y contexto</h2>"
                 f"<div class='muted' style='margin-bottom:8px'>Calidad de datos: <strong>{esc(official_context.get('data_quality') or '—')}</strong></div>"
                 "<table><tbody>"
                 f"<tr><td>Catastro disponible</td><td>{esc(cat.get('available'))}</td></tr>"
@@ -1182,7 +1194,6 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 )
             provenance_html = (
                 "<section>"
-                "<h2>Proveniencia de los datos</h2>"
                 "<table><tbody>"
                 f"{prov_rows}"
                 "</tbody></table>"
