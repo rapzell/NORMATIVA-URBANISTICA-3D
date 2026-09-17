@@ -3082,10 +3082,20 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
       'siose': None,
       'siotuga_clas': None,
       'siotuga_wms': None,
+      'edificio': None,
     }
-    with ThreadPoolExecutor(max_workers=4) as pool:
+
+    def _edificio_datos():
+      try:
+        from src.building_data.height_extractor import obtener_datos_edificio
+        return obtener_datos_edificio(lon, lat, footprint=geometry)
+      except Exception as e:
+        return {'error': str(e)}
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
       futures['catastro'] = pool.submit(_safe_fetch_catastro, lon, lat)
       futures['siose'] = pool.submit(_safe_fetch_siose, lon, lat)
+      futures['edificio'] = pool.submit(_edificio_datos)
       if ine_code:
         futures['siotuga_clas'] = pool.submit(_fetch_siotuga_classification, lon, lat, ine_code)
         futures['siotuga_wms'] = pool.submit(_fetch_siotuga_wms_layer, ine_code)
@@ -3120,6 +3130,10 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
     clas = results.get('siotuga_clas') or {}
     if clas:
       ctx['clasificacion_siotuga'] = clas
+    # Datos del edificio (altura medida MDSN/LiDAR, Catastro BU)
+    edif = results.get('edificio') or {}
+    if edif:
+      ctx['edificio_datos'] = edif
     # Enriquecer Catastro con edificios oficiales INSPIRE BU
     refcat = cat.get('refcat')
     if refcat and len(refcat) >= 14:
@@ -3170,6 +3184,10 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
         dps['edificabilidad_ficha'] = DataPoint(
           clas['edificabilidad_ficha'], 'm²/m²', DataQuality.OFFICIAL,
           'SIOTUGA WFS').to_dict()
+      # Altura medida del edificio (MDSN WCS / LiDAR) — ya viene como dict
+      edif_alt = (ctx.get('edificio_datos') or {}).get('altura') or {}
+      if edif_alt.get('value') is not None or edif_alt.get('data_quality'):
+        dps['altura_edificio'] = edif_alt
       ctx['data_points'] = dps
     except Exception:
       pass

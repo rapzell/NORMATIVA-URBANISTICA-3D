@@ -471,6 +471,53 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 )
     except Exception:
         building_html = ''
+    # Altura medida del edificio (IDEE WCS MDSN / LiDAR) y datos Catastro BU
+    measured_html = ''
+    try:
+        edif = (official_context or {}).get('edificio_datos') or {}
+        alt_dp = edif.get('altura') or {}
+        rows_m = ''
+        labels_q = {'official': 'Oficial', 'measured': 'Medido',
+                    'estimated': 'Estimado', 'unavailable': 'No disponible'}
+        if alt_dp:
+            q = alt_dp.get('data_quality') or 'unavailable'
+            val = alt_dp.get('value')
+            val_txt = f"{esc(val)} {esc(alt_dp.get('unit') or 'm')}" if val is not None else 'No disponible'
+            src = esc(alt_dp.get('source') or '—')
+            sref = f" · {esc(alt_dp['source_ref'])}" if alt_dp.get('source_ref') else ''
+            rows_m += (
+                f"<tr><td>Altura medida</td><td>{val_txt}</td>"
+                f"<td>{esc(labels_q.get(q, q))}</td><td>{src}{sref}</td></tr>")
+        for campo, nombre in (('plantas', 'Plantas'), ('uso', 'Uso'),
+                              ('anio_construccion', 'Año de construcción'),
+                              ('edificios_catastro', 'Edificios en parcela')):
+            dp = edif.get(campo) or {}
+            if dp.get('value') is not None:
+                q = dp.get('data_quality') or 'unavailable'
+                rows_m += (
+                    f"<tr><td>{nombre}</td><td>{esc(dp['value'])} {esc(dp.get('unit') or '')}</td>"
+                    f"<td>{esc(labels_q.get(q, q))}</td><td>{esc(dp.get('source') or '—')}</td></tr>")
+        if alt_dp.get('data_quality') == 'unavailable' and (edif.get('lidar_tile') or {}).get('available'):
+            tile = edif['lidar_tile']
+            rows_m += (
+                f"<tr><td>Tesela LiDAR disponible</td>"
+                f"<td colspan='3'>{esc(tile.get('hoja'))} — "
+                f"<a href=\"{esc(tile.get('url_descarga') or '')}\" target=\"_blank\" rel=\"noopener\">descargar (CENDES)</a></td></tr>")
+        if rows_m:
+            measured_html = (
+                "<section id=\"sec-3aa\">"
+                "<h2>Altura medida del edificio (IDEE WCS / LiDAR)</h2>"
+                "<table><thead><tr><th>Dato</th><th>Valor</th><th>Calidad</th><th>Fuente</th></tr></thead>"
+                f"<tbody>{rows_m}</tbody></table>"
+                "<div class='muted' style='margin-top:8px'>"
+                "Altura derivada del Modelo Digital de Superficies normalizado de edificación "
+                "(LiDAR PNOA 1ª cobertura, resolución 2,5 m, percentil P90). "
+                "Si hay un fichero LAZ en caché se usa el punto de nube directamente. "
+                "No sustituye un levantamiento topográfico ni la verificación del proyectista.</div>"
+                "</section>"
+            )
+    except Exception:
+        measured_html = ''
     # Diagnóstico comparativo edificio vs subzona
     diagnostic_html = ''
     try:
@@ -1086,6 +1133,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         {f'<li><a href="#sec-2">Composición cartográfica</a></li>' if carto_html else ''}
         {f'<li><a href="#sec-3">Cuadro de superficies</a></li>' if surface_html else ''}
         {f'<li><a href="#sec-3a">Datos del edificio (OSM)</a></li>' if building_html else ''}
+        {f'<li><a href="#sec-3aa">Altura medida (IDEE/LiDAR)</a></li>' if measured_html else ''}
         {f'<li><a href="#sec-3b">Diagnóstico comparativo</a></li>' if diagnostic_html else ''}
         {f'<li><a href="#sec-3c">Verificación de habitabilidad</a></li>' if habitability_html else ''}
         {f'<li><a href="#sec-4">Estimación económica preliminar</a></li>' if economic_html else ''}
@@ -1114,6 +1162,7 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
       {surface_html or '<div class="muted">Sin datos de superficie disponibles.</div>'}
     </section>
     {building_html}
+    {measured_html}
     <section id="sec-3b">
       <h2><span class="section-num">3.1</span>Diagnóstico comparativo edificio vs subzona</h2>
       {diagnostic_html or '<div class="muted">Sin datos de subzona o edificio para el diagnóstico.</div>'}

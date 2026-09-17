@@ -1164,7 +1164,7 @@ function renderOfficialContext(ctx) {
       html += `<div class="info-row"><span class="key">Altura medida</span><span class="val">${a.value} m${qualityBadge('measured')}</span></div>`;
       html += `<div class="hint">${escapeHtml(a.source)}${a.source_ref ? ' · ' + escapeHtml(a.source_ref) : ''}</div>`;
     } else {
-      html += `<div class="hint">Altura medida LiDAR: no disponible${a.notes ? ' — ' + escapeHtml(a.notes) : ''}</div>`;
+      html += `<div class="hint">Altura medida (LiDAR/MDSN): no disponible${a.notes ? ' — ' + escapeHtml(a.notes) : ''}</div>`;
     }
   }
   if (bdata.altura_osm) {
@@ -1982,7 +1982,7 @@ async function selectBuilding(feature) {
       fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
       fetch(`${API}/official/building-data?lon=${coords[0]}&lat=${coords[1]}&osm_height=${props.height || ''}&osm_levels=${props.levels || ''}`).then(r => r.json()).catch(() => null),
     ]);
-    if (ctx && bdata) ctx.building_data = bdata;
+    if (ctx) ctx.building_data = bdata || ctx.edificio_datos || {};
     window._officialContext = ctx || {};
     // Dibujar lindero de la parcela catastral si está disponible
     try {
