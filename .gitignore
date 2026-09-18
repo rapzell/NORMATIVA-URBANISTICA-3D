@@ -68,6 +68,8 @@ web/examples/threejs-viewer/index_recovery.html
 
 # Secrets y API keys
 docs/apikey*
+api.txt
+api.env
 *.secret
 nul
 .pytest_full*.txt

@@ -9,11 +9,11 @@ MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "local").lower()  # initial read; a
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # legacy default
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")  # legacy default
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")  # legacy default
-TIMEOUT_S = float(os.getenv("TIMEOUT_S", "45"))
+TIMEOUT_S = float(os.getenv("TIMEOUT_S", "300"))
 
 _OPENAI_COMPAT_PRESETS: Dict[str, Dict[str, str]] = {
     "openai": {"base_url": "", "model_env": "OPENAI_MODEL", "api_key_env": "OPENAI_API_KEY"},
-    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model_env": "OPENROUTER_MODEL", "api_key_env": "OPENROUTER_API_KEY", "default_model": "meta-llama/llama-3.3-70b-instruct:free"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model_env": "OPENROUTER_MODEL", "api_key_env": "OPENROUTER_API_KEY", "default_model": "deepseek/deepseek-v4-flash-0731:free"},
     "groq": {"base_url": "https://api.groq.com/openai/v1", "model_env": "GROQ_MODEL", "api_key_env": "GROQ_API_KEY", "default_model": "llama-3.1-8b-instant"},
     "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model_env": "GEMINI_MODEL", "api_key_env": "GEMINI_API_KEY", "default_model": "gemini-2.0-flash"},
     "mistral": {"base_url": "https://api.mistral.ai/v1", "model_env": "MISTRAL_MODEL", "api_key_env": "MISTRAL_API_KEY", "default_model": "mistral-small-latest"},
@@ -25,6 +25,40 @@ _OPENAI_COMPAT_PRESETS: Dict[str, Dict[str, str]] = {
 
 # Global lock to serialize local generation calls (ctransformers is not thread-safe on Windows)
 _LOCAL_LOCK = threading.Lock()
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _key_from_file(env_name: str) -> str:
+    """Clave de respaldo leida de <repo>/api.txt (clave cruda) o
+    api.env/.env (lineas KEY=VALUE). La variable de entorno manda.
+    Devuelve '' bajo pytest para mantener los tests hermeticos."""
+    if os.getenv('PYTEST_CURRENT_TEST'):
+        return ''
+    for fname in ('api.txt', 'api.env', '.env'):
+        try:
+            with open(os.path.join(_REPO_ROOT, fname), encoding='utf-8') as fh:
+                lines = [l.strip() for l in fh
+                         if l.strip() and not l.lstrip().startswith('#')]
+        except OSError:
+            continue
+        for line in lines:
+            if '=' in line:
+                k, v = line.split('=', 1)
+                if k.strip() == env_name:
+                    return v.strip()
+            elif env_name == 'OPENROUTER_API_KEY' and line.startswith('sk-'):
+                return line
+    return ''
+
+
+def _default_provider() -> str:
+    explicit = os.getenv("MODEL_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+    if _key_from_file("OPENROUTER_API_KEY"):
+        return "openrouter"
+    return "local"
 
 
 def _get_timeout_s() -> float:
@@ -42,11 +76,13 @@ def _get_temperature() -> float:
 
 
 def _get_max_tokens() -> int:
-    raw = os.getenv("MODEL_MAX_TOKENS") or os.getenv("OPENAI_MAX_TOKENS") or "600"
+    # Los modelos gratuitos con razonamiento consumen tokens pensando;
+    # con ~600 la respuesta final llega vacia.
+    raw = os.getenv("MODEL_MAX_TOKENS") or os.getenv("OPENAI_MAX_TOKENS") or "8000"
     try:
         return int(raw)
     except Exception:
-        return 600
+        return 8000
 
 
 def _get_provider_config(provider: str) -> Dict[str, str]:
@@ -62,7 +98,8 @@ def _get_provider_config(provider: str) -> Dict[str, str]:
     else:
         model_name = (os.getenv(model_env) or os.getenv("MODEL_NAME", "")
                       or preset.get("default_model", ""))
-        api_key = os.getenv("MODEL_API_KEY") or os.getenv(api_key_env, "")
+        api_key = (os.getenv("MODEL_API_KEY") or os.getenv(api_key_env, "")
+                   or _key_from_file(api_key_env))
         base_url = os.getenv("MODEL_BASE_URL") or preset.get("base_url", "")
 
     return {
@@ -192,7 +229,7 @@ def _call_local_with_timeout(llm, prompt: str, timeout: float) -> str:
 
 
 def _iter_provider_attempts() -> List[str]:
-    provider = os.getenv("MODEL_PROVIDER", MODEL_PROVIDER).strip().lower() or "local"
+    provider = _default_provider()
     raw_chain = os.getenv("MODEL_FALLBACK_CHAIN", "")
     seen = set()
     attempts: List[str] = []
@@ -265,7 +302,7 @@ def provider_status() -> Dict[str, object]:
 
     No expone claves — solo si están definidas.
     """
-    provider = os.getenv("MODEL_PROVIDER", MODEL_PROVIDER).strip().lower() or "local"
+    provider = _default_provider()
     chain = _iter_provider_attempts()
     providers: Dict[str, object] = {}
     for name in _OPENAI_COMPAT_PRESETS:

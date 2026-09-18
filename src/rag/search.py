@@ -120,7 +120,8 @@ def buscar_normativa(query: str, ine: str | None = None,
     vistos: set = set()
     unicos: list[dict] = []
     for c in candidatos:
-        firma = ' '.join((c.get('texto') or '').split())[:160].lower()
+        norm = ' '.join((c.get('texto') or '').split()).lower()
+        firma = norm[40:200] if len(norm) > 200 else norm
         if firma and firma in vistos:
             continue
         vistos.add(firma)
