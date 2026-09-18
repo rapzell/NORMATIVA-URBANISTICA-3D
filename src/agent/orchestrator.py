@@ -54,6 +54,112 @@ Responde en español, de forma estructurada y profesional.
 _PISCINA_RE = re.compile(
     r'piscina|pajar|barbacoa|p[eé]rgola|cenador|caseta|cobertizo', re.I)
 
+# Preguntas sobre el propio edificio/contexto seleccionado: se responden
+# con los datos de las herramientas (Catastro, SIOTUGA, altura), no con
+# fragmentos normativos.
+_EDIFICIO_RE = re.compile(
+    r'(qu[eé]\s+(tipo|clase)\s+de\s+edificio|qu[eé]\s+edificio|'
+    r'edificio\s+seleccionado|qu[eé]\s+he\s+seleccionado|'
+    r'qu[eé]\s+es\s+esto|qu[eé]\s+es\s+este|uso\s+del?\s+edificio|'
+    r'a\s+qu[eé]\s+se\s+dedica|de\s+qu[eé]\s+a[ñn]o\s+es|'
+    r'cu[aá]ndo\s+se\s+construy[óo]|cu[aá]nta?s?\s+plantas?\s+tiene|'
+    r'cu[aá]ntos?\s+pisos|direcci[oó]n\s+del?\s+edificio|'
+    r'referencia\s+catastral|superficie\s+de\s+la\s+parcela|'
+    r'cu[aá]nto\s+(mide|ocupa)|qu[eé]\s+superficie|qu[eé]\s+hay\s+aqu[ií]|'
+    r'qu[eé]\s+clasificaci[oó]n|en\s+qu[eé]\s+zona\s+est[aá]|'
+    r'qu[eé]\s+datos\s+tienes|qu[eé]\s+sabes\s+de)', re.I)
+
+_SALUDO_RE = re.compile(
+    r'^\s*(hola|buenas|buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|'
+    r'qu[eé]\s+tal|hey|hi)\b', re.I)
+
+
+def _detectar_intencion(pregunta: str) -> str:
+    """'edificio' | 'saludo' | 'normativa'."""
+    q = pregunta or ''
+    if _SALUDO_RE.match(q):
+        return 'saludo'
+    if _EDIFICIO_RE.search(q):
+        return 'edificio'
+    return 'normativa'
+
+
+def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
+    """Respuesta determinista sobre el edificio desde las herramientas."""
+    cat = ctx.get('catastro') or {}
+    res = ctx.get('resumen') or {}
+    clas = ctx.get('clasificacion') or {}
+    ord_p = ctx.get('ordenanzas_params') or {}
+    bld = ctx.get('building') or {}
+    alt = bld.get('altura') or {}
+    alt_v = alt.get('value') if isinstance(alt, dict) else None
+    alt_dq = alt.get('data_quality') if isinstance(alt, dict) else None
+
+    if not cat.get('refcat') and not res.get('ref_catastral'):
+        return ('No hay un edificio con datos catastrales en el punto '
+                'seleccionado. Haz clic sobre un edificio del mapa o '
+                'indica la referencia catastral.')
+
+    partes = []
+    if cat.get('uso_principal'):
+        det = cat.get('usos_detalle') or {}
+        usos = ', '.join(f"{u} ({s:,.0f} m²)".replace(',', '.')
+                         for u, s in list(det.items())[:4])
+        partes.append(f"**Uso principal**: {cat['uso_principal']}"
+                      + (f" — {usos}" if usos else ''))
+    if cat.get('anio_construccion'):
+        partes.append(f"**Año de construcción**: {cat['anio_construccion']}")
+    if cat.get('direccion') or res.get('direccion'):
+        partes.append(f"**Dirección**: {cat.get('direccion') or res.get('direccion')}")
+    if cat.get('refcat') or res.get('ref_catastral'):
+        partes.append(f"**Ref. catastral**: {cat.get('refcat') or res.get('ref_catastral')}")
+    sups = []
+    if res.get('superficie_parcela_m2'):
+        sups.append(f"parcela {res['superficie_parcela_m2']:,.0f} m²".replace(',', '.'))
+    if cat.get('superficie_construida_m2'):
+        sups.append(f"construida {cat['superficie_construida_m2']:,.0f} m²".replace(',', '.'))
+    if sups:
+        partes.append('**Superficies**: ' + ' · '.join(sups))
+    if alt_v is not None:
+        partes.append(f"**Altura**: {alt_v} m"
+                      + (f" ({alt_dq})" if alt_dq else ''))
+    if clas.get('clasificacion_ley') or clas.get('clase_ley'):
+        partes.append(
+            f"**Clasificación urbanística**: "
+            f"{clas.get('clasificacion_ley') or clas.get('clase_ley')}"
+            + (f" ({clas.get('denominacion_zona')})"
+               if clas.get('denominacion_zona') else ''))
+    if ord_p.get('ordenanza'):
+        partes.append(f"**Ordenanza**: {ord_p['ordenanza']}"
+                      + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
+                      + f" — oficial, {ord_p.get('fuente')}")
+
+    faltan = []
+    if alt_v is None:
+        faltan.append('altura medida')
+    if not (clas.get('clasificacion_ley') or clas.get('clase_ley')):
+        faltan.append('clasificación SIOTUGA')
+    out = ['Datos del edificio seleccionado (fuentes oficiales):', '']
+    out += partes
+    if faltan:
+        out.append('')
+        out.append('*No disponible: ' + ', '.join(faltan) + '.*')
+    return '\n'.join(out)
+
+
+def _respuesta_saludo(ctx: dict) -> str:
+    c = []
+    if ctx.get('municipio'):
+        c.append(f"municipio {ctx['municipio']}")
+    if ctx.get('subzona'):
+        c.append(f"subzona {ctx['subzona']}")
+    base = ('¡Hola! Puedo responder sobre la normativa urbanística '
+            'aplicable y sobre los datos oficiales del edificio '
+            'seleccionado (Catastro, clasificación, ordenanza).')
+    return base + (' Contexto actual: ' + ', '.join(c) + '.'
+                   if c else ' Selecciona un edificio en el mapa para '
+                   'preguntas concretas.')
+
 
 def _contexto_edificio(lon: float | None, lat: float | None,
                        ine: str | None, municipio: str | None,
@@ -190,16 +296,34 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
 
 
 def _respuesta_heuristica(fragmentos: list[dict], calculo: dict | None,
-                          motivo: str) -> str:
-    partes = ['No se pudo generar una respuesta elaborada '
-              f'({motivo}), pero estos son los artículos aplicables '
-              'recuperados de las fuentes oficiales:']
+                          motivo: str, pregunta: str = '') -> str:
+    # Filtrar fragmentos de baja relevancia: si el mejor BM25 es muy
+    # flojo, los documentos probablemente no cubren la pregunta — mejor
+    # decirlo que volcar texto irrelevante.
+    relevantes = fragmentos
+    if fragmentos:
+        mejor = max(f.get('score', 0) for f in fragmentos)
+        if mejor < 3.0:
+            relevantes = [f for f in fragmentos
+                          if f.get('score', 0) >= mejor * 0.6][:3]
+        else:
+            relevantes = [f for f in fragmentos
+                          if f.get('score', 0) >= mejor * 0.4][:5]
+    if not relevantes:
+        partes = ['No se pudo generar una respuesta elaborada '
+                  f'({motivo}) y los documentos normativos indexados '
+                  'no contienen fragmentos claramente relevantes para '
+                  'esta pregunta.']
+    else:
+        partes = ['No se pudo generar una respuesta elaborada '
+                  f'({motivo}), pero estos son los artículos aplicables '
+                  'recuperados de las fuentes oficiales:']
     if calculo and calculo.get('data_quality') != 'unavailable':
         partes.append('\n**Cálculo previo disponible**:')
         for k, v in calculo.items():
             if k not in ('data_quality', 'fuente'):
                 partes.append(f'- {k}: {v}')
-    for f in fragmentos:
+    for f in relevantes:
         partes.append(
             f"\n**[FUENTE {f['id']}]** {f.get('documento')},"
             f" {f.get('referencia') or 's/ref'}, pág. {f.get('pagina') or '?'}:")
@@ -224,13 +348,25 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     from app.main import _get_ine_for_municipio
     ine = _get_ine_for_municipio(municipio) if municipio else None
 
+    intencion = _detectar_intencion(pregunta)
     ctx, herramientas = _contexto_edificio(
         lon, lat, ine, municipio, subzona, ref_catastral)
 
-    rag = tools.search_normativa(pregunta, ine=ine, municipio=municipio,
-                                 top_k=top_k)
-    fragmentos = rag.get('fragmentos') or []
-    herramientas.append('search_normativa')
+    # Preguntas de contexto/saludo: no hace falta RAG ni LLM — la
+    # respuesta sale directamente de los datos de las herramientas.
+    if intencion == 'edificio':
+        rag = {'fragmentos': [], 'n_corpus': 0, 'n_municipal': 0,
+               'rerank': False}
+        fragmentos = []
+    elif intencion == 'saludo':
+        rag = {'fragmentos': [], 'n_corpus': 0, 'n_municipal': 0,
+               'rerank': False}
+        fragmentos = []
+    else:
+        rag = tools.search_normativa(pregunta, ine=ine,
+                                     municipio=municipio, top_k=top_k)
+        fragmentos = rag.get('fragmentos') or []
+        herramientas.append('search_normativa')
 
     calculo = None
     if _PISCINA_RE.search(pregunta or ''):
@@ -240,7 +376,7 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     prompt = _prompt(pregunta, ctx, fragmentos, calculo)
     return {'ctx': ctx, 'fragmentos': fragmentos, 'calculo': calculo,
             'prompt': prompt, 'herramientas': herramientas, 'rag': rag,
-            'pregunta': pregunta}
+            'pregunta': pregunta, 'intencion': intencion}
 
 
 def finalizar_respuesta(prep: dict, respuesta: str | None,
@@ -250,13 +386,25 @@ def finalizar_respuesta(prep: dict, respuesta: str | None,
     fragmentos = prep['fragmentos']
     calculo = prep['calculo']
     rag = prep['rag']
+    intencion = prep.get('intencion', 'normativa')
 
     validacion = None
-    if llm_ok and respuesta:
+    if intencion == 'edificio':
+        respuesta = _respuesta_contexto(prep['pregunta'], ctx)
+        llm_ok = False
+        modo = 'contexto'
+    elif intencion == 'saludo':
+        respuesta = _respuesta_saludo(ctx)
+        llm_ok = False
+        modo = 'contexto'
+    elif llm_ok and respuesta:
         validacion = validar_respuesta(respuesta, fragmentos, ctx)
         respuesta = anotar_respuesta(respuesta, validacion)
+        modo = 'llm'
     else:
-        respuesta = _respuesta_heuristica(fragmentos, calculo, motivo)
+        respuesta = _respuesta_heuristica(fragmentos, calculo, motivo,
+                                        pregunta=prep['pregunta'])
+        modo = 'heuristico'
 
     fuentes_pub = [{
         'id': f['id'],
@@ -273,7 +421,8 @@ def finalizar_respuesta(prep: dict, respuesta: str | None,
         'pregunta': prep['pregunta'],
         'respuesta': respuesta,
         'llm': llm_ok,
-        'modo': 'llm' if llm_ok else 'heuristico',
+        'modo': modo,
+        'intencion': intencion,
         'fuentes': fuentes_pub,
         'contexto': {
             'municipio': ctx.get('municipio'),
@@ -310,6 +459,8 @@ def responder_consulta_edificio(pregunta: str, lon: float | None = None,
     respuesta = None
     llm_ok = False
     motivo = 'sin proveedor LLM configurado'
+    if prep.get('intencion') != 'normativa':
+        return finalizar_respuesta(prep, respuesta, llm_ok, motivo)
     try:
         from src.model_gateway import generate_with_fallback
         ans = generate_with_fallback(prep['prompt'], None)

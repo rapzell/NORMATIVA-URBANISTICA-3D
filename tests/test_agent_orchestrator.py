@@ -166,3 +166,56 @@ def test_qa_health_endpoint():
     data = r.json()
     assert 'llm' in data and 'corpus' in data
     assert 'rerank_semantico' in data
+
+
+# ---------- intención: preguntas sobre el edificio ----------
+
+def test_detectar_intencion():
+    assert orchestrator._detectar_intencion(
+        'que tipo de edificio he seleccionado') == 'edificio'
+    assert orchestrator._detectar_intencion(
+        'cuantas plantas tiene este edificio') == 'edificio'
+    assert orchestrator._detectar_intencion('hola buenas') == 'saludo'
+    assert orchestrator._detectar_intencion(
+        'ocupacion maxima permitida') == 'normativa'
+    assert orchestrator._detectar_intencion(
+        'puedo hacer una piscina') == 'normativa'
+
+
+def test_respuesta_contexto_con_datos(monkeypatch):
+    cat = {'refcat': '1234X', 'uso_principal': 'Residencial',
+           'anio_construccion': 1995,
+           'direccion': 'RUA X 1', 'superficie_construida_m2': 5000,
+           'usos_detalle': {'Residencial': 4000}}
+    monkeypatch.setattr(
+        orchestrator, '_contexto_edificio',
+        lambda *a, **k: ({
+            'municipio': 'Vigo', 'catastro': cat,
+            'resumen': {'ref_catastral': '1234X',
+                        'superficie_parcela_m2': 800},
+            'clasificacion': {'clasificacion_ley': 'SUC'},
+            'ordenanzas_params': {'ordenanza': 'U6',
+                                  'titulo': 'VIVENDA UNIFAMILIAR',
+                                  'fuente': 'pdf pág. 1'},
+            'building': {'altura': {'value': 12.0,
+                                    'data_quality': 'measured'}},
+        }, ['catastro']))
+    r = orchestrator.responder_consulta_edificio(
+        'que tipo de edificio he seleccionado', municipio='Vigo')
+    assert r['modo'] == 'contexto'
+    assert 'Residencial' in r['respuesta']
+    assert '1995' in r['respuesta']
+    assert 'U6' in r['respuesta']
+    assert '1234X' in r['respuesta']
+
+
+def test_respuesta_contexto_sin_edificio(monkeypatch):
+    monkeypatch.setattr(
+        orchestrator, '_contexto_edificio',
+        lambda *a, **k: ({'municipio': 'Vigo', 'catastro': {},
+                          'resumen': {}, 'clasificacion': {},
+                          'ordenanzas_params': {}, 'building': {}}, []))
+    r = orchestrator.responder_consulta_edificio(
+        'que tipo de edificio es', municipio='Vigo')
+    assert r['modo'] == 'contexto'
+    assert 'No hay un edificio' in r['respuesta']
