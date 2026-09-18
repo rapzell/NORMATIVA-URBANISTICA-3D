@@ -95,6 +95,47 @@ def get_inventario_planeamiento(municipio: str | None) -> dict:
         return {'data_quality': 'unavailable', 'error': str(e)}
 
 
+def check_cambio_uso(contexto: dict,
+                     altura_libre_m: float | None = None,
+                     piezas: list | None = None) -> dict:
+    """Pre-verificación NHV (Decreto 128/2023) de conversión
+    local→vivienda usando el motor de reglas verificado.
+
+    Sin datos del interior del local devuelve igualmente la lista de
+    requisitos oficiales (altura libre, acristalamiento, ventilación,
+    superficies por estancia) — nunca inventa las medidas que faltan.
+    """
+    try:
+        from src.habitabilidad_checker import (HabitabilityInput,
+                                              HabitabilityRoom,
+                                              check_habitability)
+        rooms = [HabitabilityRoom(**p) for p in (piezas or [])]
+        inp = HabitabilityInput(
+            municipio=contexto.get('municipio'),
+            tipo_operacion='cambio_uso_local_a_vivienda',
+            altura_libre_m=altura_libre_m,
+            piezas=rooms)
+        r = check_habitability(inp)
+        return {
+            'data_quality': 'official',
+            'estado_global': r.estado_global,
+            'incumplimientos': r.incumplimientos,
+            'requisitos': [{'parametro': c.parametro,
+                            'estado': c.estado,
+                            'requisito': c.requisito,
+                            'referencia': c.referencia}
+                           for c in r.comprobaciones],
+            'fuentes': r.fuentes,
+            'normativa': r.normativa,
+            'nota': ('Sin medidas del interior del local se listan los '
+                     'requisitos NHV oficiales; aportar altura libre y '
+                     'piezas (superficie/acristalamiento/ventilación) '
+                     'para la verificación concreta.'),
+        }
+    except Exception as e:
+        return {'data_quality': 'unavailable', 'error': str(e)}
+
+
 def search_normativa(query: str, ine: str | None,
                      municipio: str | None = None,
                      top_k: int = 10) -> dict:

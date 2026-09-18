@@ -222,6 +222,7 @@ def buscar(query: str, top_k: int = 8) -> list[dict]:
             'documento': c['doc_titulo'],
             'article_ref': c.get('article_ref'),
             'pagina': c.get('pagina'),
+            'chunk': c.get('chunk'),
             'score': round(score, 3),
             'extracto': _extracto(c['texto'], q_tokens),
             'texto': c['texto'],

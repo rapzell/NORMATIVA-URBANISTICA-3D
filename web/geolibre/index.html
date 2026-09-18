@@ -2354,11 +2354,31 @@ function renderChatAnswer(data) {
     }
     html += '</div>';
   }
+  const advs = data.advertencias || [];
+  if (advs.length) {
+    html += '<div class="fuentes" style="color:#d29922"><b>Advertencias de consistencia:</b>';
+    for (const a of advs) {
+      html += `<div class="fuente-item">${escapeHtml(a)}</div>`;
+    }
+    html += '</div>';
+  }
   if (data.aviso) {
     html += `<div class="fuentes" style="color:#d29922">${escapeHtml(data.aviso)}</div>`;
   }
   return html;
 }
+
+const QA_CHAT_ID = (() => {
+  try {
+    let id = localStorage.getItem('qa_chat_id');
+    if (!id) {
+      id = 'chat-' + Date.now().toString(36) + '-' +
+           Math.random().toString(36).slice(2, 10);
+      localStorage.setItem('qa_chat_id', id);
+    }
+    return id;
+  } catch (e) { return null; }
+})();
 
 async function sendChat() {
   const input = document.getElementById('chat-input');
@@ -2370,6 +2390,7 @@ async function sendChat() {
   const thinking = appendChatMsg('bot', '<span class="bubble chat-thinking">Consultando fuentes oficiales…</span>');
 
   const body = Object.assign({ pregunta: pregunta }, chatBuildingContext());
+  if (QA_CHAT_ID) body.chat_id = QA_CHAT_ID;
   try {
     // Intentar streaming SSE; si no es viable, POST normal
     let resp = await fetch(`${API}/qa/edificio/stream`, {

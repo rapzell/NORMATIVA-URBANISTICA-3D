@@ -1280,6 +1280,7 @@ class QAEdificioRequest(BaseModel):
     ref_catastral: str | None = None
     subzona: str | None = None
     top_k: int = 10
+    chat_id: str | None = None
 
 
 @app.post("/qa/edificio")
@@ -1299,7 +1300,7 @@ async def qa_edificio(req: QAEdificioRequest):
         return responder_consulta_edificio(
             req.pregunta.strip(), lon=req.lon, lat=req.lat,
             municipio=req.municipio, ref_catastral=req.ref_catastral,
-            subzona=req.subzona, top_k=req.top_k)
+            subzona=req.subzona, top_k=req.top_k, chat_id=req.chat_id)
     except Exception as e:
         logging.getLogger(__name__).warning("/qa/edificio fallo: %s", e)
         return {'pregunta': req.pregunta,
@@ -1322,26 +1323,30 @@ async def qa_edificio_stream(req: QAEdificioRequest):
     import json as _json
     from fastapi.responses import StreamingResponse
     from src.agent.orchestrator import (preparar_consulta,
-                                        finalizar_respuesta)
+                                        finalizar_respuesta,
+                                        _guardar_turno)
 
     def eventos():
         try:
             prep = preparar_consulta(
                 req.pregunta.strip(), lon=req.lon, lat=req.lat,
                 municipio=req.municipio, ref_catastral=req.ref_catastral,
-                subzona=req.subzona, top_k=req.top_k)
+                subzona=req.subzona, top_k=req.top_k,
+                chat_id=req.chat_id)
         except Exception as e:
             yield f"data: {_json.dumps({'tipo': 'error', 'error': str(e)})}\n\n"
             return
         yield 'data: ' + _json.dumps({'tipo': 'contexto',
                                       'herramientas': prep['herramientas'],
                                       'municipio': prep['ctx'].get('municipio'),
-                                      'calculo': prep['calculo']},
+                                      'calculo': prep['calculo'],
+                                      'advertencias': prep['ctx'].get('advertencias') or []},
                                      ensure_ascii=False) + '\n\n'
         fuentes = [{'id': f['id'], 'documento': f.get('documento'),
                     'referencia': f.get('referencia'),
                     'pagina': f.get('pagina'),
                     'extracto': f.get('extracto'),
+                    'url': f.get('url'),
                     'ambito': f.get('ambito')}
                    for f in prep['fragmentos']]
         yield 'data: ' + _json.dumps({'tipo': 'fuentes',
@@ -1351,6 +1356,7 @@ async def qa_edificio_stream(req: QAEdificioRequest):
         if prep.get('intencion') != 'normativa':
             final = finalizar_respuesta(
                 prep, None, False, 'respuesta de contexto')
+            _guardar_turno(prep, final)
             yield 'data: ' + _json.dumps(
                 {'tipo': 'final', 'resultado': final},
                 ensure_ascii=False) + '\n\n'
@@ -1385,6 +1391,7 @@ async def qa_edificio_stream(req: QAEdificioRequest):
                 pass
 
         final = finalizar_respuesta(prep, respuesta, llm_ok, motivo)
+        _guardar_turno(prep, final)
         yield 'data: ' + _json.dumps({'tipo': 'final', 'resultado': final},
                                      ensure_ascii=False) + '\n\n'
 
@@ -1404,8 +1411,15 @@ async def qa_health():
         'embeddings_disponibles': False,
     }
     try:
-        import sentence_transformers  # noqa: F401
-        estado['embeddings_disponibles'] = True
+        from src.rag.hybrid_search import (servicio_disponible,
+                                           cargar_embeddings)
+        estado['servicio_embeddings'] = servicio_disponible()
+        estado['embeddings_disponibles'] = cargar_embeddings() is not None
+    except Exception:
+        estado['servicio_embeddings'] = False
+    try:
+        from src.agent.memory import estado as mem_estado
+        estado['memoria'] = mem_estado()
     except Exception:
         pass
     return estado

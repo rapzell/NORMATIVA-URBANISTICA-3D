@@ -124,7 +124,7 @@ def indexar_municipio(ine_code: str, force: bool = False) -> dict:
         try:
             with open(path, encoding='utf-8') as fh:
                 idx = json.load(fh)
-            if idx.get('manifest_key') == key:
+            if idx.get('manifest_key') == key and idx.get('v') == 2:
                 return idx
         except Exception:
             pass
@@ -145,12 +145,14 @@ def indexar_municipio(ine_code: str, force: bool = False) -> dict:
                     'fichero': fich['pathesperado'],
                     'seccion': fich.get('seccion'),
                     'seccion_desc': fich.get('seccion_desc'),
+                    'url': fich.get('url'),
                     'pagina': page_no,
                     'chunk': ci,
                     'texto': chunk,
                     'tokens': _norm(chunk),
                 })
-    idx = {'ine': ine_code, 'manifest_key': key, 'chunks': chunks,
+    idx = {'ine': ine_code, 'manifest_key': key, 'v': 2,
+           'chunks': chunks,
            'ficheros': [f.get('pathesperado') for f in ficheros],
            'iddoc': manifest.get('iddoc'),
            'denominacion': manifest.get('denominacion')}

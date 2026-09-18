@@ -6,8 +6,15 @@
 # Arrancar servidor (puerto 8002)
 venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 
-# Tests completos (268 tests + 1 skip, ~30s)
+# Tests completos (~380 tests, ~30s)
 venv\Scripts\python.exe -m pytest -q --ignore=tests/test_asistente_normativa_rules.py --ignore=tests/test_evaluar_dataset_helpers.py
+
+# Microservicio de embeddings/reranker RAG (puerto 8003, entorno Python 3.13)
+venv_rag\Scripts\python.exe -m uvicorn src.rag.embedding_service:app --host 127.0.0.1 --port 8003
+# o: scripts\launch_embedding_service.cmd
+
+# Regenerar embeddings del corpus (tras cambiar datos/corpus/, requiere :8003 activo)
+venv\Scripts\python.exe scripts\precompute_embeddings.py
 
 # Tests focalizados
 venv\Scripts\python.exe -m pytest tests/test_geolibre_view.py -q
@@ -45,6 +52,13 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Asistente agéntico normativa (orquestador/herramientas/validador) | `src/agent/` |
 | Corpus normativo autonómico (Ley 2/2016, NHV, NTPU — índice por artículo) | `src/rag/corpus.py`, `datos/corpus/` |
 | Búsqueda normativa unificada (corpus + PDFs municipales, rerank opcional) | `src/rag/search.py` |
+| Sinónimos urbanísticos ES/GL + boost por tipo de pregunta | `src/rag/synonyms.py` |
+| RAG híbrido (embeddings + RRF k=60 + rerank remoto, degradable) | `src/rag/hybrid_search.py` |
+| Microservicio embeddings/reranker :8003 (Python 3.13, ALIA legal ES) | `src/rag/embedding_service.py`, `scripts/launch_embedding_service.cmd` |
+| Clasificador de intención (LLM few-shot + fallback regex) | `src/agent/intent_classifier.py` |
+| Memoria conversacional multi-turno (chat_id, TTL 30 min, RAM) | `src/agent/memory.py` |
+| Detector de contradicciones (altura medida vs ordenanza, etc.) | `src/agent/contradictions.py` |
+| Resolución parcela → ordenanza (oficial/inferida/ambigua) | `src/agent/ordinance_resolver.py` |
 | Etiquetado de calidad de datos | `src/data_quality.py` |
 | Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
@@ -129,21 +143,37 @@ seleccionado en el visor con respuestas citadas a fuentes oficiales.
 - **UI:** panel de chat en `web/geolibre/index.html` (botón "Asistente
   normativa"); usa el último edificio seleccionado como contexto.
 - **Flujo** (`orchestrator.preparar_consulta` → `finalizar_respuesta`):
-  1. Herramientas en paralelo (`src/agent/tools.py`): Catastro,
+  0. Memoria de sesión (`memory.get_session(chat_id)`): referencias
+     ("ahí", "y si…") resuelven el último edificio; historial de 3
+     turnos se inyecta en el prompt. RAM con TTL 30 min.
+  1. Intención (`intent_classifier.clasificar_intencion`): regex primero
+     (saludo/edificio/calculo fiables); el LLM few-shot solo refina el
+     bucket ambiguo "normativa" con timeout de 5 s — nunca bloquea.
+  2. Herramientas en paralelo (`src/agent/tools.py`): Catastro,
      clasificación SIOTUGA, altura medida, parámetros de ordenanza del
      PGOM, inventario municipal.
-  2. RAG (`src/rag/search.buscar_normativa`): corpus autonómico por
-     artículo + PDFs municipales, BM25 + cross-encoder opcional
-     (`sentence_transformers`, modelo ALIA legal ES si está disponible;
-     en Python 3.14 sin torch se desactiva solo).
-  3. Cálculo geométrico si la pregunta es de viabilidad de elemento
-     (piscina, pérgola…): `check_piscina_viability`.
-  4. Prompt anclado (system prompt con reglas estrictas de citación
-     `[FUENTE n]`) → `model_gateway.generate_with_fallback`.
-  5. Validación (`src/agent/validator.py`): cada `[FUENTE n]` debe
-     existir y los números citados deben aparecer en fuentes/contexto;
-     si falla → aviso "Requiere revisión humana" en la respuesta.
-  6. Sin LLM → modo heurístico: devuelve los artículos recuperados con
+  3. Resolución parcela→ordenanza (`ordinance_resolver`): código oficial
+     en atributos de zona → `oficial`; título coincidente → `inferida`;
+     varios → `ambigua`; nada → `no_resuelta` + lista de ordenanzas.
+     Nunca se inventa ni se elige entre candidatas.
+  4. Contradicciones (`contradictions.detectar_contradicciones`):
+     altura medida vs altura máx. de la ordenanza, parcela vs parcela
+     mínima, edificabilidad real vs máxima → avisos `⚠` visibles.
+  5. RAG (`src/rag/search.buscar_normativa`): sinónimos ES/GL → BM25
+     (corpus + PDFs municipales) + embeddings del microservicio :8003
+     fusionados con RRF k=60 + reranker legal ALIA remoto; sin servicio
+     queda BM25+sinónimos — nunca falla.
+  6. Cálculo: `check_piscina_viability` (ocupación) o
+     `check_cambio_uso` (NHV Decreto 128/2023 vía
+     `habitabilidad_checker` — sin medidas devuelve `no_verificable`,
+     nunca inventa).
+  7. Prompt anclado (system prompt con reglas estrictas de citación
+     `[FUENTE n]`, historial y advertencias) →
+     `model_gateway.generate_with_fallback`.
+  8. Validación (`src/agent/validator.py`): heurística de citas/números
+     + `validacion_semantica` opcional con LLM (`SEMANTIC_VALIDATION=1`,
+     solo si la heurística pasa; JSON inválido → queda la heurística).
+  9. Sin LLM → modo heurístico: devuelve los artículos recuperados con
      el cálculo — nunca calla ni inventa.
 - **Corpus** (`src/rag/corpus.py`): documentos en `datos/corpus/`
   declarados en `_manifest.json` (LSG consolidada enero 2026, NHV
@@ -156,8 +186,10 @@ seleccionado en el visor con respuestas citadas a fuentes oficiales.
   `MODEL_API_KEY`; modelos gratuitos por defecto por proveedor;
   `MODEL_FALLBACK_CHAIN` ordena el failover; `stream_with_fallback`
   da streaming OpenAI-compatible para el SSE.
-- **Tests:** `tests/test_agent_orchestrator.py` (12 tests: segmentación,
-  validador, cálculo piscina, modos llm/heurístico, endpoints, SSE).
+- **Tests:** `tests/test_agent_orchestrator.py` (orquestador, validador,
+  endpoints, SSE) + `tests/test_agent_mejoras.py` (intención, memoria,
+  sinónimos, RRF, contradicciones, cambio de uso, resolutor de
+  ordenanza, validación semántica). Herméticos: sin red ni :8003.
 
 ### Preverificación de habitabilidad (`src/habitabilidad_checker.py`)
 

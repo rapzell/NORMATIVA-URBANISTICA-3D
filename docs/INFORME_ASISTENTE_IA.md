@@ -107,14 +107,18 @@ Panel de chat con: contexto del último edificio seleccionado (municipio/subzona
 
 ## 9. Limitaciones conocidas (honestas)
 
-1. **Parcela → ordenanza sin mapeo automático.** `3CLAS` da SUC pero no la subzona; los parámetros están en PDFs. Hoy el bot lista las ordenanzas extraídas y pide indicarla — es selector asistido, no resolución. *Caso observado: edificio de 23 m/380 viviendas asociado a U6 "vivienda unifamiliar" (máx 7 m) — posible desajuste a verificar.*
-2. **RAG lexical, no semántico.** BM25 funciona pero sin embeddings ni reranker en Python 3.14; preguntas con sinónimos ("azotea" vs "cubierta") pueden recuperar poco.
-3. **Sin memoria multi-turno.** Cada pregunta es independiente; no hay historial conversacional ni correferencias ("y en la de al lado").
-4. **Intención por regex.** Cubre los patrones habituales pero es frágil ante formulaciones nuevas; un clasificador ligero o el propio LLM decidiría mejor.
-5. **Validador heurístico.** Verifica citas y números, pero no la corrección semántica de las afirmaciones.
+> **Actualización**: los puntos 1-5 y 8 quedaron cubiertos por la
+> implementación de la guía del experto (sección 12). Se conservan
+> aquí como estado residual.
+
+1. **Parcela → ordenanza**: resuelta parcialmente — `ordinance_resolver` intenta código oficial en atributos de zona (`oficial`), coincidencia por título (`inferida`, siempre etiquetada "verificar"), y marca `ambigua`/`no_resuelta` sin elegir. Lo que no se puede resolver oficialmente sigue pidiendo selección manual. Residual: depende de que la zona SIOTUGA lleve código/denominación compatible.
+2. **RAG híbrido activo**: BM25 + sinónimos ES/GL + embeddings ALIA (561 chunks precalculados en `datos/rag/`) + RRF k=60 + reranker legal remoto. Si el microservicio :8003 está caído degrada a BM25+sinónimos sin fallar.
+3. **Memoria multi-turno**: `chat_id` (frontend lo persiste en localStorage), ventana de 3 turnos, TTL 30 min, correferencias ("ahí", "y si…") que reutilizan el edificio anterior. RAM; producción → Redis.
+4. **Intención**: regex para casos fiables + LLM few-shot que refina el bucket ambiguo "normativa" con timeout de 5 s.
+5. **Validación**: heurística de citas/números + validación semántica opcional con LLM (`SEMANTIC_VALIDATION=1`, solo si la heurística pasa; fallos → queda la heurística).
 6. **Tier gratuito LLM.** Rate limits variables (429), latencias ocasionales altas; la cadena de modelos lo absorbe pero el último respaldo es lento.
 7. **Corpus autonómico = 3 documentos.** Falta Reglamento LSG, CTE relevante, y el PGOM solo cubre municipios con PDFs descargados.
-8. **Cálculo limitado.** Solo piscina/elementos auxiliares; no hay evaluación de cambio de uso, subdivisiones, núcleos, etc.
+8. **Calculadores**: piscina (ocupación) + cambio de uso NHV vía `habitabilidad_checker` (sin medidas → `no_verificable`, lista requisitos oficiales). Residual: ocupación/edificabilidad/retranqueos genéricos pendientes.
 9. **Sin MCP.** Herramientas son funciones Python; interoperabilidad futura pendiente.
 10. **`data_quality` de respuesta agregada** se reduce a `official/unavailable` según haya fragmentos — no refleja la mezcla real de calidades.
 
@@ -149,14 +153,55 @@ Panel de chat con: contexto del último edificio seleccionado (municipio/subzona
 | P2.4 | **Caché de respuestas** por (refcat, subzona, pregunta normalizada) | Bajo | Respuestas instantáneas repetidas |
 | P2.5 | **Generación de informe desde el chat**: "expórtame esta consulta" → sección del informe de viabilidad | Medio | Cierra el flujo arquitecto→cliente |
 
-## 11. Estado verificado (2026-09-18)
+## 11. Estado verificado
 
-- 351 tests pasan, 1 skip. 15 tests específicos del asistente.
-- `/qa/health`: provider `openrouter`, modelo cadena rápida, corpus 561 chunks, rerank `false`.
-- En vivo: contexto < 1 s · normativa LLM ~14-30 s con citas validadas · streaming SSE con tokens reales.
-- Commits: `ff2dfe0` (asistente completo) → `1c11ee5`, `3adcd4c`, `84bde50`, `ed2a6c1` (iteraciones de intención, streaming, velocidad y clave).
+- 386 tests pasan (49 del asistente: orquestador + mejoras). Herméticos: sin red, sin :8003.
+- `/qa/health`: provider `openrouter`, `servicio_embeddings: true`, `embeddings_disponibles: true`, `memoria` activa.
+- Microservicio :8003 (`venv_rag`, Python 3.13): embedder + reranker ALIA legal ES cargados y respondiendo.
+- En vivo verificado: contexto <1 s · multi-turno con correferencia ("y ahí puedo hacer una piscina" sin coordenadas → resolvió la parcela previa) · cambio de uso → `check_cambio_uso` NHV con `no_verificable` · SSE `contexto→fuentes→final` sin tokens en preguntas de contexto.
+- Commits: `ff2dfe0` (asistente completo) → `1c11ee5`, `3adcd4c`, `84bde50`, `ed2a6c1` → implementación guía del experto (este cambio).
 
-## 12. Preguntas abiertas para el experto
+## 12. Guía del experto implementada — módulos nuevos
+
+La guía del experto quedó implementada al completo con arquitectura degradable por capas:
+
+```
+chat_id → memoria de sesión (3 turnos, TTL 30 min)
+    ↓
+clasificar_intencion (regex fiable → LLM few-shot solo si ambiguo, 5 s)
+    ↓
+herramientas en paralelo (Catastro, SIOTUGA, altura, ordenanzas, inventario)
+    ↓
+resolver_ordenanza (oficial > inferida > ambigua > no_resuelta)
+    ↓
+detectar_contradicciones (⚠ altura medida vs ordenanza, parcela mínima…)
+    ↓
+RAG híbrido: sinónimos → BM25 + embeddings :8003 → RRF k=60 → reranker ALIA
+    ↓
+calculador (piscina | cambio de uso NHV → no_verificable sin medidas)
+    ↓
+prompt (contexto + fuentes + historial + advertencias) → LLM
+    ↓
+validar_respuesta (citas+números) → validacion_semantica (opt., env-gated)
+```
+
+| Módulo | Fichero | Degradación |
+|---|---|---|
+| Intención | `src/agent/intent_classifier.py` | LLM lento/falla → regex, 0 coste extra |
+| Memoria | `src/agent/memory.py` | sin `chat_id` → comportamiento anterior |
+| Sinónimos | `src/rag/synonyms.py` | falla → query original |
+| Híbrido | `src/rag/hybrid_search.py` + `embedding_service.py` (:8003, `venv_rag` Py3.13) | servicio caído → BM25+sinónimos |
+| Ordenanza | `src/agent/ordinance_resolver.py` | sin resolución → lista oficial + petición manual |
+| Contradicciones | `src/agent/contradictions.py` | siempre activo, solo avisa |
+| Cambio de uso | `tools.check_cambio_uso` → `habitabilidad_checker` | sin medidas → `no_verificable` + requisitos |
+| Validación semántica | `validator.validacion_semantica` | `SEMANTIC_VALIDATION=1`; fallos → heurística |
+| Citas clicables | `#page=N` en `url` de cada fuente (corpus y municipales) | sin URL → cita sin enlace |
+
+**Operación del servicio de embeddings**: `scripts\launch_embedding_service.cmd` (puerto 8003). Tras cambiar `datos/corpus/`: `venv\Scripts\python.exe scripts\precompute_embeddings.py` — la invalidación es por sha256 del manifiesto.
+
+**Nota honesta sobre la intención LLM**: el few-shot solo se invoca cuando el regex cae en el bucket ambiguo "normativa" — los casos fiables (saludo, contexto, cálculo) no pagan la latencia de una llamada al tier gratuito.
+
+## 13. Preguntas abiertas para el experto
 
 1. ¿La asociación parcela→ordenanza debe resolverse con datos vectoriales oficiales (esfuerzo alto) o basta el selector asistido + verificación profesional?
 2. ¿Qué 20-30 preguntas reales haría un arquitecto de AC8? (para la batería de evaluación P0.4)

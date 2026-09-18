@@ -28,7 +28,12 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from src.agent import tools
-from src.agent.validator import validar_respuesta, anotar_respuesta
+from src.agent.validator import (validar_respuesta, anotar_respuesta,
+                                 validacion_semantica)
+from src.agent.contradictions import detectar_contradicciones
+from src.agent.intent_classifier import (
+    clasificar_intencion, _detectar_intencion_regex)
+from src.agent.memory import get_session
 
 SYSTEM_PROMPT = """Eres un asistente experto en normativa urbanística de Galicia, especializado
 en la Ley 2/2016 del Suelo, el Decreto 128/2023 de habitabilidad (NHV), las
@@ -78,14 +83,14 @@ _SALUDO_RE = re.compile(
     r'qu[eé]\s+tal|hey|hi)\b', re.I)
 
 
+_CAMBIO_USO_RE = re.compile(
+    r'cambio\s+de\s+uso|vivienda|habitab|local\s+a\s+vivienda|'
+    r'convertir.*(vivienda|local)|vivenda|rehabilitar', re.I)
+
+
 def _detectar_intencion(pregunta: str) -> str:
-    """'edificio' | 'saludo' | 'normativa'."""
-    q = pregunta or ''
-    if _SALUDO_RE.match(q):
-        return 'saludo'
-    if _EDIFICIO_RE.search(q):
-        return 'edificio'
-    return 'normativa'
+    """'edificio' | 'saludo' | 'calculo' | 'normativa' (regex)."""
+    return _detectar_intencion_regex(pregunta)
 
 
 def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
@@ -139,7 +144,7 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
     if ord_p.get('ordenanza'):
         partes.append(f"**Ordenanza**: {ord_p['ordenanza']}"
                       + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
-                      + f" — oficial, {ord_p.get('fuente')}")
+                      + _origen_ordenanza(ord_p, ctx))
     elif ord_p.get('ordenanzas_disponibles'):
         codigos = ', '.join(ord_p['ordenanzas_disponibles'][:14])
         partes.append(
@@ -160,6 +165,21 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         out.append('')
         out.append('*No disponible: ' + ', '.join(faltan) + '.*')
     return '\n'.join(out)
+
+
+def _origen_ordenanza(ord_p: dict, ctx: dict) -> str:
+    """Etiqueta de procedencia de la ordenanza resuelta."""
+    res = ctx.get('ordenanza_resolucion') or {}
+    est = res.get('estado')
+    if est == 'inferida':
+        origen = res.get('origen') or 'coincidencia automática'
+        return (f" — **inferida** ({origen}); verificar en la ficha "
+                'urbanística')
+    if est == 'usuario':
+        return ' — seleccionada por el usuario'
+    if est == 'oficial':
+        return f" — oficial ({res.get('origen') or ord_p.get('fuente')})"
+    return f" — oficial, {ord_p.get('fuente')}"
 
 
 _SUELO_TEMA_RE = re.compile(
@@ -200,13 +220,21 @@ def _respuesta_suelo(ctx: dict) -> str:
     if ord_p.get('ordenanza'):
         out.append(f"**Ordenanza aplicable**: {ord_p['ordenanza']}"
                    + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
-                   + f" — oficial, {ord_p.get('fuente')}")
+                   + _origen_ordenanza(ord_p, ctx))
     elif ord_p.get('ordenanzas_disponibles'):
-        codigos = ', '.join(ord_p['ordenanzas_disponibles'][:14])
-        out.append("**Ordenanza aplicable**: no determinada "
-                   "automáticamente — disponibles en el municipio: "
-                   f"{codigos} (indícala, p.ej. «subzona U6», "
-                   "o selecciónala en el visor)")
+        res = ctx.get('ordenanza_resolucion') or {}
+        if res.get('estado') == 'ambigua' and res.get('candidatas'):
+            cands = ', '.join(res['candidatas'])
+            out.append("**Ordenanza aplicable**: ambigua — los datos "
+                       f"oficiales de la zona son compatibles con "
+                       f"varias ({cands}); indica la correcta, p.ej. "
+                       "«subzona U6»")
+        else:
+            codigos = ', '.join(ord_p['ordenanzas_disponibles'][:14])
+            out.append("**Ordenanza aplicable**: no determinada "
+                       "automáticamente — disponibles en el municipio: "
+                       f"{codigos} (indícala, p.ej. «subzona U6», "
+                       "o selecciónala en el visor)")
     extras = []
     if res.get('superficie_parcela_m2'):
         extras.append(f"parcela {res['superficie_parcela_m2']:,.0f} m²"
@@ -298,6 +326,30 @@ def _contexto_edificio(lon: float | None, lat: float | None,
     if ords.get('ordenanzas'):
         ctx['ordenanzas_params']['ordenanzas_disponibles'] = \
             sorted(ords['ordenanzas'].keys())
+
+    # Resolución automática parcela → ordenanza (solo sin selección del
+    # usuario). Rellena parámetros marcando siempre el origen y la
+    # confianza — una inferencia nunca se presenta como dato oficial.
+    if ords.get('ordenanza'):
+        ctx['ordenanza_resolucion'] = {
+            'estado': 'usuario' if subzona else 'oficial',
+            'ordenanza': ords['ordenanza'], 'confianza': 'alta'}
+    elif not subzona and ords.get('ordenanzas'):
+        try:
+            from src.agent.ordinance_resolver import resolver_ordenanza
+            res = resolver_ordenanza(ctx)
+            ctx['ordenanza_resolucion'] = res
+            if res.get('ordenanza') and res['estado'] in ('oficial',
+                                                        'inferida'):
+                op = ctx['ordenanzas_params']
+                op['ordenanza'] = res['ordenanza']
+                op['titulo'] = op.get('titulo') or res.get('titulo')
+                for k, v in (res.get('params') or {}).items():
+                    op[k] = v
+                op['resolucion'] = res['estado']
+                op['origen_resolucion'] = res.get('origen')
+        except Exception:
+            pass
     return ctx, usadas
 
 
@@ -310,7 +362,7 @@ def _fmt_dq(d: dict | None, key: str | None = None) -> str:
 
 
 def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
-            calculo: dict | None) -> str:
+            calculo: dict | None, historial: str = '') -> str:
     res = ctx.get('resumen') or {}
     clas = ctx.get('clasificacion') or {}
     ord_p = ctx.get('ordenanzas_params') or {}
@@ -356,9 +408,14 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
     elif ctx.get('subzona'):
         lineas.append(f"- Subzona declarada: {ctx['subzona']} "
                       '(sin parámetros oficiales extraídos — indicarlo)')
+    if ctx.get('advertencias'):
+        lineas += ['', 'ADVERTENCIAS DE CONSISTENCIA (verificar antes de afirmar):']
+        lineas += [f"- {a}" for a in ctx['advertencias']]
     if calculo:
         lineas += ['', 'CÁLCULO PREVIO DISPONIBLE (verificado por el sistema):',
                    str(calculo)]
+    if historial:
+        lineas += ['', historial]
     lineas += ['', 'FUENTES NORMATIVAS RECUPERADAS:']
     for f in fragmentos:
         lineas.append(
@@ -415,7 +472,8 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                       municipio: str | None = None,
                       ref_catastral: str | None = None,
                       subzona: str | None = None,
-                      top_k: int = 10) -> dict:
+                      top_k: int = 10,
+                      chat_id: str | None = None) -> dict:
     """Fase 1-4: contexto + RAG + cálculo + prompt (sin invocar el LLM).
 
     Devuelve todo lo necesario para generar la respuesta — lo usa tanto
@@ -423,11 +481,29 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     emitir el contexto y las fuentes antes de los tokens.
     """
     from app.main import _get_ine_for_municipio
+
+    mem = get_session(chat_id)
+    if mem and mem.usa_referencia(pregunta) and mem.last_building:
+        lb = mem.last_building
+        lon = lon if lon is not None else lb.get('lon')
+        lat = lat if lat is not None else lb.get('lat')
+        municipio = municipio or lb.get('municipio')
+        subzona = subzona or lb.get('subzona')
+        ref_catastral = ref_catastral or lb.get('refcat')
     ine = _get_ine_for_municipio(municipio) if municipio else None
 
-    intencion = _detectar_intencion(pregunta)
-    ctx, herramientas = _contexto_edificio(
-        lon, lat, ine, municipio, subzona, ref_catastral)
+    # Intención con LLM few-shot en paralelo con las herramientas de
+    # contexto — si el proveedor no responde en el timeout corto,
+    # clasificar_intencion cae al regex sin coste de latencia.
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut_int = ex.submit(clasificar_intencion, pregunta, True)
+        ctx, herramientas = _contexto_edificio(
+            lon, lat, ine, municipio, subzona, ref_catastral)
+        intencion = fut_int.result()
+
+    ctx['punto'] = {'lon': lon, 'lat': lat}
+
+    ctx['advertencias'] = detectar_contradicciones(ctx)
 
     # Preguntas de contexto/saludo: no hace falta RAG ni LLM — la
     # respuesta sale directamente de los datos de las herramientas.
@@ -449,11 +525,16 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     if _PISCINA_RE.search(pregunta or ''):
         calculo = tools.check_piscina_viability(ctx)
         herramientas.append('check_piscina_viability')
+    elif _CAMBIO_USO_RE.search(pregunta or ''):
+        calculo = tools.check_cambio_uso(ctx)
+        herramientas.append('check_cambio_uso')
 
-    prompt = _prompt(pregunta, ctx, fragmentos, calculo)
+    historial = mem.build_history_context() if mem else ''
+    prompt = _prompt(pregunta, ctx, fragmentos, calculo,
+                     historial=historial)
     return {'ctx': ctx, 'fragmentos': fragmentos, 'calculo': calculo,
             'prompt': prompt, 'herramientas': herramientas, 'rag': rag,
-            'pregunta': pregunta, 'intencion': intencion}
+            'pregunta': pregunta, 'intencion': intencion, 'mem': mem}
 
 
 def finalizar_respuesta(prep: dict, respuesta: str | None,
@@ -476,12 +557,17 @@ def finalizar_respuesta(prep: dict, respuesta: str | None,
         modo = 'contexto'
     elif llm_ok and respuesta:
         validacion = validar_respuesta(respuesta, fragmentos, ctx)
+        validacion = validacion_semantica(respuesta, fragmentos,
+                                          validacion)
         respuesta = anotar_respuesta(respuesta, validacion)
         modo = 'llm'
     else:
         respuesta = _respuesta_heuristica(fragmentos, calculo, motivo,
                                         pregunta=prep['pregunta'])
         modo = 'heuristico'
+
+    if ctx.get('advertencias'):
+        respuesta += ('\n\n> ⚠ ' + '\n> '.join(ctx['advertencias']))
 
     fuentes_pub = [{
         'id': f['id'],
@@ -512,6 +598,7 @@ def finalizar_respuesta(prep: dict, respuesta: str | None,
         },
         'calculo': calculo,
         'validacion': validacion,
+        'advertencias': ctx.get('advertencias') or [],
         'herramientas': prep['herramientas'],
         'rag': {'n_corpus': rag.get('n_corpus'),
                 'n_municipal': rag.get('n_municipal'),
@@ -528,16 +615,19 @@ def responder_consulta_edificio(pregunta: str, lon: float | None = None,
                                 municipio: str | None = None,
                                 ref_catastral: str | None = None,
                                 subzona: str | None = None,
-                                top_k: int = 10) -> dict:
+                                top_k: int = 10,
+                                chat_id: str | None = None) -> dict:
     """Consulta normativa con contexto de edificio — flujo completo."""
     prep = preparar_consulta(pregunta, lon, lat, municipio,
-                             ref_catastral, subzona, top_k)
+                             ref_catastral, subzona, top_k, chat_id)
 
     respuesta = None
     llm_ok = False
     motivo = 'sin proveedor LLM configurado'
-    if prep.get('intencion') != 'normativa':
-        return finalizar_respuesta(prep, respuesta, llm_ok, motivo)
+    if prep.get('intencion') in ('edificio', 'saludo'):
+        final = finalizar_respuesta(prep, respuesta, llm_ok, motivo)
+        _guardar_turno(prep, final)
+        return final
     try:
         from src.model_gateway import generate_with_fallback
         ans = generate_with_fallback(prep['prompt'], None)
@@ -549,4 +639,26 @@ def responder_consulta_edificio(pregunta: str, lon: float | None = None,
     except Exception as e:
         motivo = f'error LLM: {e}'
 
-    return finalizar_respuesta(prep, respuesta, llm_ok, motivo)
+    final = finalizar_respuesta(prep, respuesta, llm_ok, motivo)
+    _guardar_turno(prep, final)
+    return final
+
+
+def _guardar_turno(prep: dict, final: dict) -> None:
+    """Actualiza la memoria de sesión con el turno y el edificio."""
+    mem = prep.get('mem')
+    if not mem:
+        return
+    try:
+        ctx = prep.get('ctx') or {}
+        res = ctx.get('resumen') or {}
+        punto = ctx.get('punto') or {}
+        mem.last_building = {
+            'lon': punto.get('lon'), 'lat': punto.get('lat'),
+            'municipio': ctx.get('municipio'),
+            'subzona': ctx.get('subzona'),
+            'refcat': res.get('ref_catastral'),
+        }
+        mem.add_turn(prep['pregunta'], final.get('respuesta') or '')
+    except Exception:
+        pass

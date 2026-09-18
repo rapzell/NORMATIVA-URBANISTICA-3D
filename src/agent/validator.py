@@ -76,8 +76,74 @@ def validar_respuesta(respuesta: str, fuentes: list[dict],
 def anotar_respuesta(respuesta: str, validacion: dict) -> str:
     """Añade la advertencia de revisión si la validación falló."""
     if validacion.get('requiere_revision'):
+        detalle = '; '.join(validacion.get('errores') or []) \
+            or 'afirmaciones sin respaldo según la validación semántica'
         aviso = ('\n\n> ⚠ **Requiere revisión humana**: se detectaron citas '
                  'sin respaldo en las fuentes recuperadas '
-                 f"({'; '.join(validacion['errores'])}).")
+                 f"({detalle}).")
         return respuesta + aviso
     return respuesta
+
+
+_SEMANTIC_PROMPT = """Verifica si esta respuesta de un asistente de normativa urbanística contiene afirmaciones NO respaldadas por las fuentes proporcionadas.
+
+RESPUESTA:
+{respuesta}
+
+FUENTES:
+{fuentes}
+
+Revisa cada afirmación normativa o numérica de la respuesta. Una afirmación está respaldada si el dato aparece literalmente en las fuentes o es una consecuencia aritmética directa de ellas.
+Responde SOLO con JSON válido: {{"valida": true/false, "afirmaciones_sin_respaldo": ["..."]}}"""
+
+
+def validacion_semantica(respuesta: str, fuentes: list[dict],
+                         validacion_heuristica: dict) -> dict:
+    """Segunda pasada opcional con LLM (``SEMANTIC_VALIDATION=1``).
+
+    Solo corre si la heurística ya pasó — evita doble coste en
+    respuestas ya marcadas. Si el LLM falla, tarda o devuelve JSON
+    inválido, devuelve la validación heurística intacta: la
+    degradación es siempre hacia el resultado conocido.
+    """
+    import json
+    import os
+    if os.getenv('SEMANTIC_VALIDATION', '0').lower() not in ('1', 'true', 'si'):
+        return validacion_heuristica
+    if validacion_heuristica.get('requiere_revision'):
+        return validacion_heuristica
+    try:
+        fuentes_txt = '\n'.join(
+            f"[{f.get('id')}] {f.get('documento')} "
+            f"{f.get('referencia') or ''} pág.{f.get('pagina')}: "
+            f"{(f.get('extracto') or f.get('texto') or '')[:600]}"
+            for f in fuentes[:8])
+        from src.model_gateway import _iter_provider_attempts, \
+            _provider_attempt
+        proveedores = [p for p in _iter_provider_attempts()
+                       if p != 'local']
+        if not proveedores:
+            return validacion_heuristica
+        raw = _provider_attempt(
+            proveedores[0],
+            _SEMANTIC_PROMPT.format(respuesta=respuesta[:4000],
+                                    fuentes=fuentes_txt),
+            30.0)
+        m = re.search(r'\{.*\}', raw or '', re.S)
+        data = json.loads(m.group(0)) if m else None
+        if not isinstance(data, dict) or 'valida' not in data:
+            return validacion_heuristica
+        out = dict(validacion_heuristica)
+        out['semantica'] = {
+            'valida': bool(data.get('valida')),
+            'afirmaciones_sin_respaldo':
+                data.get('afirmaciones_sin_respaldo') or [],
+        }
+        if not data.get('valida'):
+            out['requiere_revision'] = True
+            out['avisos'] = out.get('avisos', []) + [
+                'Validación semántica: afirmaciones sin respaldo: '
+                + '; '.join(out['semantica']['afirmaciones_sin_respaldo'][:5])]
+        return out
+    except Exception:
+        return validacion_heuristica
