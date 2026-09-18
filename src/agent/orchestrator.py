@@ -58,15 +58,19 @@ _PISCINA_RE = re.compile(
 # con los datos de las herramientas (Catastro, SIOTUGA, altura), no con
 # fragmentos normativos.
 _EDIFICIO_RE = re.compile(
-    r'(qu[eé]\s+(tipo|clase)\s+de\s+edificio|qu[eé]\s+edificio|'
-    r'edificio\s+seleccionado|qu[eé]\s+he\s+seleccionado|'
-    r'qu[eé]\s+es\s+esto|qu[eé]\s+es\s+este|uso\s+del?\s+edificio|'
-    r'a\s+qu[eé]\s+se\s+dedica|de\s+qu[eé]\s+a[ñn]o\s+es|'
+    r'(qu[eé]\s+(tipo|clase)\s+de\s+(edificio|suelo|parcela|terreno)|'
+    r'qu[eé]\s+(edificio|suelo|parcela|terreno)|'
+    r'(edificio|parcela|suelo)\s+seleccionado|qu[eé]\s+he\s+seleccionado|'
+    r'qu[eé]\s+es\s+esto|qu[eé]\s+es\s+este|uso\s+del?\s+(edificio|suelo|parcela)|'
+    r'clasificaci[oó]n\s+(del?\s+)?(suelo|parcela|urban[ií]stica)|'
+    r'categor[ií]a\s+del?\s+suelo|a\s+qu[eé]\s+se\s+dedica|'
+    r'de\s+qu[eé]\s+a[ñn]o\s+es|'
     r'cu[aá]ndo\s+se\s+construy[óo]|cu[aá]nta?s?\s+plantas?\s+tiene|'
     r'cu[aá]ntos?\s+pisos|direcci[oó]n\s+del?\s+edificio|'
     r'referencia\s+catastral|superficie\s+de\s+la\s+parcela|'
     r'cu[aá]nto\s+(mide|ocupa)|qu[eé]\s+superficie|qu[eé]\s+hay\s+aqu[ií]|'
     r'qu[eé]\s+clasificaci[oó]n|en\s+qu[eé]\s+zona\s+est[aá]|'
+    r'qu[eé]\s+ordenanza|qu[eé]\s+normativa\s+se\s+aplica|'
     r'qu[eé]\s+datos\s+tienes|qu[eé]\s+sabes\s+de)', re.I)
 
 _SALUDO_RE = re.compile(
