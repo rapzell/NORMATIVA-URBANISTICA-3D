@@ -54,6 +54,9 @@ datos/*
 !datos/subzonas_piloto.geojson
 !datos/ordenanzas/
 !datos/ordenanzas/_esquema.json
+!datos/corpus/
+datos/corpus/*
+!datos/corpus/_manifest.json
  
 # Auto: excluir artefactos demo y pesados
 exports/

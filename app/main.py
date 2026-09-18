@@ -1272,6 +1272,137 @@ async def qa_verbose(req: QARequest):
         return QAResponseVerbose(respuesta=payload["respuesta"], diag=payload["diag"])
 
 
+class QAEdificioRequest(BaseModel):
+    pregunta: str
+    lon: float | None = None
+    lat: float | None = None
+    municipio: str | None = None
+    ref_catastral: str | None = None
+    subzona: str | None = None
+    top_k: int = 10
+
+
+@app.post("/qa/edificio")
+async def qa_edificio(req: QAEdificioRequest):
+    """Asistente agéntico de normativa con contexto de edificio.
+
+    Reúne Catastro + SIOTUGA + altura medida + ordenanzas del PGOM,
+    recupera fragmentos del corpus normativo (Ley 2/2016, NHV, NTPU)
+    y de los PDFs municipales, genera la respuesta con el LLM
+    configurado y la valida contra las fuentes. Si todos los LLM
+    fallan devuelve el modo heurístico con los artículos recuperados.
+    """
+    if not req.pregunta or not req.pregunta.strip():
+        raise HTTPException(status_code=400, detail="Campo 'pregunta' requerido")
+    from src.agent.orchestrator import responder_consulta_edificio
+    try:
+        return responder_consulta_edificio(
+            req.pregunta.strip(), lon=req.lon, lat=req.lat,
+            municipio=req.municipio, ref_catastral=req.ref_catastral,
+            subzona=req.subzona, top_k=req.top_k)
+    except Exception as e:
+        logging.getLogger(__name__).warning("/qa/edificio fallo: %s", e)
+        return {'pregunta': req.pregunta,
+                'respuesta': 'El asistente no pudo completar la consulta. '
+                             'Inténtelo de nuevo o use /normativa/consulta.',
+                'modo': 'error', 'error': str(e),
+                'data_quality': 'unavailable'}
+
+
+@app.post("/qa/edificio/stream")
+async def qa_edificio_stream(req: QAEdificioRequest):
+    """Versión SSE de /qa/edificio: emite contexto, fuentes y tokens.
+
+    Eventos: ``contexto`` → ``fuentes`` → ``token``* → ``final``.
+    Si ningún proveedor soporta streaming, el modo heurístico llega
+    como un único evento ``token`` con la respuesta completa.
+    """
+    if not req.pregunta or not req.pregunta.strip():
+        raise HTTPException(status_code=400, detail="Campo 'pregunta' requerido")
+    import json as _json
+    from fastapi.responses import StreamingResponse
+    from src.agent.orchestrator import (preparar_consulta,
+                                        finalizar_respuesta)
+
+    def eventos():
+        try:
+            prep = preparar_consulta(
+                req.pregunta.strip(), lon=req.lon, lat=req.lat,
+                municipio=req.municipio, ref_catastral=req.ref_catastral,
+                subzona=req.subzona, top_k=req.top_k)
+        except Exception as e:
+            yield f"data: {_json.dumps({'tipo': 'error', 'error': str(e)})}\n\n"
+            return
+        yield 'data: ' + _json.dumps({'tipo': 'contexto',
+                                      'herramientas': prep['herramientas'],
+                                      'municipio': prep['ctx'].get('municipio'),
+                                      'calculo': prep['calculo']},
+                                     ensure_ascii=False) + '\n\n'
+        fuentes = [{'id': f['id'], 'documento': f.get('documento'),
+                    'referencia': f.get('referencia'),
+                    'pagina': f.get('pagina'),
+                    'extracto': f.get('extracto'),
+                    'ambito': f.get('ambito')}
+                   for f in prep['fragmentos']]
+        yield 'data: ' + _json.dumps({'tipo': 'fuentes',
+                                      'fuentes': fuentes},
+                                     ensure_ascii=False) + '\n\n'
+
+        respuesta, llm_ok, motivo = None, False, 'sin proveedor LLM'
+        try:
+            from src.model_gateway import stream_with_fallback
+            provider, gen = stream_with_fallback(prep['prompt'])
+            if gen is not None:
+                partes = []
+                for tok in gen:
+                    partes.append(tok)
+                    yield 'data: ' + _json.dumps(
+                        {'tipo': 'token', 'token': tok},
+                        ensure_ascii=False) + '\n\n'
+                respuesta = ''.join(partes).strip()
+                llm_ok = bool(respuesta)
+                if not llm_ok:
+                    motivo = 'stream vacío'
+            else:
+                motivo = 'sin proveedor con streaming'
+        except Exception as e:
+            motivo = f'error stream: {e}'
+        if not llm_ok:
+            try:
+                from src.model_gateway import generate_with_fallback
+                ans = generate_with_fallback(prep['prompt'], None)
+                if ans and 'No ha sido posible' not in ans:
+                    respuesta, llm_ok = ans.strip(), True
+            except Exception:
+                pass
+
+        final = finalizar_respuesta(prep, respuesta, llm_ok, motivo)
+        yield 'data: ' + _json.dumps({'tipo': 'final', 'resultado': final},
+                                     ensure_ascii=False) + '\n\n'
+
+    return StreamingResponse(eventos(), media_type='text/event-stream')
+
+
+@app.get("/qa/health")
+async def qa_health():
+    """Estado del stack del asistente: LLM, índices RAG y reranker."""
+    from src.model_gateway import provider_status
+    from src.rag import corpus
+    from src.rag.search import rerank_disponible
+    estado = {
+        'llm': provider_status(),
+        'corpus': corpus.estado_corpus(),
+        'rerank_semantico': rerank_disponible(),
+        'embeddings_disponibles': False,
+    }
+    try:
+        import sentence_transformers  # noqa: F401
+        estado['embeddings_disponibles'] = True
+    except Exception:
+        pass
+    return estado
+
+
 @app.post("/zoning/analyze")
 async def zoning_analyze(inp: ZoneInput):
     try:

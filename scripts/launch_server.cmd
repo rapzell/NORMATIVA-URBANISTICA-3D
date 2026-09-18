@@ -23,11 +23,15 @@ set LOG_LEVEL=info
 
 REM Perfil de modelo local para el asistente IA (fast|balanced). Se usa como fallback o modo local.
 set MODEL_PROFILE=balanced
-REM Gateway IA configurable. Puedes usar openrouter, groq, gemini, mistral, cerebras, openai, ollama o local.
+REM Gateway IA multi-proveedor del asistente agéntico (/qa/edificio).
+REM Cada proveedor tiene su propia clave y modelo por defecto (gratuitos):
 REM set MODEL_PROVIDER=openrouter
-REM set MODEL_NAME=meta-llama/llama-3.3-70b-instruct:free
-REM set MODEL_API_KEY=tu_clave
-REM set MODEL_FALLBACK_CHAIN=groq,gemini,local
+REM set OPENROUTER_API_KEY=tu_clave_openrouter
+REM set GROQ_API_KEY=tu_clave_groq
+REM set GEMINI_API_KEY=tu_clave_gemini
+REM set MISTRAL_API_KEY=tu_clave_mistral
+REM set MODEL_FALLBACK_CHAIN=openrouter,groq,gemini,mistral
+REM (Alternativa compartida: MODEL_API_KEY + MODEL_NAME aplican a todos)
 REM Opcional: hilos y contexto del modelo GGUF (ajustables según CPU)
 set GGUF_THREADS=4
 set GGUF_CONTEXT=2048

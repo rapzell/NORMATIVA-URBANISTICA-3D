@@ -13,11 +13,11 @@ TIMEOUT_S = float(os.getenv("TIMEOUT_S", "45"))
 
 _OPENAI_COMPAT_PRESETS: Dict[str, Dict[str, str]] = {
     "openai": {"base_url": "", "model_env": "OPENAI_MODEL", "api_key_env": "OPENAI_API_KEY"},
-    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
-    "groq": {"base_url": "https://api.groq.com/openai/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
-    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
-    "mistral": {"base_url": "https://api.mistral.ai/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
-    "cerebras": {"base_url": "https://api.cerebras.ai/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model_env": "OPENROUTER_MODEL", "api_key_env": "OPENROUTER_API_KEY", "default_model": "meta-llama/llama-3.3-70b-instruct:free"},
+    "groq": {"base_url": "https://api.groq.com/openai/v1", "model_env": "GROQ_MODEL", "api_key_env": "GROQ_API_KEY", "default_model": "llama-3.1-8b-instant"},
+    "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model_env": "GEMINI_MODEL", "api_key_env": "GEMINI_API_KEY", "default_model": "gemini-2.0-flash"},
+    "mistral": {"base_url": "https://api.mistral.ai/v1", "model_env": "MISTRAL_MODEL", "api_key_env": "MISTRAL_API_KEY", "default_model": "mistral-small-latest"},
+    "cerebras": {"base_url": "https://api.cerebras.ai/v1", "model_env": "CEREBRAS_MODEL", "api_key_env": "CEREBRAS_API_KEY"},
     "huggingface": {"base_url": "https://api-inference.huggingface.co/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
     "freellm": {"base_url": "http://localhost:3000/v1", "model_env": "MODEL_NAME", "api_key_env": "MODEL_API_KEY"},
 }
@@ -60,7 +60,8 @@ def _get_provider_config(provider: str) -> Dict[str, str]:
         api_key = os.getenv("MODEL_API_KEY") or os.getenv("OPENAI_API_KEY", "")
         base_url = os.getenv("MODEL_BASE_URL") or os.getenv("OPENAI_BASE_URL", preset.get("base_url", ""))
     else:
-        model_name = os.getenv("MODEL_NAME") or os.getenv(model_env, "")
+        model_name = (os.getenv(model_env) or os.getenv("MODEL_NAME", "")
+                      or preset.get("default_model", ""))
         api_key = os.getenv("MODEL_API_KEY") or os.getenv(api_key_env, "")
         base_url = os.getenv("MODEL_BASE_URL") or preset.get("base_url", "")
 
@@ -257,3 +258,86 @@ def generate_with_fallback(prompt: str, llm_local) -> str:
             time.sleep(0.8 * (2 ** attempt) + random.uniform(0, 0.2))
 
     return _local_fallback(prompt, llm_local, timeout)
+
+
+def provider_status() -> Dict[str, object]:
+    """Estado de configuración del gateway para diagnósticos (/qa/health).
+
+    No expone claves — solo si están definidas.
+    """
+    provider = os.getenv("MODEL_PROVIDER", MODEL_PROVIDER).strip().lower() or "local"
+    chain = _iter_provider_attempts()
+    providers: Dict[str, object] = {}
+    for name in _OPENAI_COMPAT_PRESETS:
+        cfg = _get_provider_config(name)
+        providers[name] = {
+            "model": cfg["model_name"] or None,
+            "configured": bool(cfg["api_key"] or name == "freellm"),
+        }
+    providers["ollama"] = {"model": os.getenv("OLLAMA_MODEL", OLLAMA_MODEL),
+                           "configured": True}
+    providers["local"] = {"model": "GGUF local (ctransformers)",
+                          "configured": True}
+    return {"provider": provider, "fallback_chain": chain,
+            "providers": providers}
+
+
+def stream_openai_compatible(prompt: str, provider: str,
+                             timeout: float):
+    """Generador de tokens vía streaming OpenAI-compatible.
+
+    Usado por el endpoint SSE; lanza RuntimeError si el proveedor no
+    está disponible para que el llamador pase al modo no-stream.
+    """
+    try:
+        from openai import OpenAI  # type: ignore
+    except Exception as e:
+        raise RuntimeError(f"openai_sdk_missing: {e}")
+    cfg = _get_provider_config(provider)
+    if not cfg["model_name"]:
+        raise RuntimeError(f"{provider}_model_missing")
+    client_kwargs = {}
+    if cfg["api_key"]:
+        client_kwargs["api_key"] = cfg["api_key"]
+    if cfg["base_url"]:
+        client_kwargs["base_url"] = cfg["base_url"]
+    client = OpenAI(**client_kwargs)
+    stream = client.chat.completions.create(
+        model=cfg["model_name"],
+        messages=[{"role": "user", "content": prompt}],
+        temperature=_get_temperature(),
+        max_tokens=_get_max_tokens(),
+        timeout=timeout,
+        stream=True,
+    )
+    for chunk in stream:
+        try:
+            delta = chunk.choices[0].delta.content
+        except Exception:
+            delta = None
+        if delta:
+            yield delta
+
+
+def stream_with_fallback(prompt: str):
+    """Itera proveedores de la cadena y devuelve el primer stream viable.
+
+    Devuelve ``(provider, generator)``; si ningún proveedor OpenAI-
+    compatible sirve, ``(None, None)`` y el llamador usa el modo
+    heurístico no-stream.
+    """
+    timeout = _get_timeout_s()
+    for provider in _iter_provider_attempts():
+        if provider in ("local", "ollama"):
+            continue
+        if provider not in _OPENAI_COMPAT_PRESETS:
+            continue
+        cfg = _get_provider_config(provider)
+        if not cfg["api_key"] and provider != "freellm":
+            continue
+        try:
+            gen = stream_openai_compatible(prompt, provider, timeout)
+            return provider, gen
+        except Exception:
+            continue
+    return None, None

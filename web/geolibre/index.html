@@ -198,6 +198,47 @@
   #map-summary .sum-title { color: #58a6ff; font-weight: 700; margin-bottom: 6px; }
   #map-summary .sum-row { display: flex; justify-content: space-between; margin: 2px 0; gap: 10px; }
   #map-summary .sum-key { color: #8b949e; }
+
+  /* Asistente IA de normativa */
+  #toggle-chat {
+    position: absolute; bottom: 16px; right: 12px; z-index: 11;
+    background: #1f6feb; color: #fff; border: none; border-radius: 20px;
+    padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  }
+  #toggle-chat:hover { background: #388bfd; }
+  #chat-panel {
+    display: none; position: absolute; bottom: 16px; right: 12px; z-index: 12;
+    width: 380px; max-width: 92vw; height: 480px; max-height: 78vh;
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    box-shadow: 0 10px 32px rgba(0,0,0,0.5);
+    flex-direction: column; overflow: hidden;
+  }
+  #chat-panel.open { display: flex; }
+  #chat-header {
+    padding: 10px 12px; border-bottom: 1px solid #30363d;
+    display: flex; justify-content: space-between; align-items: center;
+    font-weight: 600; font-size: 13px; color: #c9d1d9;
+  }
+  #chat-header .close { cursor: pointer; color: #8b949e; font-size: 16px; }
+  #chat-ctx { font-size: 10px; color: #8b949e; padding: 4px 12px; border-bottom: 1px solid #21262d; }
+  #chat-messages { flex: 1; overflow-y: auto; padding: 10px 12px; font-size: 13px; }
+  .chat-msg { margin-bottom: 10px; line-height: 1.45; }
+  .chat-msg.user { text-align: right; }
+  .chat-msg.user .bubble { background: #1f6feb; color: #fff; display: inline-block; padding: 7px 11px; border-radius: 12px 12px 2px 12px; max-width: 85%; text-align: left; }
+  .chat-msg.bot .bubble { background: #21262d; color: #c9d1d9; display: inline-block; padding: 8px 11px; border-radius: 12px 12px 12px 2px; max-width: 92%; white-space: pre-wrap; }
+  .chat-msg .fuentes { margin-top: 6px; font-size: 11px; color: #8b949e; }
+  .chat-msg .fuentes .fuente-item { padding: 3px 0; border-top: 1px dashed #30363d; }
+  .chat-msg .fuentes a { color: #58a6ff; }
+  .chat-msg .badge-modo { font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }
+  .badge-modo.llm { background: #1a7f37; color: #fff; }
+  .badge-modo.heuristico { background: #9a6700; color: #fff; }
+  .chat-msg .calculo { margin-top: 6px; font-size: 11px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 6px 8px; color: #8b949e; }
+  #chat-input-row { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid #30363d; }
+  #chat-input { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; color: #c9d1d9; padding: 8px 10px; font-size: 13px; }
+  #chat-send { background: #1f6feb; color: #fff; border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-weight: 600; }
+  #chat-send:disabled { opacity: 0.5; cursor: default; }
+  .chat-thinking { color: #8b949e; font-style: italic; }
 </style>
 </head>
 <body>
@@ -256,6 +297,21 @@
     </div>
     <div id="building-tooltip"></div>
     <div id="map-summary" style="display:none"></div>
+    <button id="toggle-chat" onclick="toggleChat()">Asistente normativa</button>
+    <div id="chat-panel">
+      <div id="chat-header">
+        <span>Asistente de normativa urbanística</span>
+        <span class="close" onclick="toggleChat()">✕</span>
+      </div>
+      <div id="chat-ctx"></div>
+      <div id="chat-messages">
+        <div class="chat-msg bot"><span class="bubble">Pregúntame sobre la normativa aplicable al edificio o parcela seleccionada (ocupación, retranqueos, usos permitidos, piscinas, cambio de uso…). Respondo citando las fuentes oficiales.</span></div>
+      </div>
+      <div id="chat-input-row">
+        <input id="chat-input" placeholder="Ej.: ¿puedo hacer una piscina en esta parcela?" onkeydown="if(event.key==='Enter')sendChat()" />
+        <button id="chat-send" onclick="sendChat()">Enviar</button>
+      </div>
+    </div>
     <div id="projects-panel">
       <h3>Proyectos guardados</h3>
       <div id="projects-list"></div>
@@ -2209,6 +2265,163 @@ async function assessSubzone() {
   } catch (e) {
     resultDiv.innerHTML = `<div class="loading">Error: ${e.message}</div>`;
   }
+}
+
+// ---------- Asistente IA de normativa ----------
+
+function toggleChat() {
+  const panel = document.getElementById('chat-panel');
+  panel.classList.toggle('open');
+  updateChatContext();
+  if (panel.classList.contains('open')) {
+    document.getElementById('chat-input').focus();
+  }
+}
+
+function chatBuildingContext() {
+  const ctx = window._officialContext || {};
+  const feature = window._selectedBuildingFeature || null;
+  let lon = null, lat = null;
+  try {
+    if (feature && feature.geometry) {
+      const c = turf.centerOfMass(feature).geometry.coordinates;
+      lon = c[0]; lat = c[1];
+    }
+  } catch (e) {}
+  const props = (feature && feature.properties) || {};
+  return {
+    lon: lon,
+    lat: lat,
+    municipio: props.municipio || activeMunicipio || null,
+    subzona: props.subzona || null,
+    ref_catastral: (ctx.catastro && ctx.catastro.refcat) || null,
+  };
+}
+
+function updateChatContext() {
+  const el = document.getElementById('chat-ctx');
+  const c = chatBuildingContext();
+  const partes = [];
+  if (c.municipio) partes.push(c.municipio);
+  if (c.subzona) partes.push('subzona ' + c.subzona);
+  if (c.ref_catastral) partes.push('ref. ' + c.ref_catastral);
+  el.textContent = partes.length
+    ? 'Contexto: ' + partes.join(' · ')
+    : 'Sin edificio seleccionado — la respuesta será genérica';
+}
+
+function appendChatMsg(role, html) {
+  const box = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + role;
+  div.innerHTML = html;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+function renderChatAnswer(data) {
+  let html = `<span class="bubble">${escapeHtml(data.respuesta || 'Sin respuesta')}</span>`;
+  if (data.modo) {
+    const badge = data.modo === 'llm' ? 'IA' : 'extractivo';
+    html += `<span class="badge-modo ${data.modo === 'llm' ? 'llm' : 'heuristico'}">${badge}</span>`;
+  }
+  const calc = data.calculo;
+  if (calc && calc.data_quality !== 'unavailable') {
+    html += '<div class="calculo"><b>Cálculo del sistema:</b><br>';
+    for (const [k, v] of Object.entries(calc)) {
+      if (k === 'data_quality' || k === 'fuente') continue;
+      html += `${escapeHtml(k)}: ${escapeHtml(String(v))}<br>`;
+    }
+    html += '</div>';
+  }
+  const fuentes = data.fuentes || [];
+  if (fuentes.length) {
+    html += '<div class="fuentes"><b>Fuentes:</b>';
+    for (const f of fuentes) {
+      const ref = [f.documento, f.referencia, f.pagina ? 'pág. ' + f.pagina : null].filter(Boolean).join(', ');
+      const link = f.url ? ` <a href="${escapeHtml(f.url)}" target="_blank" rel="noopener">ver</a>` : '';
+      html += `<div class="fuente-item">[${f.id}] ${escapeHtml(ref)}${link}</div>`;
+    }
+    html += '</div>';
+  }
+  if (data.aviso) {
+    html += `<div class="fuentes" style="color:#d29922">${escapeHtml(data.aviso)}</div>`;
+  }
+  return html;
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const pregunta = (input.value || '').trim();
+  if (!pregunta) return;
+  input.value = '';
+  document.getElementById('chat-send').disabled = true;
+  appendChatMsg('user', `<span class="bubble">${escapeHtml(pregunta)}</span>`);
+  const thinking = appendChatMsg('bot', '<span class="bubble chat-thinking">Consultando fuentes oficiales…</span>');
+
+  const body = Object.assign({ pregunta: pregunta }, chatBuildingContext());
+  try {
+    // Intentar streaming SSE; si no es viable, POST normal
+    let resp = await fetch(`${API}/qa/edificio/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok || !resp.body) throw new Error('stream no disponible');
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let tokens = '';
+    let finalData = null;
+    let fuentesPrev = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(5)); } catch (e) { continue; }
+        if (evt.tipo === 'contexto') {
+          thinking.querySelector('.bubble').textContent =
+            'Consultando: ' + (evt.herramientas || []).join(', ') + '…';
+        } else if (evt.tipo === 'fuentes') {
+          fuentesPrev = evt.fuentes;
+          thinking.querySelector('.bubble').textContent =
+            'Generando respuesta con ' + (evt.fuentes || []).length + ' fuentes…';
+        } else if (evt.tipo === 'token') {
+          tokens += evt.token;
+          thinking.querySelector('.bubble').textContent = tokens;
+        } else if (evt.tipo === 'final') {
+          finalData = evt.resultado;
+        } else if (evt.tipo === 'error') {
+          throw new Error(evt.error || 'error');
+        }
+      }
+    }
+    if (finalData) {
+      thinking.innerHTML = renderChatAnswer(finalData);
+    } else {
+      thinking.innerHTML = `<span class="bubble">${escapeHtml(tokens || 'Sin respuesta')}</span>`;
+    }
+  } catch (e) {
+    try {
+      const resp = await fetch(`${API}/qa/edificio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      thinking.innerHTML = renderChatAnswer(data);
+    } catch (e2) {
+      thinking.innerHTML = '<span class="bubble">No se pudo contactar con el asistente. Revisa que el servidor esté activo.</span>';
+    }
+  }
+  document.getElementById('chat-send').disabled = false;
 }
 
 window.addEventListener('load', () => {

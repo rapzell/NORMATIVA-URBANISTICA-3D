@@ -1,0 +1,35 @@
+{
+  "descripcion": "Corpus normativo autonomico para el asistente IA. Cada documento se indexa por articulos; anadir PDFs oficiales aqui y declararlos en documentos[].",
+  "documentos": [
+    {
+      "id": "ley_2_2016",
+      "fichero": "ley_2_2016_suelo_galicia_consolidada.pdf",
+      "titulo": "Ley 2/2016, de 10 de febrero, del suelo de Galicia (texto consolidado enero 2026)",
+      "ambito": "autonomico",
+      "fuente": "Xunta de Galicia - Conselleria de Medio Ambiente e Ordenacion do Territorio",
+      "url": "https://territorioeurbanismo.xunta.gal/sites/default/files/LSG_Consolidada/LSG%20CONSOLIDADA%20ENERO%202026-%20V2.pdf",
+      "url_oficial": "https://www.boe.es/eli/es-ga/l/2016/02/10/2",
+      "nota": "Texto consolidado informativo sin validez juridica; el articulado reproduce el texto oficial DOG."
+    },
+    {
+      "id": "nhv_decreto_128_2023",
+      "fichero": "nhv_consolidada_comentada_v1_2.pdf",
+      "titulo": "Normas de habitabilidad de viviendas de Galicia (Decreto 29/2010, redaccion Decreto 128/2023) - texto consolidado comentado v1.2",
+      "ambito": "autonomico",
+      "fuente": "IGVS - Instituto Galego de Vivenda e Solo",
+      "url": "https://igvs.xunta.gal/sites/default/files/auxiliar/20240912_TEXTO_CONSOLIDADO_COMENTADO_NHV_version1-2.pdf",
+      "url_oficial": "https://www.xunta.gal/dog/Publicados/2023/20230915/AnuncioG0691-120923-0003_es.html",
+      "nota": "Incluye los anexos I y II de habitabilidad con comentarios tecnicos del IGVS."
+    },
+    {
+      "id": "ntpu_2022",
+      "fichero": "ntpu_texto_refundido_abril2022.pdf",
+      "titulo": "Normas tecnicas de planeamiento urbanistico de Galicia (Orden 10/10/2019, texto refundido abril 2022)",
+      "ambito": "autonomico",
+      "fuente": "Xunta de Galicia - Conselleria de Medio Ambiente e Ordenacion do Territorio",
+      "url": "https://territorioeurbanismo.xunta.gal/sites/default/files/Texto_refundido_NNTTPP_abril2022.pdf",
+      "url_oficial": "https://www.xunta.gal/dog/Publicados/2019/20191125/AnuncioG0532-101019-20595_gl.html",
+      "nota": "Texto refundido tras la Orden de 8 de abril de 2022."
+    }
+  ]
+}

@@ -42,6 +42,9 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Ordenanzas municipales (cambio de uso) | `src/ordenanzas_service.py`, `datos/ordenanzas/` |
 | Panel multi-proyecto | `web/geolibre/index.html` (localStorage) |
 | Gateway IA | `src/model_gateway.py` |
+| Asistente agéntico normativa (orquestador/herramientas/validador) | `src/agent/` |
+| Corpus normativo autonómico (Ley 2/2016, NHV, NTPU — índice por artículo) | `src/rag/corpus.py`, `datos/corpus/` |
+| Búsqueda normativa unificada (corpus + PDFs municipales, rerank opcional) | `src/rag/search.py` |
 | Etiquetado de calidad de datos | `src/data_quality.py` |
 | Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
@@ -114,6 +117,47 @@ Se usan solo para los cálculos del backend (diagnóstico, viabilidad).
 - Los tests usan `monkeypatch` para mockear servicios externos
 - `_build_official_context` se mockea con `monkeypatch.setattr(_m, '_build_official_context', lambda **kwargs: {...})`
 - `find_subzone_by_name` se mockea en `src.subzones_service` (no en `app.main`)
+
+### Asistente agéntico de normativa (`src/agent/`)
+
+Chatbot experto que responde preguntas sobre el edificio/parcela
+seleccionado en el visor con respuestas citadas a fuentes oficiales.
+
+- **Endpoints:** `POST /qa/edificio` (JSON completo),
+  `POST /qa/edificio/stream` (SSE: eventos `contexto` → `fuentes` →
+  `token` → `final`), `GET /qa/health` (estado LLM/índices/reranker).
+- **UI:** panel de chat en `web/geolibre/index.html` (botón "Asistente
+  normativa"); usa el último edificio seleccionado como contexto.
+- **Flujo** (`orchestrator.preparar_consulta` → `finalizar_respuesta`):
+  1. Herramientas en paralelo (`src/agent/tools.py`): Catastro,
+     clasificación SIOTUGA, altura medida, parámetros de ordenanza del
+     PGOM, inventario municipal.
+  2. RAG (`src/rag/search.buscar_normativa`): corpus autonómico por
+     artículo + PDFs municipales, BM25 + cross-encoder opcional
+     (`sentence_transformers`, modelo ALIA legal ES si está disponible;
+     en Python 3.14 sin torch se desactiva solo).
+  3. Cálculo geométrico si la pregunta es de viabilidad de elemento
+     (piscina, pérgola…): `check_piscina_viability`.
+  4. Prompt anclado (system prompt con reglas estrictas de citación
+     `[FUENTE n]`) → `model_gateway.generate_with_fallback`.
+  5. Validación (`src/agent/validator.py`): cada `[FUENTE n]` debe
+     existir y los números citados deben aparecer en fuentes/contexto;
+     si falla → aviso "Requiere revisión humana" en la respuesta.
+  6. Sin LLM → modo heurístico: devuelve los artículos recuperados con
+     el cálculo — nunca calla ni inventa.
+- **Corpus** (`src/rag/corpus.py`): documentos en `datos/corpus/`
+  declarados en `_manifest.json` (LSG consolidada enero 2026, NHV
+  comentada v1.2 IGVS, NTPU abril 2022 — descargados de xunta.gal).
+  Chunking por artículo/disposición/anexo con `article_ref`; índice
+  cacheado `_corpus_index.json` invalidado por manifiesto+tamaños.
+- **Gateway** (`src/model_gateway.py`): cada proveedor acepta su clave
+  propia (`OPENROUTER_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`,
+  `MISTRAL_API_KEY`, `CEREBRAS_API_KEY`) o la compartida
+  `MODEL_API_KEY`; modelos gratuitos por defecto por proveedor;
+  `MODEL_FALLBACK_CHAIN` ordena el failover; `stream_with_fallback`
+  da streaming OpenAI-compatible para el SSE.
+- **Tests:** `tests/test_agent_orchestrator.py` (12 tests: segmentación,
+  validador, cálculo piscina, modos llm/heurístico, endpoints, SSE).
 
 ### Preverificación de habitabilidad (`src/habitabilidad_checker.py`)
 

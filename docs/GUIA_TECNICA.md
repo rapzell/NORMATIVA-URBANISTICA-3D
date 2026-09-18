@@ -110,6 +110,8 @@ concellos la publican en ArcGIS/GeoServer), o entrada manual asistida.
 | `GET /official/normativa-docs` | Lista/descarga PDFs normativos con manifiesto |
 | `GET /normativa/parametros-subzona` | Parámetros de ordenanza con trazas |
 | `POST /normativa/consulta` | RAG sobre PDFs normativos (BM25, citas por página) |
+| `POST /qa/edificio` · `POST /qa/edificio/stream` (SSE) | Asistente agéntico con contexto de edificio |
+| `GET /qa/health` | Estado del stack IA (LLM, índices, reranker) |
 | `GET /planeamento/inventario` | Inventario municipal SIOTUGA auto-descargado |
 | `GET /official/lidar-tile` `/lidar-preparar` · `POST /lidar-procesar` | Teselas LAZ |
 | `POST /zoning/assess` · `GET/POST /zoning/assess-report` `…pdf` | Evaluación + informe |
@@ -155,13 +157,46 @@ longitud; retranqueo medido como distancia real huella→lindero en UTM.
 
 El informe muestra la tabla "Trazabilidad por dato" y el visor badges por campo.
 
+## 7b. Asistente agéntico de normativa (`src/agent/`)
+
+Chatbot experto que responde preguntas sobre el edificio seleccionado citando
+fuentes oficiales — inspirado en la arquitectura de asistentes legales (RAG +
+re-ranking + validación de citas + degradación honesta).
+
+```
+Visor (edificio seleccionado) → POST /qa/edificio → Orquestador
+   ├─ Herramientas en paralelo: Catastro · SIOTUGA 3CLAS · altura medida
+   │    · parámetros de ordenanza PGOM · inventario municipal
+   ├─ RAG: corpus autonómico (Ley 2/2016, NHV v1.2, NTPU 2022 — chunks por
+   │    artículo) + PDFs municipales → BM25 (+ cross-encoder ALIA si hay torch)
+   ├─ Cálculo geométrico (piscina/pérgola: ocupación disponible vs máxima)
+   ├─ Prompt anclado (reglas estrictas, citas [FUENTE n]) → gateway LLM
+   └─ Validador: cada cita debe existir; números deben estar en fuentes
+       → si falla, "Requiere revisión humana" explícito
+```
+
+- **Corpus** `datos/corpus/` — 3 documentos oficiales descargados de xunta.gal
+  (LSG consolidada enero 2026, NHV comentada IGVS v1.2, NTPU abril 2022),
+  561 chunks con `article_ref` y página. Manifiesto declara fuente+URL oficial.
+- **Gateway multi-proveedor** — clave propia por proveedor
+  (`OPENROUTER_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`)
+  con modelos gratuitos por defecto y `MODEL_FALLBACK_CHAIN`; sin LLM →
+  **modo heurístico**: devuelve los artículos recuperados + el cálculo.
+- **SSE** `POST /qa/edificio/stream` — eventos `contexto`/`fuentes`/`token`/`final`.
+- **Chat en el visor** — botón "Asistente normativa"; toma el último edificio
+  seleccionado (lon/lat, municipio, subzona, refcat) como contexto.
+- **Limitación**: en Python 3.14 no hay torch → el reranker semántico ALIA y los
+  embeddings están desactivados (BM25 como motor base); pgvector queda como
+  opción si se despliega PostgreSQL. El índice por artículo ya da `article_ref`.
+
 ## 8. Verificación actual
 
-- **336 tests** pasan (`pytest -q --ignore` los 2 de sentence-transformers, incompatibles
+- **348 tests** pasan (`pytest -q --ignore` los 2 de sentence-transformers, incompatibles
   con Python 3.14/torch)
 - JS del visor: `node --check` OK
 - Verificado en vivo: contexto Vigo (altura 32,2 m medida, SUC), ordenanzas U6/U9,
-  inventario, informe PDF end-to-end
+  inventario, informe PDF end-to-end, `/qa/edificio` con contexto real
+  (refcat 3963033NG2736S, parcela 3584 m², U6 oficial, cálculo piscina viable)
 - Reglas NHV verificadas contra DOG (128/2023 + corrección 77/2024)
 - Extracción U6 validada contra el texto oficial pág. 179 (incluye test anti-regresión
   de la discrepancia 0,50/0,70)
@@ -180,8 +215,19 @@ El informe muestra la tabla "Trazabilidad por dato" y el visor badges por campo.
    se listan con nota, no con valores fabricados.
 7. Municipios sin plan adaptado (Ourense y otros) → `unavailable` honesto.
 8. PDF escaneado (sin texto) → requeriría OCR (Tesseract) marcado `estimated`; no implementado.
+9. **Reranker/embeddings del asistente desactivados** en este entorno (Python 3.14
+   sin torch): el RAG funciona con BM25; con un Python ≤3.13 + torch el
+   cross-encoder ALIA legal se activa solo (`RAG_RERANKER=1`).
+10. **LLM externo necesario** para respuestas elaboradas: sin clave el asistente
+    funciona en modo heurístico (artículos + cálculo), que es correcto pero menos
+    narrativo. Configurar `OPENROUTER_API_KEY`/`GROQ_API_KEY`/… es gratis.
 
 ## 10. Propuestas para la siguiente fase (a decidir con el experto)
+
+> ~~Asistente IA normativo~~ — **IMPLEMENTADO** (§7b). Pendiente dentro del
+> mismo módulo: migración a MCP completo, reranker/embeddings en entorno con
+> torch, pgvector si se despliega PostgreSQL, y evaluación con 20-30 preguntas
+> reales de arquitectos.
 
 **P0 — Cerrar el mapeo parcela→ordenanza**
 - a) Capa vectorial municipal por concello (algunos ArcGIS/GeoServer propios)
