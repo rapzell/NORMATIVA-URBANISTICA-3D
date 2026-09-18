@@ -104,6 +104,9 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
                 'seleccionado. Haz clic sobre un edificio del mapa o '
                 'indica la referencia catastral.')
 
+    if _SUELO_TEMA_RE.search(pregunta):
+        return _respuesta_suelo(ctx)
+
     partes = []
     if cat.get('uso_principal'):
         det = cat.get('usos_detalle') or {}
@@ -156,6 +159,65 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
     if faltan:
         out.append('')
         out.append('*No disponible: ' + ', '.join(faltan) + '.*')
+    return '\n'.join(out)
+
+
+_SUELO_TEMA_RE = re.compile(
+    r'suelo|parcela|terreno|clasificaci[oó]n|ordenanza|'
+    r'zona\s+urban[ií]stica|qu[eé]\s+normativa', re.I)
+
+
+def _respuesta_suelo(ctx: dict) -> str:
+    """Respuesta centrada en la clasificación/ordenanza del suelo."""
+    clas = ctx.get('clasificacion') or {}
+    ord_p = ctx.get('ordenanzas_params') or {}
+    cat = ctx.get('catastro') or {}
+    res = ctx.get('resumen') or {}
+    out = []
+    clase = clas.get('clasificacion_ley') or clas.get('clase_ley')
+    if clase:
+        etiqueta = (clas.get('clasificacion_ley_label')
+                    or clas.get('clase_ley_label'))
+        if not etiqueta:
+            try:
+                from src.siotuga.vector_downloader import CODE_LABELS
+                etiqueta = CODE_LABELS.get(str(clase).upper())
+            except Exception:
+                etiqueta = None
+        out.append(f"El suelo seleccionado está clasificado como "
+                   f"**{clase}**" + (f" ({etiqueta})" if etiqueta else '')
+                   + ' — fuente oficial SIOTUGA.')
+        for k, lbl in [('denominacion_zona', 'Denominación de zona'),
+                       ('uso_zona', 'Uso de zona'),
+                       ('clasificacion_homo', 'Clasificación homogénea'),
+                       ('clase_homo', 'Clase homogénea'),
+                       ('categoria_wiug', 'Categoría')]:
+            if clas.get(k):
+                out.append(f"**{lbl}**: {clas[k]}")
+    else:
+        out.append('No se pudo obtener la clasificación urbanística '
+                   'del punto (fuente SIOTUGA no disponible).')
+    if ord_p.get('ordenanza'):
+        out.append(f"**Ordenanza aplicable**: {ord_p['ordenanza']}"
+                   + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
+                   + f" — oficial, {ord_p.get('fuente')}")
+    elif ord_p.get('ordenanzas_disponibles'):
+        codigos = ', '.join(ord_p['ordenanzas_disponibles'][:14])
+        out.append("**Ordenanza aplicable**: no determinada "
+                   "automáticamente — disponibles en el municipio: "
+                   f"{codigos} (indícala, p.ej. «subzona U6», "
+                   "o selecciónala en el visor)")
+    extras = []
+    if res.get('superficie_parcela_m2'):
+        extras.append(f"parcela {res['superficie_parcela_m2']:,.0f} m²"
+                      .replace(',', '.'))
+    if cat.get('refcat') or res.get('ref_catastral'):
+        extras.append(f"ref. {cat.get('refcat') or res.get('ref_catastral')}")
+    if cat.get('uso_principal'):
+        extras.append(f"edificio: {cat['uso_principal']}")
+    if extras:
+        out.append('')
+        out.append('*Datos de la parcela: ' + ' · '.join(extras) + '*')
     return '\n'.join(out)
 
 
