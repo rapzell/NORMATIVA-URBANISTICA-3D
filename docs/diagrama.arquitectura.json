@@ -2,483 +2,62 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Visor Arquitectos — Plataforma de análisis urbanístico de Galicia",
-    "output": "diagrama-arquitectura.html",
+    "title": "Visor Arquitectos — Estructura del programa",
+    "output": "docs/diagrama.arquitectura.html",
     "quality_profile": "showcase",
-    "legend": {
-      "mode": "hidden"
-    },
-    "viewBox": [
-      1080,
-      500
-    ],
     "repository": {
-      "url": "https://github.com/rapzell/NORMATIVA-URBANISTICA-3D",
+      "url": "https://github.com/rapzell/NORMATIVA-URBANISTICA-3D.git",
       "provider": "github",
       "link_mode": "local-only",
-      "revision": "aeb7d342d8b57d76c38de757959ce76995456fd9"
+      "revision": "eabe63706d9f536a57050a48cdaf49438da90209"
     },
     "views": [
-      {
-        "id": "flujo-principal",
-        "label": "Flujo principal",
-        "focus": [
-          "user",
-          "viewer",
-          "api"
-        ],
-        "note": "El arquitecto interactúa con el visor 3D, que consulta la API FastAPI en :8002."
-      },
-      {
-        "id": "fuentes-oficiales",
-        "label": "Fuentes oficiales",
-        "focus": [
-          "api",
-          "catastro",
-          "siotuga",
-          "siose"
-        ],
-        "note": "El backend consulta Catastro, SIOTUGA y SIOSE en paralelo y construye el contexto oficial con data_quality."
-      },
-      {
-        "id": "analisis-y-docs",
-        "label": "Análisis y documentos",
-        "focus": [
-          "api",
-          "analysis",
-          "reports"
-        ],
-        "note": "El motor de análisis alimenta el informe de viabilidad y la documentación de licencia."
-      },
-      {
-        "id": "datos-locales",
-        "label": "Datos locales",
-        "focus": [
-          "api",
-          "normdata",
-          "osmcache"
-        ],
-        "note": "Subzonas piloto, inventario de planeamiento, ordenanzas y la caché de edificios OSM."
-      }
+      { "id": "flujo-principal", "label": "Flujo principal", "focus": ["arquitecto", "geolibre", "api", "nucleo"], "note": "Del arquitecto al informe: visor, API y núcleo de cálculo." },
+      { "id": "fuentes-oficiales", "label": "Fuentes oficiales", "focus": ["api", "catastro", "siotuga", "idee", "osm"], "note": "Servicios externos consultados en tiempo real con calidad de dato." },
+      { "id": "normativa-y-cache", "label": "Normativa y caché", "focus": ["api", "normativa", "datos", "siotuga"], "note": "Extracción de ordenanzas desde PDFs oficiales con caché local." }
     ]
   },
   "components": [
-    {
-      "id": "overpass",
-      "type": "external",
-      "label": "Overpass API",
-      "sublabel": "edificios OpenStreetMap",
-      "pos": [
-        280,
-        60
-      ],
-      "size": [
-        150,
-        56
-      ]
-    },
-    {
-      "id": "catastro",
-      "type": "external",
-      "label": "Catastro",
-      "sublabel": "OVC DNPRC · INSPIRE WFS",
-      "pos": [
-        480,
-        60
-      ],
-      "size": [
-        150,
-        60
-      ],
-      "tag": "oficial"
-    },
-    {
-      "id": "siotuga",
-      "type": "external",
-      "label": "SIOTUGA (Xunta)",
-      "sublabel": "WMS + WFS clasificación",
-      "pos": [
-        680,
-        60
-      ],
-      "size": [
-        150,
-        60
-      ],
-      "tag": "oficial"
-    },
-    {
-      "id": "siose",
-      "type": "external",
-      "label": "SIOSE / IDEE",
-      "sublabel": "ocupación del suelo WFS",
-      "pos": [
-        880,
-        60
-      ],
-      "size": [
-        150,
-        56
-      ],
-      "tag": "oficial"
-    },
-    {
-      "id": "user",
-      "type": "external",
-      "label": "Arquitecto",
-      "sublabel": "AC8 · uso profesional",
-      "pos": [
-        40,
-        300
-      ],
-      "size": [
-        120,
-        60
-      ]
-    },
-    {
-      "id": "viewer",
-      "type": "frontend",
-      "label": "Visor GeoLibre / MapLibre GL",
-      "sublabel": "mapa 3D · panel · formularios",
-      "pos": [
-        220,
-        290
-      ],
-      "size": [
-        190,
-        74
-      ],
-      "tag": "index.html",
+    { "id": "arquitecto", "type": "external", "label": "Arquitecto", "sublabel": "navegador", "pos": [40, 300], "size": [120, 60] },
+    { "id": "geolibre", "type": "frontend", "label": "Visor GeoLibre", "sublabel": "MapLibre 3D", "pos": [230, 300], "size": [150, 64],
+      "sources": [{ "path": "web/geolibre/index.html", "label": "index.html" }] },
+    { "id": "api", "type": "backend", "label": "FastAPI :8002", "sublabel": "contexto oficial en paralelo", "pos": [450, 300], "size": [180, 70], "tag": "ThreadPoolExecutor",
+      "sources": [{ "path": "app/main.py", "label": "app/main.py" }] },
+    { "id": "nucleo", "type": "backend", "label": "Núcleo de análisis", "sublabel": "viabilidad · volumen · informe", "pos": [450, 400], "size": [180, 64],
       "sources": [
-        {
-          "path": "web/geolibre/index.html",
-          "label": "visor completo"
-        }
-      ]
-    },
-    {
-      "id": "api",
-      "type": "backend",
-      "label": "FastAPI",
-      "sublabel": "endpoints · proxy HTTP",
-      "pos": [
-        470,
-        290
-      ],
-      "size": [
-        160,
-        74
-      ],
-      "tag": "app/main.py :8002",
+        { "path": "src/zoning_assess.py", "label": "zoning_assess" },
+        { "path": "src/volume.py", "label": "volume" },
+        { "path": "src/report_service.py", "label": "report_service" }
+      ] },
+    { "id": "normativa", "type": "backend", "label": "Normativa", "sublabel": "extractor PDF + RAG", "pos": [450, 150], "size": [180, 64],
       "sources": [
-        {
-          "path": "app/main.py",
-          "label": "_build_official_context"
-        }
-      ]
-    },
-    {
-      "id": "reports",
-      "type": "backend",
-      "label": "Informes y licencias",
-      "sublabel": "viabilidad HTML · doc. licencia",
-      "pos": [
-        800,
-        180
-      ],
-      "size": [
-        200,
-        66
-      ],
-      "sources": [
-        {
-          "path": "src/report_service.py",
-          "label": "informe"
-        },
-        {
-          "path": "src/licencia_docs.py",
-          "label": "licencia"
-        }
-      ]
-    },
-    {
-      "id": "analysis",
-      "type": "backend",
-      "label": "Motor de análisis",
-      "sublabel": "viabilidad · volumen · sombras · NHV",
-      "pos": [
-        800,
-        300
-      ],
-      "size": [
-        200,
-        74
-      ],
-      "sources": [
-        {
-          "path": "src/zoning_assess.py",
-          "label": "viabilidad"
-        },
-        {
-          "path": "src/habitabilidad_checker.py",
-          "label": "Decreto 128/2023"
-        }
-      ]
-    },
-    {
-      "id": "normdata",
-      "type": "database",
-      "label": "Datos normativos locales",
-      "sublabel": "subzonas · inventario · ordenanzas",
-      "pos": [
-        800,
-        404
-      ],
-      "size": [
-        200,
-        66
-      ],
-      "tag": "datos/ · orientativo",
-      "sources": [
-        {
-          "path": "datos/subzonas_piloto.geojson",
-          "label": "subzonas"
-        },
-        {
-          "path": "datos/ordenanzas/_esquema.json",
-          "label": "ordenanzas"
-        }
-      ]
-    },
-    {
-      "id": "storage",
-      "type": "database",
-      "label": "localStorage",
-      "sublabel": "proyectos multi-estado",
-      "pos": [
-        230,
-        412
-      ],
-      "size": [
-        170,
-        56
-      ],
-      "sources": [
-        {
-          "path": "web/geolibre/index.html",
-          "label": "panel proyectos"
-        }
-      ]
-    },
-    {
-      "id": "osmcache",
-      "type": "database",
-      "label": "Caché edificios",
-      "sublabel": "memoria + disco · TTL 7d",
-      "pos": [
-        480,
-        412
-      ],
-      "size": [
-        160,
-        56
-      ],
-      "tag": "datos/cache/",
-      "sources": [
-        {
-          "path": "src/subzones_service.py",
-          "label": "get_osm_buildings_geojson"
-        }
-      ]
-    }
+        { "path": "src/normativa_params.py", "label": "normativa_params" },
+        { "path": "src/normativa_rag.py", "label": "normativa_rag" }
+      ] },
+    { "id": "datos", "type": "database", "label": "datos/ local", "sublabel": "caché · PDFs · CSVs", "pos": [230, 400], "size": [150, 64], "tag": "30 días" },
+    { "id": "catastro", "type": "external", "label": "Catastro", "sublabel": "OVC · INSPIRE BU", "pos": [720, 135], "size": [160, 60] },
+    { "id": "siotuga", "type": "external", "label": "SIOTUGA", "sublabel": "WMS/WFS · PDFs normativa", "pos": [720, 235], "size": [160, 60] },
+    { "id": "idee", "type": "external", "label": "IDEE / IGN", "sublabel": "WCS MDSN · SIOSE WFS", "pos": [720, 335], "size": [160, 60] },
+    { "id": "osm", "type": "external", "label": "OSM / Overture", "sublabel": "edificios y alturas", "pos": [720, 435], "size": [160, 60] }
   ],
   "boundaries": [
-    {
-      "kind": "region",
-      "label": "Cliente — navegador",
-      "wraps": [
-        "viewer",
-        "storage"
-      ]
-    },
-    {
-      "kind": "region",
-      "label": "Servidor local :8002",
-      "wraps": [
-        "api",
-        "analysis",
-        "reports",
-        "osmcache",
-        "normdata"
-      ]
-    },
-    {
-      "kind": "security-group",
-      "label": "Servicios externos (HTTPS)",
-      "wraps": [
-        "overpass",
-        "catastro",
-        "siotuga",
-        "siose"
-      ]
-    }
+    { "kind": "region", "label": "Servidor local", "wraps": ["api", "nucleo", "normativa", "datos"] },
+    { "kind": "region", "label": "Fuentes oficiales externas", "wraps": ["catastro", "siotuga", "idee", "osm"] }
   ],
   "connections": [
-    {
-      "id": "user-viewer",
-      "from": "user",
-      "to": "viewer",
-      "label": "interactúa",
-      "variant": "emphasis"
-    },
-    {
-      "id": "viewer-api",
-      "from": "viewer",
-      "to": "api",
-      "label": "HTTP/JSON",
-      "variant": "emphasis"
-    },
-    {
-      "id": "viewer-storage",
-      "from": "viewer",
-      "to": "storage",
-      "label": "guarda proyectos",
-      "variant": "dashed",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "labelAt": [
-        320,
-        392
-      ]
-    },
-    {
-      "id": "api-analysis",
-      "from": "api",
-      "to": "analysis",
-      "label": "servicios src/",
-      "fromSide": "right",
-      "toSide": "left",
-      "labelAt": [
-        715,
-        355
-      ]
-    },
-    {
-      "id": "api-reports",
-      "from": "api",
-      "to": "reports",
-      "label": "informe / licencia",
-      "fromSide": "right",
-      "toSide": "left",
-      "labelAt": [
-        740,
-        250
-      ]
-    },
-    {
-      "id": "api-osmcache",
-      "from": "api",
-      "to": "osmcache",
-      "label": "lee / escribe",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "labelAt": [
-        595,
-        392
-      ]
-    },
-    {
-      "id": "analysis-normdata",
-      "from": "analysis",
-      "to": "normdata",
-      "label": "lee datos",
-      "variant": "dashed",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "labelAt": [
-        952,
-        391
-      ]
-    },
-    {
-      "id": "api-overpass",
-      "from": "api",
-      "to": "overpass",
-      "label": "POST query",
-      "fromSide": "top",
-      "toSide": "bottom",
-      "labelAt": [
-        355,
-        145
-      ]
-    },
-    {
-      "id": "api-catastro",
-      "from": "api",
-      "to": "catastro",
-      "label": "REST XML / WFS",
-      "fromSide": "top",
-      "toSide": "bottom",
-      "labelAt": [
-        555,
-        150
-      ]
-    },
-    {
-      "id": "api-siotuga",
-      "from": "api",
-      "to": "siotuga",
-      "label": "WMS / WFS",
-      "fromSide": "top",
-      "toSide": "bottom",
-      "labelAt": [
-        755,
-        150
-      ]
-    },
-    {
-      "id": "api-siose",
-      "from": "api",
-      "to": "siose",
-      "label": "WFS GetFeature",
-      "fromSide": "top",
-      "toSide": "bottom",
-      "via": [
-        [
-          550,
-          170
-        ],
-        [
-          955,
-          170
-        ]
-      ],
-      "labelAt": [
-        955,
-        150
-      ]
-    }
+    { "id": "arq-to-visor", "from": "arquitecto", "to": "geolibre", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "visor-to-api", "from": "geolibre", "to": "api", "label": "REST / JSON" },
+    { "id": "api-to-nucleo", "from": "api", "to": "nucleo", "label": "assess · informe", "fromSide": "bottom", "toSide": "top", "labelAt": [540, 384] },
+    { "id": "api-to-normativa", "from": "api", "to": "normativa", "label": "parámetros · RAG", "fromSide": "top", "toSide": "bottom" },
+    { "id": "api-to-datos", "from": "api", "to": "datos", "label": "caché", "variant": "dashed", "fromSide": "left", "toSide": "right" },
+    { "id": "normativa-to-datos", "from": "normativa", "to": "datos", "label": "PDFs + _ordenanzas.json", "variant": "dashed", "fromSide": "left", "toSide": "left", "via": [[20, 182], [20, 432]], "labelAt": [290, 160] },
+    { "id": "api-to-catastro", "from": "api", "to": "catastro", "label": "parcela · edificio", "variant": "emphasis", "labelAt": [800, 204] },
+    { "id": "api-to-siotuga", "from": "api", "to": "siotuga", "label": "clasificación · documentos", "variant": "emphasis", "labelAt": [800, 216] },
+    { "id": "api-to-idee", "from": "api", "to": "idee", "label": "altura medida · usos suelo", "variant": "emphasis", "labelAt": [800, 316] },
+    { "id": "api-to-osm", "from": "api", "to": "osm", "label": "geometría · altura estimada", "variant": "dashed", "labelAt": [800, 416] }
   ],
   "cards": [
-    {
-      "dot": "emerald",
-      "title": "Análisis y entregables",
-      "items": [
-        "Viabilidad volumétrica, envolvente, sombras y soleamiento",
-        "Habitabilidad NHV — Decreto 128/2023 (prechequeo trazable)",
-        "Informe HTML y doc. de licencia con data_quality por sección",
-        "Formularios auto-rellenados desde el edificio y Catastro"
-      ]
-    },
-    {
-      "dot": "amber",
-      "title": "Procedencia de datos",
-      "items": [
-        "Oficiales: Catastro, SIOTUGA, SIOSE — con enlaces verificables",
-        "Piloto/orientativos: subzonas e inventario local en datos/",
-        "Los parámetros piloto nunca se presentan como oficiales"
-      ]
-    }
+    { "dot": "cyan", "title": "Flujo", "items": ["La API paraleliza Catastro, SIOSE, SIOTUGA y altura medida; el núcleo genera el informe"] },
+    { "dot": "emerald", "title": "Calidad y honestidad", "items": ["official / measured / estimated / unavailable con fuente y página; sin datos → 'unavailable'"] }
   ]
 }

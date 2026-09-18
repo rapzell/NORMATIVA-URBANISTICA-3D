@@ -1,269 +1,213 @@
-# Guía técnica — Visor Arquitectos (análisis urbanístico de Galicia)
+# Guía técnica — Visor Arquitectos / Normativa Urbanística 3D
 
-Documento de referencia del estado actual del programa, escrito para planificar mejoras.
-Fecha de análisis: rama `feat/demo-silencioso`, commit `aeb7d34`+ (con diagrama archify).
+**Estado al 18/09/2026** · Rama `feat/demo-silencioso` · Versión API `0.2.1`
+Documento para revisión del experto y planificación de la siguiente fase.
 
 ---
 
 ## 1. Qué es el programa
 
-Aplicación web local (FastAPI + MapLibre/GeoLibre) para que AC8 Arquitectura evalúe
-locales comerciales y oficinas como candidatos a conversión en vivienda en Galicia.
-Combina visualización GIS 3D, consulta de fuentes oficiales (Catastro, SIOTUGA, SIOSE),
-análisis normativo preliminar (NHV/Decreto 128/2023) y generación de documentos
-(informe de viabilidad HTML, documentación de licencia).
+Plataforma de análisis urbanístico para Galicia orientada a arquitectos (AC8 Arquitectura):
+evalúa parcelas y edificios existentes —especialmente locales comerciales/oficinas para
+conversión a vivienda— cruzando **fuentes oficiales en tiempo real** y generando un
+**informe de viabilidad** auditable.
 
-**Principio rector:** distinguir siempre datos oficiales, datos piloto/orientativos,
-supuestos del usuario y datos no verificables. Nunca presentar lo piloto como oficial.
+Principio rector: **ningún dato inventado**. Cada valor lleva etiqueta de calidad
+(`official` / `measured` / `estimated` / `unavailable`) con fuente, fecha y, cuando
+procede, página del documento oficial del que se extrajo.
 
----
+## 2. Stack y arquitectura
 
-## 2. Arquitectura por capas
+| Capa | Tecnología | Ubicación |
+|---|---|---|
+| Frontend | MapLibre GL 3D (GeoLibre), HTML/JS vanilla | `web/geolibre/index.html` |
+| Backend | FastAPI + Uvicorn, Python 3.14 | `app/main.py` (~4.100 líneas, ~60 endpoints) |
+| Análisis | Shapely, pyproj, rasterio | `src/` (30 módulos) |
+| Extracción PDF | pdfplumber + pypdf | `src/normativa_params.py`, `src/normativa_rag.py` |
+| Informe | HTML → PDF (impresión navegador) | `src/report_service.py` |
+| Persistencia | Ficheros locales (JSON/CSV/GeoTIFF) | `datos/` (gitignored salvo fixtures) |
+| Tests | pytest — **336 pasan**, 1 skip | `tests/` (81 ficheros) |
+
+Servidor de desarrollo: `venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002`
+
+Diagrama interactivo de la arquitectura: `docs/diagrama.arquitectura.html`
+(spec regenerable en `docs/diagrama.arquitectura.json`).
+
+### Núcleo: `_build_official_context` (app/main.py)
+
+Función central que reúne en **paralelo** (`ThreadPoolExecutor`, timeout 15 s/fuente):
+
+1. **Catastro** — OVC por coordenadas + INSPIRE WFS + BU (edificios por parcela)
+2. **SIOSE** — WFS IDEE por bbox (afecciones: masas de agua, matorral, espacios)
+3. **Clasificación SIOTUGA** — WFS o copia vectorial local, punto-en-polígono
+4. **WMS SIOTUGA** — capa `3CLAS` del plan vigente (descubierta por GetCapabilities)
+5. **Edificio** — altura medida + huella
+
+Produce: `catastro`, `clasificacion_siotuga`, `siotuga`, `siose`, `edificio_datos`,
+`planeamiento`, `ordenanzas_pgom`, `official_links`, `data_points` (trazabilidad por
+campo), `data_quality` (alta/media/baja), `provenance` (timestamp + fuentes).
+
+## 3. Fuentes de datos — estado real de cada integración
+
+| Fuente | Qué aporta | Método | Calidad | Estado |
+|---|---|---|---|---|
+| **Catastro OVC/INSPIRE** | refcat, dirección, superficie parcela, año, edificios BU | WFS/XML en vivo | `official` | ✅ Verificado |
+| **SIOTUGA WFS 3CLAS** | clasificación del suelo (SUC/SUB/SUNC/SR…), recinto, área | WFS 1.1.0 UTM-29N o vectorial local cacheado | `official` | ✅ Verificado |
+| **SIOTUGA WMS** | capa de clasificación renderizada al visor (proxy XYZ) | GetCapabilities → GetMap | oficial | ✅ |
+| **SIOTUGA documental** | PDFs del planeamiento (normas, fichas) | sesión + token inventario → `datos/normativa/{ine}/` + manifiesto sha256 | oficial | ✅ Vigo descargado (5 PDFs) |
+| **SIOTUGA inventario CSV** | instrumento vigente, fecha aprobación, estado (314 concellos) | auto-descarga `fPutCsvInv.php`, caché 7 días | `official` | ✅ Vivo (PXOM Vigo 2025-05-26) |
+| **IDEE WCS MDSN** | **altura medida del edificio** (nDSM 2,5 m, P90 sobre huella) | WCS GetCoverage GeoTIFF, máscara polígono | `measured` | ✅ ~±1 m, LiDAR PNOA 1ª cobertura |
+| **OSM/Overpass** | geometría edificio, altura/Plantas cuando existen | Overpass API, caché disco 7 días | `estimated` | ✅ |
+| **Overture** | huellas alternativas | duckdb | `estimated` | ✅ |
+| **LAZ CENDES** | altura de mayor precisión (~±25 cm) | tesela identificada automáticamente; descarga manual (captcha) | `measured` | ⚠️ Opcional, pendiente ficheros |
+| **PGOM en PDF** | **parámetros por ordenanza**: ocupación, edificabilidad, recuados, altura, parcela mín. | extractor regex con trazabilidad de página | `official` | ✅ Vigo: U5-U10 + 9 SRP |
+| **PBA (Plan Básico Autonómico)** | ordenanzas tipo supletorias | — | — | ❌ No implementado |
+| **Precios de construcción** | costes de conversión | input del usuario | user-provided | ⚠️ Sin fuente pública; tablas Xunta pendientes |
+
+## 4. Pipeline de parámetros normativos (P0 implementado)
 
 ```
-Navegador (cliente)
-├── web/geolibre/index.html   → visor 3D + panel + formularios (vanilla JS)
-└── localStorage              → proyectos multi-estado (visoarq_projects_v1)
-
-Servidor local :8002 (FastAPI, app/main.py ~3800 líneas)
-├── Endpoints /proxy/*        → SIOSE WFS, WMS cap/info, OSM buildings
-├── Endpoints /official/*     → contexto oficial (Catastro+SIOSE+SIOTUGA)
-├── Endpoints /zoning/*       → assess, volume, diagnostics, sombras, informe
-├── Endpoints /habitabilidad, /licencia, /solar, /costes, /ordenanzas
-└── Motor de análisis (src/)  → módulos puros llamados desde los endpoints
-
-Datos locales (datos/, mayoría gitignored)
-├── subzonas_piloto.geojson   → subzonas con parámetros ORIENTATIVOS
-├── inventario_planeamento.csv→ inventario municipal (no trackeado)
-├── plan_uploaded.csv         → CSV de trabajo del usuario (ignorado)
-├── ordenanzas/               → esquema + ordenanzas por municipio
-└── cache/osm_buildings/      → caché GeoJSON en disco (TTL 7 días)
-
-Servicios externos (HTTPS, truststore activado)
-├── Overpass API (2 mirrors)  → edificios OSM
-├── Catastro OVC + INSPIRE    → refcat, usos, parcela, superficies
-├── SIOTUGA WMS + WFS         → capa plan vigente, clasificación del suelo
-└── SIOSE / IDEE WFS          → ocupación del suelo
+PDFs oficiales (SIOTUGA documental, datos/normativa/{ine}/)
+   → src/normativa_params.py
+      · _segment_ordenanzas: corta por cabeceras "ART. N. ORDENANZA U.N"
+      · _extract_params: regex por parámetro con traza {página, fragmento}
+      · exclusiones por contexto (p.ej. "peto perimetral" no es altura del edificio)
+      · prioridad "edificabilidade máxima" > "edificabilidade" de parcelación
+   → caché _ordenanzas.json (30 días)
+   → GET /normativa/parametros-subzona?municipio=X&ordenanza=Y
+   → _build_official_context → data_points oficiales
+   → Informe: sección "Parámetros por ordenanza (PGOM oficial)"
+      · si la subzona del usuario coincide con una ordenanza → diagnóstico usa
+        la norma oficial (etiqueta verde) en vez del piloto
 ```
 
-Diagrama interactivo: `docs/diagrama-arquitectura.html` (fuente:
-`docs/diagrama.arquitectura.json`, regenerable con la skill archify).
+**Verificado contra el PXOM 2025 de Vigo** — U6 pág. 179: edificabilidad 0,70 m²/m²,
+ocupación 40 %, recuados frente 3 / lateral 2 / posterior 3 m, altura 7 m, parcela 250 m².
 
----
+### Limitación clave — mapeo parcela→ordenanza
 
-## 3. Backend — app/main.py
+La capa detallada `PORD_02CL` de SIOTUGA es **raster** (planos escaneados), no vectorial:
+GetFeatureInfo solo devuelve cajas de píxel. La clasificación WFS da `SUC` pero **no el
+código de ordenanza** (U6, R-1…). Por tanto:
 
-### 3.1 Endpoints principales
+- Si el arquitecto indica la ordenanza → parámetros oficiales automáticos.
+- Si solo hay clasificación → el informe lista las ordenanzas del plan con página
+  para que el usuario localice la suya en el plano oficial. **No se inventa el mapeo.**
 
-| Endpoint | Método | Qué hace |
-|---|---|---|
-| `/proxy/osm-buildings` | GET | Devuelve edificios OSM del municipio en GeoJSON extruible (altura, niveles, cumplimiento vs subzona piloto). Caché memoria+disco. |
-| `/official/context` | GET | **Núcleo**: reúne Catastro+SIOSE+SIOTUGA+inventario para un punto. Devuelve `data_quality`, `official_links`, `clasificacion_siotuga`. |
-| `/official/catastro/by-coords` | GET | refcat + dirección desde coordenadas (OVC). |
-| `/official/siotuga-wms*` | GET | Descubrimiento de capa del plan vigente, proxy GetMap y proxy de tiles XYZ→WMS. |
-| `/zoning/assess` `/zoning/assess-report` | GET/POST | Evaluación volumétrica de parcela + informe HTML completo. |
-| `/zoning/volume` `/zoning/volume-export` | POST | Envolvente edificable 3D (GeoJSON/IFC). |
-| `/zoning/building-diagnostic` | GET | Compara edificio vs subzona (orientativo). |
-| `/zoning/shadow-analysis` | GET/POST | Sombras multi-hora del solsticio de invierno. |
-| `/habitabilidad/verificar` | POST | Preverificación NHV (Decreto 128/2023). |
-| `/licencia/documentacion` | POST | Genera documentación de licencia HTML. |
-| `/solar/exposicion` | GET | Soleamiento anual por orientación (astronómico). |
-| `/costes/estimar` | POST | Estimación de costes con inputs del usuario. |
-| `/ordenanzas/*` | GET | Ordenanzas locales por municipio/subzona (datos `datos/ordenanzas/`). |
-| `/planeamento/*` | GET | Inventario municipal + subzonas piloto. |
-| `/admin/*` | GET/POST | Recarga de CSV de planes (`plan_uploaded.csv`), resúmenes. |
-| `/qa`, `/normativa/extract*` | POST | RAG/extracción normativa (requiere torch — excluido en Py3.14). |
-| `/health` `/version` `/metrics` | GET | Operación. Prometheus opcional. |
+Posibles vías futuras: OCR sobre el plano raster, capa vectorial municipal (algunos
+concellos la publican en ArcGIS/GeoServer), o entrada manual asistida.
 
-### 3.2 `_build_official_context` — la función central
+## 5. Endpoints principales
 
-`app/main.py` (~línea 3040). Para un `(municipio, lon, lat)`:
-
-1. Resuelve el INE del municipio (`_MUNICIPIO_INE`, 313 municipios).
-2. En paralelo (`ThreadPoolExecutor`): Catastro por coordenadas + SIOSE por bbox.
-3. Si hay refcat: `Consulta_DNPRC` (detalles por unidad: uso, sup., planta, puerta)
-   + INSPIRE WFS `GetParcel` (geometría real + superficie oficial de parcela).
-4. SIOTUGA: descubre capa `*_AD_3CLAS_*` del plan vigente vía WMS GetCapabilities,
-   luego WFS GetFeature con punto transformado a **EPSG:25829** (UTM 29N),
-   parsea GML2 (`coordinates`) y GML3 (`posList`), point-in-polygon real, y entre
-   solapes prefiere la zona más específica (score: `edif_ficha`+3, `denom`+2, `uso`+1).
-5. Inventario local CSV (referencia).
-6. Construye `official_links` (Catastro, SIOTUGA WMS/WFS/inventario, SIOSE).
-7. Calcula `data_quality` (alta/media/baja) **siempre**, aunque falten fuentes.
-8. Caché `_OFFICIAL_CACHE` con TTL 5 min.
-
-### 3.3 Módulos de análisis (src/)
-
-| Módulo | Líneas | Función |
-|---|---|---|
-| `report_service.py` | 1160 | Informe de viabilidad HTML: resumen ejecutivo, datos edificio/OSM, diagnóstico, habitabilidad, sombras, solar, economía, costes, ficha técnica, datos oficiales, procedencia, fuentes. |
-| `zoning_assess.py` | 266 | Resuelve parámetros efectivos (plan → subzona → defaults), orquesta assess. |
-| `zoning_service.py` | 439 | Consultas ArcGIS/WMS auxiliares, config por municipio, centroides. |
-| `volume.py` / `volume_service.py` | 391+63 | Envolvente edificable (retranqueos, altura, ocupación, edificabilidad). |
-| `shadow_service.py` | 219 | Sombras solsticio de invierno multi-hora (modelo solar). |
-| `solar_analysis.py` | 181 | Exposición solar anual por orientación (astronomía pura). |
-| `habitabilidad_checker.py` | 248 | Reglas NHV trazables: altura libre ≥2,4m, acristalamiento 1/8, ventilación 1/3, superficies de estancias (tablas Anexo I). |
-| `licencia_docs.py` | 283 | Plantillas de documentación de licencia con params urbanísticos + justificación Decreto. |
-| `cost_estimator.py` | 107 | Cálculo económico con inputs del usuario (no inventa precios). |
-| `subzones_service.py` | 944 | Subzonas piloto + `get_osm_buildings_geojson` (Overpass→GeoJSON 3D, caché doble). |
-| `plans_service.py` | 100 | Carga `plan_uploaded.csv` y params por municipio/subzona. |
-| `rules_engine.py` | 248 | `geometry_checks` (área, retranqueos direccionales, eje de calle). |
-| `ordenanzas_service.py` | 148 | Sirve ordenanzas locales estructuradas. |
-| `export_service.py` | 490 | Export IFC de la envolvente. |
-| `model_gateway.py` | 259 | Gateway IA multi-provider (OpenAI/Ollama/…) — usado por `/qa`. |
-| `qa_service.py`, `text_extractor.py`, `normativa_extract.py`, `procesar_normativa.py`, `crear_indice.py` | — | Pipeline RAG sobre PDFs normativos (torch no disponible en Py3.14 → tests excluidos). |
-| `funko_api.py`, `funko_scanner.py` | — | Herencia del repo original (funkos); no relacionados con el visor. |
-| `geo.py` | 57 | Utilidades geográficas. |
-
-### Capa de datos reales (añadida)
-
-| Módulo | Función |
+| Endpoint | Función |
 |---|---|
-| `src/data_quality.py` | `DataPoint`/`DataQuality` (official/measured/estimated/unavailable). Cada dato expone `value, unit, data_quality, source, source_ref, notes`. |
-| `src/cache.py` | Caché unificada en disco `datos/cache/{source}/{key}.json` con TTL + `http_get` con reintentos y backoff exponencial. |
-| `src/siotuga/vector_downloader.py` | Descarga la capa `*_AD_3CLAS_*` completa por municipio (WFS 1.1.0 paginado, maxfeatures+startindex), parsea GML→GeoJSON (corrige orden de ejes lat,lon→lon,lat), cachea 30 días, resuelve punto-en-polígono local y sirve recortes al visor. |
-| `src/catastro/client.py` | Cliente consolidado: RCCOOR, CPMRC, DNPRC (unidades), INSPIRE CP (parcela), INSPIRE BU (edificios oficiales: huella, uso, año, plantas), feed ATOM. `fetch` inyectable para tests. |
-| `src/building_data/height_extractor.py` | Altura real PNOA LiDAR: LAZ en `datos/cache/lidar/` → P90 sobre huella − terreno (ground clase 2 o MDT 5m WCS IDEE). Huellas Overture vía duckdb. Sin cobertura → `unavailable` (sin fallback silencioso). |
+| `GET /geolibre/` | Visor GIS 3D |
+| `GET /official/context` | Contexto oficial completo (paralelo) |
+| `GET /official/building-data` | Altura medida + datos edificio (LAZ→MDSN→unavailable) |
+| `GET /official/catastro/by-coords` `/by-ref` | Catastro |
+| `GET /official/siotuga-clasificacion` | Clasificación vectorial por punto/bbox |
+| `GET /official/siotuga-wms` `/proxy` `/tile/{z}/{x}/{y}` | WMS SIOTUGA + proxy |
+| `GET /official/normativa-docs` | Lista/descarga PDFs normativos con manifiesto |
+| `GET /normativa/parametros-subzona` | Parámetros de ordenanza con trazas |
+| `POST /normativa/consulta` | RAG sobre PDFs normativos (BM25, citas por página) |
+| `GET /planeamento/inventario` | Inventario municipal SIOTUGA auto-descargado |
+| `GET /official/lidar-tile` `/lidar-preparar` · `POST /lidar-procesar` | Teselas LAZ |
+| `POST /zoning/assess` · `GET/POST /zoning/assess-report` `…pdf` | Evaluación + informe |
+| `POST /zoning/volume` · `/volume-export` | Envolvente edificable 3D |
+| `GET /zoning/building-diagnostic` · `/shadow-analysis` | Diagnóstico y sombras |
+| `POST /habitabilidad/verificar` | Reglas NHV (Decreto 128/2023) trazables |
+| `POST /costes/estimar` | Estimación de costes (inputs usuario) |
+| `POST /licencia/documentacion` | Plantillas de documentación de licencia |
+| `GET /solar/exposicion` | Soleamiento por orientación |
+| `GET /ordenanzas/{municipio}/{subzona}` | Ordenanzas estructuradas (datos AC8) |
+| Admin/utilidad | `/admin/*`, `/debug/plan`, `/metrics`, `/health`, `/proxy/*` |
 
-### Endpoints nuevos
+## 6. Informe de viabilidad — qué calcula hoy
 
-- `GET /official/siotuga-clasificacion?municipio=X[&bbox=]` → capa vectorial oficial GeoJSON (o `unavailable`). Cuando el plan base está vacío prueba las capas alternativas (`alt_layers`, p.ej. modificaciones puntuales etiquetadas `plan_modificacion`); si tampoco hay vectorial pero existe el plano escaneado oficial, devuelve `metadata.raster_layer` para que el visor lo superponga como capa raster WMS.
-- `GET /official/building-data?lon&lat[&refcat&osm_height&osm_levels]` → cada campo como `DataPoint` con `data_quality`.
-- `_build_official_context` añade `data_points` (trazabilidad por campo) y `edificios_oficiales`/`plantas_oficiales` de Catastro BU.
-- Visor: botón "Clasificación" dibuja los polígonos oficiales (colores por clase) con consulta al clic; badges de calidad en el panel. Municipios sin vectorización (Ourense, Ferrol…) muestran el plano raster oficial superpuesto + mensaje claro; nunca datos fabricados.
-- Informe: `submitGenerateReport` abre la pestaña de forma síncrona (gesto de usuario) con placeholder — abrir tras el `await` dispara el bloqueo de popups del navegador; fallback a enlace de descarga.
-
-### Documentos oficiales + RAG normativo (añadida)
-
-| Módulo | Función |
-|---|---|
-| `src/siotuga/document_client.py` | Cliente del inventario documental SIOTUGA. Abre sesión (PHPSESSID + token CSRF del HTML de `/siotuga/inventario?concello={ine}`), lista instrumentos vía `query_document.php` (idclase 14=xeral, 13=desenvolvemento, 16=HCO, 18=núcleos rurales), obtiene componentes vía `getIOTPU.php` y descarga PDFs a `datos/normativa/{ine}/` con manifiesto `_manifest.json` (sha256, URL, fecha, sección). URL real: `https://siotuga.xunta.gal/siotuga/{filesroot}{folder}/documents/{pathesperado}`. |
-| `src/normativa_rag.py` | RAG ligero sobre los PDFs descargados: extracción página a página con pypdf, chunks con solape, ranking BM25 (sin dependencias externas), citas `{fichero, seccion, pagina, extracto}`. Síntesis opcional vía `model_gateway` (proveedor LLM configurado); si no, respuesta extractiva. Índice `_index.json` invalidado por sha256 del manifiesto. |
-
-Endpoints:
-
-- `GET /official/normativa-docs?municipio=X[&secciones=NU,PORD,CAT][&descargar=false]` → descarga (o lista) los PDFs oficiales del plan vigente; devuelve el manifiesto con sha256/URL/estado por fichero.
-- `POST /normativa/consulta` `{municipio|ine, pregunta, top_k, use_llm}` → respuesta con citas trazables al PDF/página oficial.
-- `GET /official/lidar-tile?lon&lat` → tesela LiDAR 2015-2016 de la Xunta que cubre el punto (malla `Cendes/Mallas/MapServer` capa 69): hoja, nombre de fichero y permalink `descargas.xunta.es/{id}`. **La descarga CENDES exige captcha** — abrir la URL, resolver y depositar el ZIP en `datos/cache/lidar/`; `obtener_altura_lidar` lo detecta y usa automáticamente.
-- `GET /official/lidar-preparar[?municipio]` → checklist de teselas pendientes/descargadas con `url_descarga` cada una.
-- `POST /official/lidar-procesar` → descomprime los ZIPs CENDES del directorio, valida con laspy y actualiza estados.
-
-### Alturas medidas sin captcha: WCS MDS del IDEE (añadida)
-
-`src/building_data/mds_wcs.py` — el WCS público `wcs-mds.idee.es/mds` (WCS 2.0.1) sirve el Modelo Digital de Superficies **normalizado de edificación** (`mdsn_e025`, 2,5 m, EPSG:3042): altura sobre rasante derivada del LiDAR PNOA 1ª cobertura. Para cada consulta se descarga un GeoTIFF del área (huella + 15 m buffer), se enmascara por el polígono y se toma el P90 → `measured` con `source: IDEE WCS MDSN`. Cache de GeoTIFF 30 días en `datos/cache/wcs/`.
-
-Cadena de altura en `obtener_altura_lidar`: **LAZ local** (si existe, máxima precisión) → **MDSN WCS** (automático, medido) → `unavailable`. El captcha de CENDES queda solo como mejora de precisión opcional; ya no es necesario para obtener alturas medidas.
-
----
-
-## 4. Frontend — web/geolibre/index.html (~2000 líneas)
-
-Flujo: `loadMunicipios()` → `goToMunicipio(m)` → en paralelo:
-`loadBuildings` (fetch lanzado **antes** de `waitForMap`), `loadOrdenanzas`,
-`loadSiotugaWMS`, subzonas piloto.
-
-Al hacer clic en un edificio → `selectBuilding(feature)`:
-- Calcula huella con `turf.area`, muestra panel (tipo OSM, altura+procedencia,
-  plantas, subzona piloto marcada como tal, enlace al way en OSM).
-- En paralelo: `/zoning/building-diagnostic` + `fetchOfficialContext` →
-  `renderOfficialContext` (Catastro, planeamiento SIOTUGA, SIOSE) y dibuja
-  el lindero catastral en el mapa (capa `catastro-parcel`, naranja discontinua).
-
-Acciones desde el panel:
-- **Verificar habitabilidad** → formulario con auto-relleno (altura OSM, superficie
-  Catastro/huella, selector de unidad no residencial catastral) → POST `/habitabilidad/verificar`.
-- **Generar documentación de licencia** → recoge `params_urbanisticos`
-  (subzona + edificio + Catastro + SIOTUGA) → POST `/licencia/documentacion`.
-- **Analizar soleamiento** → GET `/solar/exposicion`.
-- **Estimar costes** → formulario (sup. auto) → POST `/costes/estimar`;
-  inputs guardados en `dataset.costInput` para incluirlos luego en el informe.
-- **Generar informe de viabilidad** → formulario inline con vista previa de datos
-  (reemplazó a `prompt()`) → POST `/zoning/assess-report` con geometría, altura,
-  huella, municipio, habitabilidad preliminar, `edificio_osm`, `costes`,
-  `official_context` completo. Abre el HTML en pestaña nueva (blob).
-- **Guardar como proyecto** → localStorage con estado/plazo/navegación.
-
-Capas extra: sombras con slider horario, afecciones SIOSE, WMS SIOTUGA
-(tiles proxied), filtros de edificios por cumplimiento.
-
-Seguridad: `escapeHtml()` en todo dato externo; `safeExternalUrl()` valida http(s).
-
----
-
-## 5. Fuentes externas — detalle de integración
-
-| Fuente | Uso | Notas |
+| Sección | Contenido | Procedencia |
 |---|---|---|
-| Overpass API | `way['building'](bbox); out geom` | 2 mirrors en paralelo, primer éxito gana; bbox = centro±delta×0.15 (reintento ×0.22); timeout 25s query / 30s urlopen; caché memoria+disco 7d. |
-| Catastro OVC | `OVCBusqueda` por coords → refcat+dirección; `Consulta_DNPRC` → unidades (uso/sup/planta/puerta/año) | Endpoint DNPRC corregido: `OVCWcfCallejero/COVCCallejero.svc/rest/Consulta_DNPRC`. Parser sin namespaces. |
-| Catastro INSPIRE WFS | `GetParcel` por refcat → polígono parcela + `areaValue` oficial + `label` | Geometría usada en mapa, mini-mapa del informe y cuadro de superficies. |
-| SIOTUGA WMS | GetCapabilities → capa `*_AD_3CLAS_*` vigente; proxy de tiles | CRS EPSG:25829; capa cacheada 1h. GetFeatureInfo devuelve vacío (limitación del servicio). |
-| SIOTUGA WFS | `GetFeature` en bbox UTM, `maxfeatures=10` | Extrae `cat_ley/cla_ley/cat_plan/...`, `uso`, `denom`, `sup_ficha`, `edif_ficha`, `id_recinto`. Solapes → más específico. |
-| SIOSE IDEE WFS | `lcv:LandCoverUnit` por bbox | GML 3.2 → GeoJSON; coberturas + alertas preliminares. Caché 15min. |
+| Resumen ejecutivo | Veredicto orientativo, áreas | Evaluación + Catastro |
+| Cuadro de superficies | Parcela geométrica (UTM), Catastro, **huella real**, libre, envolvente | Cálculo métrico + OSM + Catastro |
+| Datos del edificio | Tipo, altura, huella OSM | OSM (`estimated`) |
+| Altura medida | P90 sobre huella | IDEE WCS MDSN (`measured`) |
+| Diagnóstico | altura/plantas/ocupación/edificabilidad/retranqueo vs norma | Medido/calculado vs piloto u ordenanza oficial |
+| **Ordenanzas PGOM** | Tabla de ordenanzas con parámetros + página | PDF oficial (nuevo) |
+| Habitabilidad | Reglas NHV verificables | Decreto 128/2023 (fuentes citadas) |
+| Económica | Edificable, plantas, viviendas potenciales | Envolvente × plantas (hipótesis marcada) |
+| Sombras / Soleamiento | Solsticio invierno, horas de sol por orientación | Modelo solar simplificado |
+| Costes | "Pendiente" honesto si no hay inputs | Usuario |
+| Datos oficiales | Catastro, SIOTUGA, SIOSE, enlaces | APIs oficiales |
+| Proveniencia | Timestamp, versión, **trazabilidad por dato** | Sistema `DataPoint` |
+| Viabilidad | Motivos + disclaimer "no sustituye verificación oficial" | — |
 
----
+Cálculos métricos correctos: reproyección automática a EPSG:25829/25830 según
+longitud; retranqueo medido como distancia real huella→lindero en UTM.
 
-## 6. Datos locales y proveniencia
+## 7. Modelo de calidad de datos (`src/data_quality.py`)
 
-- `subzonas_piloto.geojson`: geometrías rectangulares **inventadas** + parámetros
-  orientativos (`altura_maxima_m`, `ocupacion_max`, `edificabilidad_max_m2_m2`,
-  `retranqueo_min_m`, `normative_status: pilot`). Alimentan diagnóstico y
-  cumplimiento de altura en el visor — siempre etiquetados "piloto/orientativo".
-- `plan_uploaded.csv`: CSV del usuario (gitignored). Si tiene valores, pueden
-  entrar como parámetros del "plan" — marcados como orientativos en el informe.
-- `inventario_planeamento.csv`: inventario municipal (referencia, gitignored).
-- `datos/ordenanzas/`: esquema JSON + ordenanzas por municipio (a rellenar por AC8).
-- `datos/cache/osm_buildings/`: caché en disco del proxy Overpass.
+`DataPoint {value, unit, data_quality, source, source_ref, notes}`:
 
-Regla implementada: `data_quality` siempre presente; veredictos con parámetros
-piloto se marcan "(orientativo)"; secciones sin datos muestran "Pendiente" con
-instrucciones en vez de desaparecer.
+- `official` — API/documento oficial (Catastro, SIOTUGA, PDF PGOM, inventario)
+- `measured` — medición instrumental (MDSN, LAZ)
+- `estimated` — OSM, OCR, inferencias
+- `unavailable` — no obtenible: **explícito, nunca rellenado**
+- `user-provided` — inputs del arquitecto (costes, programa de estancias)
 
----
+El informe muestra la tabla "Trazabilidad por dato" y el visor badges por campo.
 
-## 7. Tests y verificación
+## 8. Verificación actual
 
-- 269 tests (`pytest`), ~13s. Excluidos: `test_asistente_normativa_rules.py` y
-  `test_evaluar_dataset_helpers.py` (requieren `sentence_transformers`/torch —
-  no disponible en Python 3.14).
-- Tests mockean servicios externos con `monkeypatch` (nunca red real).
-- JS verificado extrayendo `<script>` y `node --check` por bloque.
-- `conftest.py` usa `TestClient` de Starlette.
+- **336 tests** pasan (`pytest -q --ignore` los 2 de sentence-transformers, incompatibles
+  con Python 3.14/torch)
+- JS del visor: `node --check` OK
+- Verificado en vivo: contexto Vigo (altura 32,2 m medida, SUC), ordenanzas U6/U9,
+  inventario, informe PDF end-to-end
+- Reglas NHV verificadas contra DOG (128/2023 + corrección 77/2024)
+- Extracción U6 validada contra el texto oficial pág. 179 (incluye test anti-regresión
+  de la discrepancia 0,50/0,70)
 
----
+## 9. Limitaciones honestas conocidas
 
-## 8. Limitaciones conocidas → candidatos a mejora
+1. **Parcela→ordenanza sin mapeo automático** (capa raster; ver §4).
+2. **Altura MDSN** = LiDAR 1ª cobertura (2008-2015): edificios nuevos no aparecen
+   (→ `unavailable`); precisión ±1 m, no topográfica.
+3. **Subzonas piloto** (`subzonas_piloto.geojson`): geometrías inventadas, siempre
+   marcadas como orientativas; solo se usan cuando no hay norma oficial.
+4. **Plan CSV del usuario** (`plan_uploaded.csv`): parámetros parciales para R-1;
+   ocupación/edificabilidad de subzona salen `—` si el CSV no los trae.
+5. **Costes**: sin fuente pública estructurada; el informe pide inputs.
+6. **Ordenanzas sin parámetros numéricos** (U1/U8 conservan existente; U4 en plantas)
+   se listan con nota, no con valores fabricados.
+7. Municipios sin plan adaptado (Ourense y otros) → `unavailable` honesto.
+8. PDF escaneado (sin texto) → requeriría OCR (Tesseract) marcado `estimated`; no implementado.
 
-| Área | Estado | Posible mejora |
-|---|---|---|
-| Parámetros normativos reales | Solo `edif_ficha`/`sup_ficha`/`uso` de SIOTUGA donde existen (SUB/SUNC); SUC suele ir vacío | Parsear PDFs del planeamiento (RAG pendiente) o WFS con más capas (5.ORDEN…); descargar/cachear polígonos por municipio |
-| Geometrías de subzona | Rectángulos inventados | Sustituir por geometrías WFS reales de SIOTUGA por municipio |
-| `app/main.py` | ~3800 líneas monolíticas | Extraer routers: `official`, `zoning`, `proxy`, `admin` |
-| Frontend | ~2000 líneas en un solo HTML | Modularizar (módulos ES) o al menos separar JS/CSS |
-| Caché edificios | Por municipio completo (hasta 500) | Por bbox del viewport / tiles; precarga selectiva |
-| Overpass | 2 mirrors paralelos | Añadir fallback `overpass.nchc.org.tw`; backoff en 429 |
-| Habitabilidad | Pre-check NHV | Selector de unidad ya hecho; falta enlazar resultado al doc. de licencia automáticamente |
-| RAG normativo | Pipeline existe pero sin torch en Py3.14 | Torch cuando soporte 3.14, o embeddings vía API/local llama.cpp |
-| Persistencia | localStorage solo | SQLite local si se quieren proyectos servidor-side |
-| Valor de mercado | Lo aporta el usuario | Idealista/fotocasa scraping no es fiable/legal; dejar como input |
-| Errores de red | Overpass 429 frecuente | Ya mitigado con caché; añadir reintento con backoff |
+## 10. Propuestas para la siguiente fase (a decidir con el experto)
 
----
+**P0 — Cerrar el mapeo parcela→ordenanza**
+- a) Capa vectorial municipal por concello (algunos ArcGIS/GeoServer propios)
+- b) OCR/georreferenciación del plano PORD raster (alto esfuerzo)
+- c) Selector manual asistido en el visor: el arquitecto pincha su ordenanza del listado
+  oficial y queda fijada en el informe (bajo esfuerzo, ya soportado por `?subzona=U6`)
 
-## 9. Comandos
+**P1 — Cobertura municipal**: pipeline de descarga masiva de normativa SIOTUGA por los
+313 concellos (cliente ya existe) + verificación de extracción por formato de plan
+(cada municipio redacta distinto; el extractor es regex — validar con otros planes).
 
-```bash
-# Servidor
-venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
+**P1 — PBA supletorio**: ordenanzas tipo del Plan Básico Autonómico como respaldo
+cuando el PGOM no fija parámetros (con etiqueta "supletorio").
 
-# Tests
-venv\Scripts\python.exe -m pytest -q --ignore=tests/test_asistente_normativa_rules.py --ignore=tests/test_evaluar_dataset_helpers.py
+**P2 — Costes**: tablas de precios unitarios de obra pública de la Xunta (PDF →
+pdfplumber) como referencia, marcando que no son precios de mercado privado.
 
-# Endpoints de diagnóstico
-curl http://127.0.0.1:8002/health
-curl "http://127.0.0.1:8002/official/context?municipio=Vigo&lon=-8.71&lat=42.19"
+**P2 — OCR** para PDFs escaneados (`pytesseract` + `pdf2image`), calidad `estimated`.
 
-# Regenerar diagrama archify
-node ~/.agents/skills/archify/bin/archify.mjs validate architecture docs/diagrama.arquitectura.json --quality showcase --json --repo-root .
-node ~/.agents/skills/archify/bin/archify.mjs deliver architecture docs/diagrama.arquitectura.json docs/diagrama-arquitectura.html --quality showcase --json --repo-root .
-```
+**P2 — LAZ CENDES**: completar flujo captcha→descarga→`lidar-procesar` para ±25 cm.
+
+## 11. Reproducibilidad y seguridad
+
+- `datos/` gitignored (fixtures trackeados: `planes_*_sample.csv`, `subzonas_piloto.geojson`, `sample_*.geojson`)
+- `plan_uploaded.csv` local del usuario: no se publica ni sobrescribe
+- SSL verificado vía `truststore` (almacén del sistema); nunca desactivado
+- HTML: todo dato externo escapado; enlaces validados http(s)
+- Cachés: WCS/OSM 7-30 días en `datos/cache/`; ordenanzas 30 días; inventario 7 días
+- Tests usan `monkeypatch` para servicios externos; nada de red en CI
