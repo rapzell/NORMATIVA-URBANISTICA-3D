@@ -116,10 +116,19 @@ def buscar_normativa(query: str, ine: str | None = None,
             pass
 
     candidatos.sort(key=lambda x: x.get('score', 0), reverse=True)
+    # Dedup por contenido: el mismo texto puede aparecer en varios PDFs
+    vistos: set = set()
+    unicos: list[dict] = []
+    for c in candidatos:
+        firma = ' '.join((c.get('texto') or '').split())[:160].lower()
+        if firma and firma in vistos:
+            continue
+        vistos.add(firma)
+        unicos.append(c)
     if rerank:
-        seleccion = rerankear(query, candidatos, top_n=top_n)
+        seleccion = rerankear(query, unicos, top_n=top_n)
     else:
-        seleccion = candidatos[:top_n]
+        seleccion = unicos[:top_n]
     for i, f in enumerate(seleccion):
         f['id'] = i + 1
     return {

@@ -151,6 +151,15 @@ def check_piscina_viability(contexto: dict,
                 (usada + computa) / sup_parcela * 100, 1),
         })
     else:
-        calc['nota'] = ('Ocupación máxima de la ordenanza no disponible; '
-                        'verificar en la ficha urbanística municipal')
+        disponibles = (contexto.get('ordenanzas_params') or {}) \
+            .get('ordenanzas_disponibles')
+        if disponibles:
+            calc['nota'] = (
+                'Ocupación máxima no calculable: falta la ordenanza '
+                f'aplicable. Disponibles en el municipio: '
+                f"{', '.join(disponibles[:14])} — indica la subzona")
+        else:
+            calc['nota'] = ('Ocupación máxima de la ordenanza no '
+                            'disponible; verificar en la ficha '
+                            'urbanística municipal')
     return calc

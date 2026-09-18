@@ -137,12 +137,20 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         partes.append(f"**Ordenanza**: {ord_p['ordenanza']}"
                       + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
                       + f" — oficial, {ord_p.get('fuente')}")
+    elif ord_p.get('ordenanzas_disponibles'):
+        codigos = ', '.join(ord_p['ordenanzas_disponibles'][:14])
+        partes.append(
+            f"**Ordenanza**: no determinada automáticamente — "
+            f"disponibles en el municipio: {codigos} "
+            f"(indícala, p.ej. «subzona U6», o selecciónala en el visor)")
 
     faltan = []
     if alt_v is None:
         faltan.append('altura medida')
     if not (clas.get('clasificacion_ley') or clas.get('clase_ley')):
         faltan.append('clasificación SIOTUGA')
+    if not ord_p.get('ordenanza'):
+        faltan.append('ordenanza aplicable (subzona)')
     out = ['Datos del edificio seleccionado (fuentes oficiales):', '']
     out += partes
     if faltan:
@@ -225,6 +233,9 @@ def _contexto_edificio(lon: float | None, lat: float | None,
         'trazas': resultado.get('trazas'),
         'data_quality': ords.get('data_quality'),
     }
+    if ords.get('ordenanzas'):
+        ctx['ordenanzas_params']['ordenanzas_disponibles'] = \
+            sorted(ords['ordenanzas'].keys())
     return ctx, usadas
 
 
