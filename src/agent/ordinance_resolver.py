@@ -5,14 +5,18 @@ código de ordenanza (U6, R-1…). Este módulo intenta cerrar la brecha
 con los datos oficiales ya disponibles, en orden de fiabilidad:
 
 1. ``subzona`` indicada por el usuario → ``usuario``.
-2. Código de ordenanza literal en los atributos oficiales de la zona
+2. Capa vectorial oficial municipal de ordenanzas SUC consultada por
+   punto (``src.muni_wfs``, p. ej. GeoServer del Concello de Vigo) →
+   ``oficial`` con instrumento declarado; varios polígonos →
+   ``ambigua``.
+3. Código de ordenanza literal en los atributos oficiales de la zona
    (``id_recinto``, ``denominacion_zona``, ``clasificacion_plan``)
    que case con una ordenanza del PGOM → ``oficial``.
-3. Coincidencia por título de la ordenanza frente a la
+4. Coincidencia por título de la ordenanza frente a la
    ``denominacion_zona``/``uso_zona`` oficial → ``inferida`` (marca
    siempre la necesidad de verificación).
-4. Varios candidatos distintos → ``ambigua`` (se listan, no se elige).
-5. Nada → ``no_resuelta`` (se listan las ordenanzas disponibles).
+5. Varios candidatos distintos → ``ambigua`` (se listan, no se elige).
+6. Nada → ``no_resuelta`` (se listan las ordenanzas disponibles).
 
 Jamás se inventa una ordenanza ni se presenta una inferencia como
 dato oficial de conformidad.
@@ -46,6 +50,30 @@ def resolver_ordenanza(ctx: dict) -> dict:
     if ctx.get('subzona'):
         return {'estado': 'usuario', 'ordenanza': ctx['subzona'],
                 'confianza': 'alta', 'origen': 'selección del usuario'}
+
+    # Nivel 1b: capa vectorial oficial municipal (WFS punto-en-
+    # polígono). Es la fuente más fiable: geometría oficial del
+    # planeamiento, no una heurística sobre atributos.
+    wfs = ctx.get('ordenanza_wfs') or {}
+    if wfs.get('data_quality') == 'official':
+        if wfs.get('ambigua'):
+            return {'estado': 'ambigua', 'ordenanza': None,
+                    'candidatas': wfs.get('candidatas') or [],
+                    'confianza': 'baja',
+                    'origen': wfs.get('fuente'),
+                    'instrumento': wfs.get('instrumento')}
+        if wfs.get('ordenanza'):
+            code = wfs['ordenanza']
+            key, found = buscar_ordenanza(ords, code)
+            return {'estado': 'oficial', 'ordenanza': key or code,
+                    'params': (found or {}).get('params') or {},
+                    'titulo': (found or {}).get('titulo'),
+                    'confianza': 'alta',
+                    'origen': wfs.get('fuente'),
+                    'instrumento': wfs.get('instrumento'),
+                    'nota': wfs.get('nota'),
+                    'codigo_zona': code,
+                    'candidatas': [key or code]}
 
     if not ords:
         return {'estado': 'no_resuelta', 'ordenanza': None,

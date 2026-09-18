@@ -44,6 +44,7 @@ Funciones Python directas (no MCP aún). Cada una devuelve `data_quality` explí
 |---|---|---|
 | `get_catastro_data` | Catastro OVC/INSPIRE | refcat, dirección, uso principal, usos por superficie, año, superficie construida |
 | `get_siotuga_clasificacion` | SIOTUGA WFS / copia vectorial local | clase_ley (SUC…), uso_zona, denominación, categoría |
+| `get_ordenanza_punto` | WFS municipal propio (`src/muni_wfs.py`, p. ej. GeoServer Concello de Vigo) | código de ordenanza SUC por punto-en-polígono sobre cartografía oficial |
 | `get_building_data` | MDS IDEE WCS / LAZ / Overture | altura medida (P90), huella |
 | `get_ordenanzas_params` | `normativa_params` sobre PDFs PGOM descargados | ocupación máx, edificabilidad, retranqueos, altura máx, parcela mín — con página oficial |
 | `get_inventario_planeamiento` | CSV SIOTUGA | instrumento vigente y fecha de aprobación |
@@ -111,7 +112,7 @@ Panel de chat con: contexto del último edificio seleccionado (municipio/subzona
 > implementación de la guía del experto (sección 12). Se conservan
 > aquí como estado residual.
 
-1. **Parcela → ordenanza**: resuelta parcialmente — `ordinance_resolver` intenta código oficial en atributos de zona (`oficial`), coincidencia por título (`inferida`, siempre etiquetada "verificar"), y marca `ambigua`/`no_resuelta` sin elegir. Lo que no se puede resolver oficialmente sigue pidiendo selección manual. Residual: depende de que la zona SIOTUGA lleve código/denominación compatible.
+1. **Parcela → ordenanza**: **Vigo resuelto de forma oficial** — `src/muni_wfs.py` consulta la capa `vigo:36057_pxom_202107_ai02_4ordsuc` del GeoServer municipal (`mapas-ogc.vigo.org`) con punto-en-polígono real (shapely `contains`, no solo bbox) y devuelve el código con `data_quality: official` + instrumento declarado. ⚠ El identificador de capa lleva fecha 2021-07: es cartografía oficial del Concello pero debe cotejarse con el PXOM 2025 si difiere (la respuesta lo declara). Cadena de degradación: WFS oficial → código en atributos SIOTUGA (`oficial`) → título (`inferida`, "verificar") → `ambigua`/`no_resuelta` sin elegir. Residual: solo Vigo tiene capa configurada (`ORDSUC_LAYERS`); otros municipios siguen con la cadena anterior.
 2. **RAG híbrido activo**: BM25 + sinónimos ES/GL + embeddings ALIA (561 chunks precalculados en `datos/rag/`) + RRF k=60 + reranker legal remoto. Si el microservicio :8003 está caído degrada a BM25+sinónimos sin fallar.
 3. **Memoria multi-turno**: `chat_id` (frontend lo persiste en localStorage), ventana de 3 turnos, TTL 30 min, correferencias ("ahí", "y si…") que reutilizan el edificio anterior. RAM; producción → Redis.
 4. **Intención**: regex para casos fiables + LLM few-shot que refina el bucket ambiguo "normativa" con timeout de 5 s.
@@ -128,7 +129,7 @@ Panel de chat con: contexto del último edificio seleccionado (municipio/subzona
 
 | # | Propuesta | Esfuerzo | Impacto |
 |---|---|---|---|
-| P0.1 | **Resolver parcela → ordenanza**: capas vectoriales municipales (ArcGIS/GeoServer propios de cada concello), OCR del plano raster, o confirmación asistida del selector actual | Alto | Elimina la principal brecha de fiabilidad |
+| P0.1 | ~~Resolver parcela → ordenanza~~ **HECHO para Vigo** (`muni_wfs.py`, GeoServer oficial). Pendiente: mismo patrón para el resto de municipios de trabajo de AC8 | Alto | Elimina la principal brecha de fiabilidad |
 | P0.2 | **Detector de contradicciones**: si altura medida > altura máx de la ordenanza asignada (caso 23 m vs U6=7 m) → aviso explícito de posible ordenanza mal asignada | Bajo | Evita presentar datos incompatibles como válidos |
 | P0.3 | **Ampliar corpus**: Reglamento LSG (Decreto 143/2016), CTE-DB-SI/HE pertinentes, y descarga masiva de PGOM de los municipios de trabajo de AC8 | Medio | Respuestas más completas y locales |
 | P0.4 | **Batería de evaluación**: 20-30 preguntas reales de arquitectos con respuesta esperada → script de regresión que mida precisión de citas | Medio | Permite medir mejoras objetivamente |
@@ -155,11 +156,12 @@ Panel de chat con: contexto del último edificio seleccionado (municipio/subzona
 
 ## 11. Estado verificado
 
-- 386 tests pasan (49 del asistente: orquestador + mejoras). Herméticos: sin red, sin :8003.
+- 396 tests pasan (60 del asistente: orquestador + mejoras). Herméticos: sin red, sin :8003.
 - `/qa/health`: provider `openrouter`, `servicio_embeddings: true`, `embeddings_disponibles: true`, `memoria` activa.
 - Microservicio :8003 (`venv_rag`, Python 3.13): embedder + reranker ALIA legal ES cargados y respondiendo.
 - En vivo verificado: contexto <1 s · multi-turno con correferencia ("y ahí puedo hacer una piscina" sin coordenadas → resolvió la parcela previa) · cambio de uso → `check_cambio_uso` NHV con `no_verificable` · SSE `contexto→fuentes→final` sin tokens en preguntas de contexto.
-- Commits: `ff2dfe0` (asistente completo) → `1c11ee5`, `3adcd4c`, `84bde50`, `ed2a6c1` → implementación guía del experto (este cambio).
+- **Vigo en vivo**: punto dentro de polígono SUC → «U1 MANTEMENTO DA EDIFICACIÓN EXISTENTE — oficial (GeoServer municipal Concello de Vigo)»; «¿edificabilidad máxima de U6?» → «0,7 m²/m² [FUENTE 1]» citando el PDF oficial pág. 179; punto fuera de capa → `unavailable` limpio.
+- Commits: `ff2dfe0` (asistente completo) → `1c11ee5`, `3adcd4c`, `84bde50`, `ed2a6c1` → `7488cec` (guía del experto) → PXOM 2025 + WFS municipal de Vigo (este cambio).
 
 ## 12. Guía del experto implementada — módulos nuevos
 
@@ -170,9 +172,11 @@ chat_id → memoria de sesión (3 turnos, TTL 30 min)
     ↓
 clasificar_intencion (regex fiable → LLM few-shot solo si ambiguo, 5 s)
     ↓
-herramientas en paralelo (Catastro, SIOTUGA, altura, ordenanzas, inventario)
+herramientas en paralelo (Catastro, SIOTUGA, altura, ordenanzas,
+                         inventario, WFS ordenanza municipal)
     ↓
-resolver_ordenanza (oficial > inferida > ambigua > no_resuelta)
+resolver_ordenanza (WFS oficial > atributos oficial > inferida >
+                    ambigua > no_resuelta)
     ↓
 detectar_contradicciones (⚠ altura medida vs ordenanza, parcela mínima…)
     ↓
@@ -191,7 +195,8 @@ validar_respuesta (citas+números) → validacion_semantica (opt., env-gated)
 | Memoria | `src/agent/memory.py` | sin `chat_id` → comportamiento anterior |
 | Sinónimos | `src/rag/synonyms.py` | falla → query original |
 | Híbrido | `src/rag/hybrid_search.py` + `embedding_service.py` (:8003, `venv_rag` Py3.13) | servicio caído → BM25+sinónimos |
-| Ordenanza | `src/agent/ordinance_resolver.py` | sin resolución → lista oficial + petición manual |
+| Ordenanza | `src/agent/ordinance_resolver.py` + `src/muni_wfs.py` | WFS caído/sin capa → atributos → inferida → lista oficial + petición manual |
+| Ordenanza citada | inyección determinista en `preparar_consulta` | pregunta sin código → solo RAG |
 | Contradicciones | `src/agent/contradictions.py` | siempre activo, solo avisa |
 | Cambio de uso | `tools.check_cambio_uso` → `habitabilidad_checker` | sin medidas → `no_verificable` + requisitos |
 | Validación semántica | `validator.validacion_semantica` | `SEMANTIC_VALIDATION=1`; fallos → heurística |
@@ -201,9 +206,16 @@ validar_respuesta (citas+números) → validacion_semantica (opt., env-gated)
 
 **Nota honesta sobre la intención LLM**: el few-shot solo se invoca cuando el regex cae en el bucket ambiguo "normativa" — los casos fiables (saludo, contexto, cálculo) no pagan la latencia de una llamada al tier gratuito.
 
+### PXOM 2025 de Vigo: PDF oficial + capa vectorial municipal
+
+- **PDF**: `36057_PXOM_202502_AD01_NU_01NU_cas.pdf` descargado de `xmu.vigo.org` (URL oficial directa, sin autenticación) a `datos/normativa/36057/` y registrado en el manifiesto municipal con su URL (`registrar_pdf_externo` en `src/siotuga/document_client.py`). El extractor de `normativa_params` sacó **19 ordenanzas**; verificación U6 = valores exactos del experto (pág. 179: edif. 0,70 · ocup. 40% · recuados 3/2/3 · altura 7 m · parcela mín. 250 m²).
+- **Capa vectorial**: `vigo:36057_pxom_202107_ai02_4ordsuc` en `mapas-ogc.vigo.org/geoserver/ows` (WFS 2.0.0, `bbox` + `srsName=EPSG:4326` — sin srsName la geometría vuelve en UTM 29N nativo). Campo `ordenanza` con códigos de subzona (`U1.1`, `U6.5`…) que `buscar_ordenanza` resuelve por prefijo a la ordenanza del PDF (`U1`, `U6`) conservando `codigo_zona`.
+- **Ordenanza citada en la pregunta**: si el texto menciona un código (`«edificabilidad de la U6»`), sus parámetros extraídos del PDF oficial entran como `[FUENTE 1]` con `url#page=N` — determinista, no depende del ranking BM25.
+- **Caveat de vintage**: la capa `…_202107_…` es cartografía oficial municipal pero anterior a la aprobación definitiva del PXOM 2025; el instrumento se declara con el identificador exacto y una nota de cotejo — nunca se presenta como "PXOM 2025" sin verificación.
+
 ## 13. Preguntas abiertas para el experto
 
-1. ¿La asociación parcela→ordenanza debe resolverse con datos vectoriales oficiales (esfuerzo alto) o basta el selector asistido + verificación profesional?
+1. ~~¿La asociación parcela→ordenanza…?~~ Resuelta para Vigo con el GeoServer municipal. Abierta para el resto de municipios de AC8: ¿qué otros concellos publican capa WFS/ArcGIS de ordenanzas y cómo priorizarlos?
 2. ¿Qué 20-30 preguntas reales haría un arquitecto de AC8? (para la batería de evaluación P0.4)
 3. ¿Prioridad: más calculadores normativos (cambio de uso NHV) o mejor recuperación (embeddings)?
 4. ¿Vale un segundo entorno Python ≤3.13 solo para el reranker, o preferimos cero dependencias pesadas?

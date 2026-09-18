@@ -63,6 +63,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
 | Documentos oficiales SIOTUGA (PDFs normativa, sesión+token) | `src/siotuga/document_client.py` |
+| Ordenanza SUC por punto vía WFS municipal propio (Vigo GeoServer) | `src/muni_wfs.py` |
 | RAG normativo sobre PDFs oficiales (índice BM25 + citas) | `src/normativa_rag.py` |
 | Cliente Catastro (OVC/INSPIRE/BU/ATOM) | `src/catastro/client.py` |
 | Alturas LiDAR + huellas Overture | `src/building_data/height_extractor.py` |
@@ -151,11 +152,16 @@ seleccionado en el visor con respuestas citadas a fuentes oficiales.
      bucket ambiguo "normativa" con timeout de 5 s — nunca bloquea.
   2. Herramientas en paralelo (`src/agent/tools.py`): Catastro,
      clasificación SIOTUGA, altura medida, parámetros de ordenanza del
-     PGOM, inventario municipal.
-  3. Resolución parcela→ordenanza (`ordinance_resolver`): código oficial
-     en atributos de zona → `oficial`; título coincidente → `inferida`;
-     varios → `ambigua`; nada → `no_resuelta` + lista de ordenanzas.
-     Nunca se inventa ni se elige entre candidatas.
+     PGOM, inventario municipal, ordenanza por punto vía WFS municipal
+     (`muni_wfs` — Vigo: GeoServer `mapas-ogc.vigo.org`, capa
+     `4ordsuc`; `srsName=EPSG:4326` imprescindible o la geometría
+     vuelve en UTM 29N).
+  3. Resolución parcela→ordenanza (`ordinance_resolver`): WFS municipal
+     oficial → código en atributos de zona → `oficial`; título
+     coincidente → `inferida`; varios → `ambigua`; nada →
+     `no_resuelta` + lista de ordenanzas. Nunca se inventa ni se elige
+     entre candidatas. Códigos de subzona (`U6.5`) resuelven por
+     prefijo a la ordenanza del PDF (`U6`).
   4. Contradicciones (`contradictions.detectar_contradicciones`):
      altura medida vs altura máx. de la ordenanza, parcela vs parcela
      mínima, edificabilidad real vs máxima → avisos `⚠` visibles.
@@ -163,6 +169,9 @@ seleccionado en el visor con respuestas citadas a fuentes oficiales.
      (corpus + PDFs municipales) + embeddings del microservicio :8003
      fusionados con RRF k=60 + reranker legal ALIA remoto; sin servicio
      queda BM25+sinónimos — nunca falla.
+     Si la pregunta cita una ordenanza concreta («U6»), sus parámetros
+     extraídos del PDF oficial entran como `[FUENTE 1]` con
+     `url#page=N` — determinista, sin depender del ranking.
   6. Cálculo: `check_piscina_viability` (ocupación) o
      `check_cambio_uso` (NHV Decreto 128/2023 vía
      `habitabilidad_checker` — sin medidas devuelve `no_verificable`,

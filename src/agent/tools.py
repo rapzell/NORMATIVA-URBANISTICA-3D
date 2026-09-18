@@ -50,6 +50,21 @@ def get_building_data(lon: float, lat: float,
         return {'altura': {'data_quality': 'unavailable', 'error': str(e)}}
 
 
+def get_ordenanza_punto(lon: float, lat: float, ine: str | None) -> dict:
+    """Ordenanza SUC oficial del punto vía capa vectorial municipal
+    (GeoServer/WFS propio del concello, p. ej. Vigo)."""
+    if not ine:
+        return {'data_quality': 'unavailable',
+                'error': 'Municipio sin código INE resuelto'}
+    try:
+        from src.muni_wfs import consultar_ordenanza_punto
+        return consultar_ordenanza_punto(lon, lat, ine) or \
+            {'data_quality': 'unavailable',
+             'error': 'Sin capa de ordenanzas para el municipio'}
+    except Exception as e:
+        return {'data_quality': 'unavailable', 'error': str(e)}
+
+
 def get_ordenanzas_params(ine: str | None,
                           subzona: str | None = None) -> dict:
     """Parámetros normativos oficiales extraídos del PGOM (por ordenanza)."""

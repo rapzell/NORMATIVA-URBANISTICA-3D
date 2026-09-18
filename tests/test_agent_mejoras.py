@@ -6,6 +6,7 @@ semántica. Todo hermético: sin red, sin servicio :8003 ni LLM real.
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -326,6 +327,165 @@ def test_resolver_usuario_manda():
     from src.agent.ordinance_resolver import resolver_ordenanza
     r = resolver_ordenanza(_ctx_res(recinto='U10', subzona='U4'))
     assert r['estado'] == 'usuario' and r['ordenanza'] == 'U4'
+
+
+def test_orquestador_ordenanza_citada_fuente_determinista(monkeypatch):
+    """«¿edificabilidad de U6?» → los parámetros extraídos del PDF
+    entran como FUENTE 1 con página trazada, sin depender del BM25."""
+    monkeypatch.setattr(
+        orchestrator, '_contexto_edificio',
+        lambda *a, **k: ({
+            'municipio': 'Vigo', 'resumen': {},
+            'ordenanzas': {'ordenanzas': {
+                'U6': {'titulo': 'VIVIENDA UNIFAMILIAR',
+                       'params': {'edificabilidad_max_m2_m2': 0.7},
+                       'trazas': {'edificabilidad_max_m2_m2':
+                                  {'pagina': 179}},
+                       'fuente': 'pxom.pdf pág. 179'}}},
+            'ordenanzas_params': {}}, ['catastro']))
+    monkeypatch.setattr(
+        tools, 'search_normativa',
+        lambda *a, **k: {'fragmentos': [], 'n_corpus': 0,
+                         'n_municipal': 0, 'rerank': False})
+    monkeypatch.setattr(
+        'src.model_gateway.generate_with_fallback',
+        lambda *a, **k: 'La U6 permite 0,70 m²/m² [FUENTE 1]')
+    r = orchestrator.responder_consulta_edificio(
+        'que edificabilidad tiene la ordenanza U6', municipio='Vigo')
+    f1 = r['fuentes'][0]
+    assert f1['pagina'] == 179
+    assert 'U6' in (f1.get('extracto') or '')
+    assert '0.7' in (f1.get('extracto') or '')
+
+
+# ---------- capa vectorial municipal (muni_wfs + resolver) ----------
+
+def _wfs_geojson(codes):
+    """Un polígono cuadrado por código; el primero cubre el punto."""
+    feats = []
+    for i, code in enumerate(codes):
+        x0, y0 = (-8.72, 42.23) if i == 0 else (-8.60, 42.30)
+        feats.append({'type': 'Feature',
+                      'properties': {'ordenanza': code},
+                      'geometry': {'type': 'Polygon', 'coordinates': [[
+                          [x0, y0], [x0 + 0.005, y0],
+                          [x0 + 0.005, y0 + 0.005], [x0, y0 + 0.005],
+                          [x0, y0]]]}})
+    return {'type': 'FeatureCollection', 'features': feats}
+
+
+def test_muni_wfs_punto_en_poligono():
+    from src import muni_wfs
+
+    class R:
+        def json(self):
+            return _wfs_geojson(['U8'])
+
+    with patch('src.muni_wfs.requests.get', return_value=R()):
+        r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
+    assert r['data_quality'] == 'official'
+    assert r['ordenanza'] == 'U8'
+    assert 'Vigo' in r['fuente']
+
+
+def test_muni_wfs_punto_fuera_de_capa():
+    from src import muni_wfs
+
+    class R:
+        def json(self):
+            return _wfs_geojson([])
+
+    with patch('src.muni_wfs.requests.get', return_value=R()):
+        r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
+    assert r['data_quality'] == 'unavailable'
+
+
+def test_muni_wfs_error_red_degrada():
+    from src import muni_wfs
+    with patch('src.muni_wfs.requests.get',
+               side_effect=RuntimeError('timeout')):
+        r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
+    assert r['data_quality'] == 'unavailable'
+
+
+def test_muni_wfs_ambigua_dos_poligonos():
+    from src import muni_wfs
+
+    class R:
+        def json(self):
+            g = _wfs_geojson(['U6'])
+            g['features'].append({
+                'type': 'Feature',
+                'properties': {'ordenanza': 'U8'},
+                'geometry': {'type': 'Polygon', 'coordinates': [[
+                    [-8.72, 42.23], [-8.71, 42.23],
+                    [-8.71, 42.24], [-8.72, 42.24],
+                    [-8.72, 42.23]]]}})
+            return g
+
+    with patch('src.muni_wfs.requests.get', return_value=R()):
+        r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
+    assert r['ambigua'] is True
+    assert set(r['candidatas']) == {'U6', 'U8'}
+    assert r['ordenanza'] is None
+
+
+def test_muni_wfs_sin_capa_municipio():
+    from src import muni_wfs
+    assert muni_wfs.consultar_ordenanza_punto(
+        -8.7, 42.2, '99999') is None
+
+
+def test_resolver_wfs_oficial():
+    """La capa vectorial oficial resuelve 'oficial' con trazabilidad."""
+    from src.agent.ordinance_resolver import resolver_ordenanza
+    ctx = _ctx_res()
+    ctx['ordenanza_wfs'] = {
+        'data_quality': 'official', 'ordenanza': 'U10',
+        'candidatas': ['U10'], 'fuente': 'GeoServer municipal',
+        'instrumento': 'PXOM Vigo'}
+    r = resolver_ordenanza(ctx)
+    assert r['estado'] == 'oficial'
+    assert r['ordenanza'] == 'U10'
+    assert r['origen'] == 'GeoServer municipal'
+    assert r['params'].get('altura_maxima_m') == 21.0
+
+
+def test_resolver_wfs_oficial_codigo_no_extraido():
+    """El WFS da subzona ('U6.5'); el PDF la ordenanza ('U6') — se
+    resuelve por prefijo y se conserva el código de zona original."""
+    from src.agent.ordinance_resolver import resolver_ordenanza
+    ctx = _ctx_res()
+    ctx['ordenanza_wfs'] = {
+        'data_quality': 'official', 'ordenanza': 'U6.5',
+        'candidatas': ['U6.5'], 'fuente': 'GeoServer municipal'}
+    r = resolver_ordenanza(ctx)
+    assert r['estado'] == 'oficial'
+    assert r['ordenanza'] == 'U6'
+    assert r['codigo_zona'] == 'U6.5'
+
+
+def test_resolver_wfs_ambigua_no_elige():
+    from src.agent.ordinance_resolver import resolver_ordenanza
+    ctx = _ctx_res()
+    ctx['ordenanza_wfs'] = {
+        'data_quality': 'official', 'ordenanza': None,
+        'ambigua': True, 'candidatas': ['U6', 'U8'],
+        'fuente': 'GeoServer municipal'}
+    r = resolver_ordenanza(ctx)
+    assert r['estado'] == 'ambigua'
+    assert set(r['candidatas']) == {'U6', 'U8'}
+
+
+def test_resolver_wfs_unavailable_cae_a_atributos():
+    """WFS caído no rompe: se sigue con atributos/títulos."""
+    from src.agent.ordinance_resolver import resolver_ordenanza
+    ctx = _ctx_res(recinto='U10', denom='MANZANA 12')
+    ctx['ordenanza_wfs'] = {'data_quality': 'unavailable',
+                            'error': 'WFS municipal no responde'}
+    r = resolver_ordenanza(ctx)
+    assert r['estado'] == 'oficial' and r['ordenanza'] == 'U10'
+    assert r['origen'] != 'GeoServer municipal'
 
 
 # ---------- validación semántica (env-gated) ----------

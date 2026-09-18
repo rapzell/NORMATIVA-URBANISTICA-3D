@@ -178,7 +178,9 @@ def _origen_ordenanza(ord_p: dict, ctx: dict) -> str:
     if est == 'usuario':
         return ' — seleccionada por el usuario'
     if est == 'oficial':
-        return f" — oficial ({res.get('origen') or ord_p.get('fuente')})"
+        origen = res.get('origen') or ord_p.get('fuente')
+        inst = f"; {res['instrumento']}" if res.get('instrumento') else ''
+        return f" — oficial ({origen}{inst})"
     return f" — oficial, {ord_p.get('fuente')}"
 
 
@@ -288,6 +290,9 @@ def _contexto_edificio(lon: float | None, lat: float | None,
                 lon, lat, ine)
             futs['building'] = ex.submit(
                 _safe, 'building', tools.get_building_data, lon, lat)
+            futs['ordenanza_wfs'] = ex.submit(
+                _safe, 'ordenanza_wfs', tools.get_ordenanza_punto,
+                lon, lat, ine)
         futs['ordenanzas'] = ex.submit(
             _safe, 'ordenanzas', tools.get_ordenanzas_params, ine, subzona)
         futs['inventario'] = ex.submit(
@@ -334,7 +339,9 @@ def _contexto_edificio(lon: float | None, lat: float | None,
         ctx['ordenanza_resolucion'] = {
             'estado': 'usuario' if subzona else 'oficial',
             'ordenanza': ords['ordenanza'], 'confianza': 'alta'}
-    elif not subzona and ords.get('ordenanzas'):
+    elif not subzona and (ords.get('ordenanzas')
+                          or (ctx.get('ordenanza_wfs') or {})
+                          .get('data_quality') == 'official'):
         try:
             from src.agent.ordinance_resolver import resolver_ordenanza
             res = resolver_ordenanza(ctx)
@@ -520,6 +527,54 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                                      municipio=municipio, top_k=top_k)
         fragmentos = rag.get('fragmentos') or []
         herramientas.append('search_normativa')
+
+    # Si la pregunta cita una ordenanza concreta («U6», «SRPA»…), sus
+    # parámetros extraídos del PDF oficial entran como fuente
+    # determinista con página trazada — no depende del ranking BM25.
+    ords_map = (ctx.get('ordenanzas') or {}).get('ordenanzas') or {}
+    if ords_map and pregunta:
+        from src.normativa_params import buscar_ordenanza
+        for tok in re.findall(r'\b([A-Za-z]{1,4}\d{1,2}(?:\.\d+)?)\b',
+                              pregunta):
+            key, found = buscar_ordenanza(ords_map, tok)
+            if found:
+                trazas = found.get('trazas') or {}
+                paginas = sorted({(t or {}).get('pagina')
+                                  for t in trazas.values()} - {None})
+                fichero = (found.get('fuente') or '').split(' pág')[0]
+                url_pdf = None
+                try:
+                    from src.normativa_rag import indexar_municipio
+                    url_pdf = next(
+                        (c.get('url') for c in
+                         (indexar_municipio(ine).get('chunks') or [])
+                         if c.get('fichero') == fichero), None)
+                except Exception:
+                    pass
+                if url_pdf and paginas:
+                    url_pdf = f"{url_pdf}#page={paginas[0]}"
+                texto = (f"ORDENANZA {key} — {found.get('titulo') or ''}. "
+                         + '; '.join(f"{k}: {v}" for k, v in
+                                     (found.get('params') or {}).items()))
+                ctx['ordenanza_consultada'] = {
+                    'codigo': key, 'titulo': found.get('titulo'),
+                    'params': found.get('params') or {},
+                    'fuente': found.get('fuente')}
+                fragmentos = [{
+                    'documento': 'Normativa urbanística municipal '
+                                 '(PDF oficial)',
+                    'referencia': fichero,
+                    'pagina': paginas[0] if paginas else None,
+                    'texto': texto,
+                    'extracto': texto,
+                    'fuente': 'Parámetros extraídos del PDF oficial',
+                    'url': url_pdf,
+                    'ambito': 'municipal',
+                    'score': 99.0,
+                }] + fragmentos
+                for i, f in enumerate(fragmentos):
+                    f['id'] = i + 1
+                break
 
     calculo = None
     if _PISCINA_RE.search(pregunta or ''):

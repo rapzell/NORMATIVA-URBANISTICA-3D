@@ -250,6 +250,50 @@ def manifiesto_municipio(ine_code: str) -> dict:
     return _load_manifest(ine_code)
 
 
+def registrar_pdf_externo(ine_code: str, fichero: str, url: str,
+                          seccion: str = 'NU',
+                          descripcion: str | None = None) -> dict:
+    """Registra en el manifiesto un PDF descargado fuera de SIOTUGA
+    (p. ej. la NU del PXOM desde la web municipal). Así
+    ``indexar_municipio`` lo incluye en el RAG y ``normativa_params``
+    lo procesa, conservando la URL oficial para las citas.
+    """
+    import hashlib
+    dest = os.path.join(NORMATIVA_DIR, str(ine_code), fichero)
+    manifest = _load_manifest(ine_code)
+    ficheros = [f for f in manifest.get('ficheros', [])
+                if f.get('pathesperado') != fichero]
+    entry = {
+        'pathesperado': fichero,
+        'seccion': seccion,
+        'seccion_desc': descripcion or
+                        'Normativa urbanística (web municipal)',
+        'component_id': None,
+        'descripcion': descripcion or fichero,
+        'url': url,
+        'local_path': dest,
+    }
+    if os.path.exists(dest):
+        with open(dest, 'rb') as fh:
+            content = fh.read()
+        entry.update({
+            'status': 'downloaded',
+            'sha256': hashlib.sha256(content).hexdigest(),
+            'size': len(content),
+            'downloaded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ',
+                                           time.gmtime()),
+        })
+    else:
+        entry['status'] = 'error'
+        entry['error'] = 'fichero no encontrado en disco'
+    ficheros.append(entry)
+    manifest['ficheros'] = ficheros
+    manifest['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ',
+                                         time.gmtime())
+    _save_manifest(ine_code, manifest)
+    return entry
+
+
 def descargar_documentos(
     ine_code: str,
     iddoc: int | None = None,
