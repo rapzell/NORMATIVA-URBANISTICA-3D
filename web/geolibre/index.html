@@ -2320,10 +2320,19 @@ function appendChatMsg(role, html) {
   return div;
 }
 
+function mdLite(s) {
+  return escapeHtml(s)
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/^###\s*(.+)$/gm, '<b>$1</b>')
+    .replace(/^>\s*(.+)$/gm, '<i>$1</i>')
+    .replace(/\n/g, '<br>');
+}
+
 function renderChatAnswer(data) {
-  let html = `<span class="bubble">${escapeHtml(data.respuesta || 'Sin respuesta')}</span>`;
+  let html = `<span class="bubble">${mdLite(data.respuesta || 'Sin respuesta')}</span>`;
   if (data.modo) {
-    const badge = data.modo === 'llm' ? 'IA' : 'extractivo';
+    const badges = { llm: 'IA', contexto: 'contexto', heuristico: 'extractivo' };
+    const badge = badges[data.modo] || 'extractivo';
     html += `<span class="badge-modo ${data.modo === 'llm' ? 'llm' : 'heuristico'}">${badge}</span>`;
   }
   const calc = data.calculo;

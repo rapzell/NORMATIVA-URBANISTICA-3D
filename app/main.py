@@ -1348,6 +1348,14 @@ async def qa_edificio_stream(req: QAEdificioRequest):
                                       'fuentes': fuentes},
                                      ensure_ascii=False) + '\n\n'
 
+        if prep.get('intencion') != 'normativa':
+            final = finalizar_respuesta(
+                prep, None, False, 'respuesta de contexto')
+            yield 'data: ' + _json.dumps(
+                {'tipo': 'final', 'resultado': final},
+                ensure_ascii=False) + '\n\n'
+            return
+
         respuesta, llm_ok, motivo = None, False, 'sin proveedor LLM'
         try:
             from src.model_gateway import stream_with_fallback
