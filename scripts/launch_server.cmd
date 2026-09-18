@@ -25,8 +25,8 @@ REM Perfil de modelo local para el asistente IA (fast|balanced). Se usa como fal
 set MODEL_PROFILE=balanced
 REM Gateway IA multi-proveedor del asistente agéntico (/qa/edificio).
 REM Si existe api.txt en la raiz del repo con la clave de OpenRouter,
-REM el gateway la detecta solo y usa el modelo gratuito por defecto
-REM (meta-llama/llama-3.3-70b-instruct:free). api.txt esta gitignored.
+REM el gateway la detecta solo y usa una cadena de modelos gratuitos
+REM (rapidos primero, con respaldo). api.txt esta gitignored.
 REM Para forzar otro proveedor o cadena de respaldo:
 REM set MODEL_PROVIDER=openrouter
 REM set OPENROUTER_API_KEY=tu_clave_openrouter

@@ -13,7 +13,7 @@ TIMEOUT_S = float(os.getenv("TIMEOUT_S", "300"))
 
 _OPENAI_COMPAT_PRESETS: Dict[str, Dict[str, str]] = {
     "openai": {"base_url": "", "model_env": "OPENAI_MODEL", "api_key_env": "OPENAI_API_KEY"},
-    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model_env": "OPENROUTER_MODEL", "api_key_env": "OPENROUTER_API_KEY", "default_model": "deepseek/deepseek-v4-flash-0731:free"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model_env": "OPENROUTER_MODEL", "api_key_env": "OPENROUTER_API_KEY", "default_model": "dots-studio/dots-3-note-preview:free,cohere/north-mini-code:free,deepseek/deepseek-v4-flash-0731:free"},
     "groq": {"base_url": "https://api.groq.com/openai/v1", "model_env": "GROQ_MODEL", "api_key_env": "GROQ_API_KEY", "default_model": "llama-3.1-8b-instant"},
     "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model_env": "GEMINI_MODEL", "api_key_env": "GEMINI_API_KEY", "default_model": "gemini-2.0-flash"},
     "mistral": {"base_url": "https://api.mistral.ai/v1", "model_env": "MISTRAL_MODEL", "api_key_env": "MISTRAL_API_KEY", "default_model": "mistral-small-latest"},
@@ -118,8 +118,8 @@ def _call_openai_compatible(prompt: str, provider: str, timeout: float) -> str:
         raise RuntimeError(f"openai_sdk_missing: {e}")
 
     cfg = _get_provider_config(provider)
-    model_name = cfg["model_name"]
-    if not model_name:
+    model_names = [m.strip() for m in cfg["model_name"].split(",") if m.strip()]
+    if not model_names:
         raise RuntimeError(f"{provider}_model_missing")
 
     client_kwargs = {}
@@ -128,18 +128,24 @@ def _call_openai_compatible(prompt: str, provider: str, timeout: float) -> str:
     if cfg["base_url"]:
         client_kwargs["base_url"] = cfg["base_url"]
 
-    try:
-        client = OpenAI(**client_kwargs)
-        resp = client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=_get_temperature(),
-            max_tokens=_get_max_tokens(),
-            timeout=timeout,
-        )
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        raise RuntimeError(f"{provider}_error: {e}")
+    last_err: Exception | None = None
+    for model_name in model_names:
+        try:
+            client = OpenAI(**client_kwargs)
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=_get_temperature(),
+                max_tokens=_get_max_tokens(),
+                timeout=timeout,
+            )
+            content = (resp.choices[0].message.content or "").strip()
+            if content:
+                return content
+            last_err = RuntimeError(f"{model_name}: respuesta vacia")
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"{provider}_error: {last_err}")
 
 
 
