@@ -30,6 +30,16 @@
       "url": "https://territorioeurbanismo.xunta.gal/sites/default/files/Texto_refundido_NNTTPP_abril2022.pdf",
       "url_oficial": "https://www.xunta.gal/dog/Publicados/2019/20191125/AnuncioG0532-101019-20595_gl.html",
       "nota": "Texto refundido tras la Orden de 8 de abril de 2022."
+    },
+    {
+      "id": "pba_2018",
+      "fichero": "pba_normativa_ordenanzas_decreto_83_2018.pdf",
+      "titulo": "Plan Basico Autonomico de Galicia - normativa y ordenanzas tipo (Decreto 83/2018, DOG 162 de 27/08/2018) [supletorio]",
+      "ambito": "autonomico",
+      "fuente": "Xunta de Galicia - Conselleria de Medio Ambiente e Ordenacion do Territorio",
+      "url": "https://territorioeurbanismo.xunta.gal/sites/default/files/plan-basico-autonomico/es/20200609_05_Normativa_cast_0.pdf",
+      "url_oficial": "https://www.xunta.gal/dog/Publicados/2018/20180827/AnuncioG0422-090818-0001_es.html",
+      "nota": "Normativa SUPLETORIA: aplica solo donde el planeamiento municipal no fija el parametro o el municipio carece de planeamiento general. Nunca prevalece sobre el planeamiento municipal vigente."
     }
   ]
 }

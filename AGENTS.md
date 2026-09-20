@@ -54,7 +54,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Panel multi-proyecto | `web/geolibre/index.html` (localStorage) |
 | Gateway IA | `src/model_gateway.py` |
 | Asistente agéntico normativa (orquestador/herramientas/validador) | `src/agent/` |
-| Corpus normativo autonómico (Ley 2/2016, NHV, NTPU — índice por artículo) | `src/rag/corpus.py`, `datos/corpus/` |
+| Corpus normativo autonómico (Ley 2/2016, NHV, NTPU, PBA — índice por artículo) | `src/rag/corpus.py`, `datos/corpus/` |
 | Búsqueda normativa unificada (corpus + PDFs municipales, rerank opcional) | `src/rag/search.py` |
 | Sinónimos urbanísticos ES/GL + boost por tipo de pregunta | `src/rag/synonyms.py` |
 | RAG híbrido (embeddings + RRF k=60 + rerank remoto, degradable) | `src/rag/hybrid_search.py` |
@@ -251,7 +251,9 @@ seleccionado en el visor con respuestas citadas a fuentes oficiales.
      el cálculo — nunca calla ni inventa.
 - **Corpus** (`src/rag/corpus.py`): documentos en `datos/corpus/`
   declarados en `_manifest.json` (LSG consolidada enero 2026, NHV
-  comentada v1.2 IGVS, NTPU abril 2022 — descargados de xunta.gal).
+  comentada v1.2 IGVS, NTPU abril 2022, PBA Decreto 83/2018 marcado
+  «supletorio» — solo aplica donde el planeamiento municipal no fija
+  el parámetro — descargados de xunta.gal).
   Chunking por artículo/disposición/anexo con `article_ref`; índice
   cacheado `_corpus_index.json` invalidado por manifiesto+tamaños.
 - **Gateway** (`src/model_gateway.py`): cada proveedor acepta su clave
