@@ -599,8 +599,21 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     ords_map = (ctx.get('ordenanzas') or {}).get('ordenanzas') or {}
     if ords_map and pregunta:
         from src.normativa_params import buscar_ordenanza
-        for tok in re.findall(r'\b([A-Za-z]{1,4}\d{1,2}(?:\.\d+)?)\b',
-                              pregunta):
+        tokens = re.findall(r'\b([A-Za-z]{1,4}\d{1,2}(?:\.\d+)?)\b',
+                            pregunta)
+        # Si la pregunta no cita código pero es sobre la parcela/
+        # normativa y hay ordenanza resuelta o seleccionada, sus
+        # parámetros también entran como fuente determinista.
+        resuelta = (ctx.get('ordenanzas_params') or {}).get('ordenanza')
+        if resuelta and re.search(
+                r'parcela|suelo|terreno|solar|edificio|zona|aqu[ií]|'
+                r'est[ae]|seleccionad|par[aá]metro|edificab|ocupaci|'
+                r'retranqueo|altura|planta|constru|edificar|ordenanza|'
+                r'normativa', pregunta, re.I):
+            tokens.append(resuelta)
+        for tok in tokens:
+            if not tok:
+                continue
             key, found = buscar_ordenanza(ords_map, tok)
             if found:
                 trazas = found.get('trazas') or {}
@@ -618,9 +631,13 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                     pass
                 if url_pdf and paginas:
                     url_pdf = f"{url_pdf}#page={paginas[0]}"
+                params_txt = '; '.join(
+                    f"{k}: {v}" for k, v in
+                    (found.get('params') or {}).items())
                 texto = (f"ORDENANZA {key} — {found.get('titulo') or ''}. "
-                         + '; '.join(f"{k}: {v}" for k, v in
-                                     (found.get('params') or {}).items()))
+                         + params_txt
+                         + (f" {found['nota']}" if found.get('nota')
+                            else ''))
                 ctx['ordenanza_consultada'] = {
                     'codigo': key, 'titulo': found.get('titulo'),
                     'params': found.get('params') or {},
