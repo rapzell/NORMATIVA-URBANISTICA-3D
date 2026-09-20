@@ -169,7 +169,8 @@ def render_solar_exposure_html(analysis: dict[str, Any]) -> str:
     for date_name, data in dates.items():
         hours = data.get("hours_sun_by_orientation", {})
         cells = "".join(f"<td>{esc(f'{hours.get(o, 0):g}')}</td>" for o in ORIENTATIONS)
-        rows += f"<tr><td>{esc(date_name)}</td>{cells}<td>{esc(f'{data.get('daylight_hours', 0):g}')}</td></tr>"
+        daylight = f'{data.get("daylight_hours", 0):g}'
+        rows += f"<tr><td>{esc(date_name)}</td>{cells}<td>{esc(daylight)}</td></tr>"
 
     limitations = "".join(f"<li>{esc(l)}</li>" for l in analysis.get("limitations", []))
 
