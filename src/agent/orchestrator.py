@@ -596,7 +596,14 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     # Si la pregunta cita una ordenanza concreta («U6», «SRPA»…), sus
     # parámetros extraídos del PDF oficial entran como fuente
     # determinista con página trazada — no depende del ranking BM25.
-    ords_map = (ctx.get('ordenanzas') or {}).get('ordenanzas') or {}
+    ords_res = ctx.get('ordenanzas') or {}
+    ords_map = dict(ords_res.get('ordenanzas') or {})
+    # Con ordenanza seleccionada, parametros_subzona devuelve solo
+    # 'resultado' (sin el mapa completo) — sintetizar la entrada para
+    # que la inyección funcione igual.
+    resuelta = (ctx.get('ordenanzas_params') or {}).get('ordenanza')
+    if resuelta and resuelta not in ords_map and ords_res.get('resultado'):
+        ords_map[resuelta] = ords_res['resultado']
     if ords_map and pregunta:
         from src.normativa_params import buscar_ordenanza
         tokens = re.findall(r'\b([A-Za-z]{1,4}\d{1,2}(?:\.\d+)?)\b',
@@ -604,7 +611,6 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
         # Si la pregunta no cita código pero es sobre la parcela/
         # normativa y hay ordenanza resuelta o seleccionada, sus
         # parámetros también entran como fuente determinista.
-        resuelta = (ctx.get('ordenanzas_params') or {}).get('ordenanza')
         if resuelta and re.search(
                 r'parcela|suelo|terreno|solar|edificio|zona|aqu[ií]|'
                 r'est[ae]|seleccionad|par[aá]metro|edificab|ocupaci|'
