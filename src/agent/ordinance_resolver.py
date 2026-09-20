@@ -47,6 +47,56 @@ def resolver_ordenanza(ctx: dict) -> dict:
     clas = ctx.get('clasificacion') or {}
     from src.normativa_params import buscar_ordenanza
 
+    # Ámbito de planeamento singular declarado nos atributos
+    # oficiais do polígono (obsv «API-106», denom numerado en
+    # SUB/SUNC) — a evidencia oficial prevalece sobre unha
+    # selección manual e sobre a ordenanza xeral do SUC.
+    det_ambito = None
+    try:
+        from src.ambitos_service import (detectar_ambito_en_clasificacion,
+                                         get_ambito,
+                                         normalizar_codigo)
+        det_ambito = detectar_ambito_en_clasificacion(clas)
+        if not det_ambito and ctx.get('ambito_input'):
+            code_in = normalizar_codigo(ctx['ambito_input'])
+            if code_in:
+                det_ambito = {'codigo': code_in,
+                              'origen': 'contexto do edificio '
+                                        '(atributos oficiais 3CLAS)',
+                              'confianza': 'alta'}
+    except Exception:
+        det_ambito = None
+
+    if ctx.get('subzona') and det_ambito:
+        # A parcela está nun ámbito con réxime propio: a ordenanza
+        # indicada non aplica — infórmase, non se descarta en silencio.
+        ine_amb0 = ctx.get('ine')
+        if not ine_amb0 and ctx.get('municipio'):
+            try:
+                from app.main import _get_ine_for_municipio
+                ine_amb0 = _get_ine_for_municipio(ctx['municipio'])
+            except Exception:
+                ine_amb0 = None
+        amb0 = get_ambito(ine_amb0, det_ambito['codigo'])
+        nota_amb = (f"A selección «{ctx['subzona']}» non aplica: o "
+                    f"punto está no ámbito {det_ambito['codigo']}"
+                    + (f" ({amb0['instrumento']})"
+                       if amb0 and amb0.get('instrumento') else '')
+                    + ', que se rxe polo seu propio instrumento.')
+        if amb0 and amb0.get('estado_ambito') != 'eliminada':
+            return {'estado': 'oficial', 'ordenanza': None,
+                    'confianza': det_ambito.get('confianza') or 'alta',
+                    'origen': det_ambito.get('origen'),
+                    'ambito': amb0,
+                    'candidatas': [det_ambito['codigo']],
+                    'nota': nota_amb}
+        return {'estado': 'no_resuelta', 'ordenanza': None,
+                'confianza': 'ninguna',
+                'origen': det_ambito.get('origen'),
+                'ambito_detectado': det_ambito['codigo'],
+                'ambito': amb0,
+                'nota': nota_amb}
+
     if ctx.get('subzona'):
         if ords:
             key, found = buscar_ordenanza(ords, ctx['subzona'])
@@ -80,6 +130,91 @@ def resolver_ordenanza(ctx: dict) -> dict:
             return {'estado': 'usuario', 'ordenanza': ctx['subzona'],
                     'confianza': 'alta',
                     'origen': 'selección del usuario'}
+
+    # Nivel 1a: ámbito de planeamiento singular detectado en los
+    # atributos oficiales SIOTUGA del polígono (obsv «API-106»,
+    # denom «201 Guixar…» → SUNC-201). El instrumento incorporado
+    # (ED/PERI/PP/PE) rige el ámbito — el Plan Xeral se remite a él —
+    # por encima de la ordenanza xeral del SUC.
+    try:
+        from src.ambitos_service import get_ambito
+        ine_amb = ctx.get('ine')
+        if not ine_amb and ctx.get('municipio'):
+            from app.main import _get_ine_for_municipio
+            ine_amb = _get_ine_for_municipio(ctx['municipio'])
+        det = det_ambito
+        if det:
+            amb = get_ambito(ine_amb, det['codigo'])
+            wfs = ctx.get('ordenanza_wfs') or {}
+            ord_wfs = (wfs.get('ordenanza')
+                       if wfs.get('data_quality') == 'official'
+                       and not wfs.get('ambigua') else None)
+            if amb and amb.get('estado_ambito') != 'eliminada':
+                res = {'estado': 'oficial',
+                       'ordenanza': None,
+                       'confianza': det.get('confianza') or 'alta',
+                       'origen': det.get('origen'),
+                       'ambito': amb,
+                       'candidatas': [det['codigo']]}
+                if amb.get('tipo') == 'api':
+                    res['nota'] = (
+                        f"Ámbito de planeamento incorporado "
+                        f"{amb['codigo']}"
+                        + (f" ({amb['instrumento']})"
+                           if amb.get('instrumento') else '')
+                        + ' — ríxese polo seu propio instrumento de '
+                          'planeamento, non polas ordenanzas xerais '
+                          'do SUC')
+                else:
+                    res['nota'] = (
+                        f"Ámbito {amb['codigo']}"
+                        + (f" «{amb['denominacion']}»"
+                           if amb.get('denominacion') else '')
+                        + ' — ficha oficial do PXOM')
+                    ref = (amb.get('parametros') or {}) \
+                        .get('ordenanza_referencia')
+                    if ref:
+                        key, found = buscar_ordenanza(ords, ref)
+                        res['ordenanza'] = key or ref
+                        res['ordenanza_es_referencia'] = True
+                        res['params'] = (found or {}).get('params') or {}
+                        res['titulo'] = (found or {}).get('titulo')
+                        res['origen'] += (
+                            f"; ordenanza de referencia da ficha "
+                            f"{amb['codigo']}")
+                if ord_wfs:
+                    res['ordenanza_municipal_wfs'] = ord_wfs
+                return res
+            if amb and amb.get('estado_ambito') == 'eliminada':
+                return {'estado': 'no_resuelta', 'ordenanza': None,
+                        'confianza': 'ninguna',
+                        'origen': det.get('origen'),
+                        'ambito': amb,
+                        'nota': f"El ámbito {amb['codigo']} figura "
+                                'eliminado na normativa vixente — '
+                                'verificar o instrumento aplicable.'}
+            # Código en atributos oficiales pero ficha non indexada:
+            # se reporta como candidato oficial sen parámetros.
+            wfs_gap_pre = None
+            if wfs and wfs.get('data_quality') != 'official' \
+                    and wfs.get('error'):
+                wfs_gap_pre = wfs.get('error')
+            res = {'estado': 'no_resuelta', 'ordenanza': None,
+                   'candidatas': [det['codigo']],
+                   'confianza': 'ninguna',
+                   'origen': det.get('origen'),
+                   'ambito_detectado': det['codigo'],
+                   'nota': f"Os atributos oficiais da zona indican o "
+                           f"ámbito {det['codigo']}, pero a súa ficha "
+                           f"non está indexada — verificar no "
+                           f"planeamento municipal."}
+            if wfs_gap_pre:
+                res['nota'] += f" (Capa de ordenanzas: {wfs_gap_pre})"
+            if ord_wfs:
+                res['ordenanza_municipal_wfs'] = ord_wfs
+            return res
+    except Exception:
+        pass
 
     # Nivel 1b: capa vectorial oficial municipal (WFS punto-en-
     # polígono). Es la fuente más fiable: geometría oficial del

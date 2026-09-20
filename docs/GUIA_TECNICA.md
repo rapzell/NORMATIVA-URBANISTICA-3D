@@ -84,18 +84,25 @@ PDFs oficiales (SIOTUGA documental, datos/normativa/{ine}/)
 **Verificado contra el PXOM 2025 de Vigo** — U6 pág. 179: edificabilidad 0,70 m²/m²,
 ocupación 40 %, recuados frente 3 / lateral 2 / posterior 3 m, altura 7 m, parcela 250 m².
 
-### Limitación clave — mapeo parcela→ordenanza
+### Mapeo parcela→ordenanza — resuelto con jerarquía oficial
 
-La capa detallada `PORD_02CL` de SIOTUGA es **raster** (planos escaneados), no vectorial:
-GetFeatureInfo solo devuelve cajas de píxel. La clasificación WFS da `SUC` pero **no el
-código de ordenanza** (U6, R-1…). Por tanto:
+La capa detallada `PORD_02CL` de SIOTUGA es **raster** (planos escaneados), pero el
+mapeo ya no depende de ella. Jerarquía implementada (datos reales primero):
 
-- Si el arquitecto indica la ordenanza → parámetros oficiales automáticos.
-- Si solo hay clasificación → el informe lista las ordenanzas del plan con página
-  para que el usuario localice la suya en el plano oficial. **No se inventa el mapeo.**
+1. **Ámbito de planeamento singular** (`src/ambitos_service.py`): los atributos
+   oficiales del polígono 3CLAS llevan el código — `obsv` = «API-106», `denom` =
+   «201 Guixar-Santa Tegra» (SUNC-201). El instrumento incorporado (ED/PERI/PP/PE)
+   rige el ámbito por encima de la ordenanza xeral. Índice `ambitos.json` generado
+   por `scripts/extract_vigo_ambitos.py` desde los PDFs oficiales: tabla API→
+   instrumento de la DF Quinta (43 APIs) + 158 fichas SUB/SUNC/PE con parámetros.
+   Lookup espacial con STRtree sobre la copia local 3CLAS.
+2. **Capa municipal de ordenanzas** (`src/muni_wfs.py`): GeoServer del concello
+   copiado en caché + STRtree — punto-en-polígono real (Vigo: `4ordsuc`, U1–U10…).
+3. **Hueco de cobertura** → `unavailable` honesto, nunca el polígono más cercano.
+4. **Piloto** solo en municipios sin capa oficial, marcado `normative_status=pilot`.
 
-Posibles vías futuras: OCR sobre el plano raster, capa vectorial municipal (algunos
-concellos la publican en ArcGIS/GeoServer), o entrada manual asistida.
+El instrumento de un API enlazado a SIOTUGA (`iddoc`) se descarga bajo demanda con
+`GET /ambitos/{municipio}/{codigo}/documento` → queda indexado en el RAG municipal.
 
 ## 5. Endpoints principales
 
@@ -122,6 +129,7 @@ concellos la publican en ArcGIS/GeoServer), o entrada manual asistida.
 | `POST /licencia/documentacion` | Plantillas de documentación de licencia |
 | `GET /solar/exposicion` | Soleamiento por orientación |
 | `GET /ordenanzas/{municipio}/{subzona}` | Ordenanzas estructuradas (datos AC8) |
+| `GET /ambitos/{municipio}` · `/{codigo}` · `/{codigo}/documento` | Ámbitos de planeamento (API/SUB/SUNC/PE): índice, ficha oficial, descarga del instrumento SIOTUGA |
 | Admin/utilidad | `/admin/*`, `/debug/plan`, `/metrics`, `/health`, `/proxy/*` |
 
 ## 6. Informe de viabilidad — qué calcula hoy

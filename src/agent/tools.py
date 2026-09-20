@@ -94,6 +94,37 @@ def get_ordenanzas_locales(municipio: str | None) -> dict:
         return {'data_quality': 'unavailable', 'error': str(e)}
 
 
+def get_ambito_ficha(codigo: str, ine: str | None = None) -> dict:
+    """Ficha oficial de un ámbito de planeamiento (API-n / SUB-n /
+    SUNC-n / PE-n) extraída del planeamiento municipal (PXOM Vigo:
+    tablas API de la NU + anexo de fichas dos ámbitos).
+
+    Devuelve los datos oficiales indexados — instrumento incorporado
+    para los API, parámetros para las fichas SUB/SUNC/PE — o
+    ``unavailable`` si el código no consta. Nunca inventa parámetros.
+    """
+    if not codigo:
+        return {'data_quality': 'unavailable',
+                'error': 'Sin código de ámbito'}
+    try:
+        from src.ambitos_service import get_ambito, normalizar_codigo
+        norm = normalizar_codigo(codigo)
+        if not norm:
+            return {'data_quality': 'unavailable',
+                    'error': f'Código de ámbito no reconocido: {codigo}'}
+        amb = get_ambito(ine, norm)
+        if not amb:
+            return {'data_quality': 'unavailable', 'codigo': norm,
+                    'error': f'{norm} no consta en el índice de '
+                             'ámbitos del planeamiento municipal'}
+        # Texto completo recortado para el prompt
+        if amb.get('texto') and len(amb['texto']) > 3000:
+            amb['texto'] = amb['texto'][:3000]
+        return amb
+    except Exception as e:
+        return {'data_quality': 'unavailable', 'error': str(e)}
+
+
 def get_inventario_planeamiento(municipio: str | None) -> dict:
     """Estado del planeamiento municipal vigente (CSV SIOTUGA)."""
     if not municipio:

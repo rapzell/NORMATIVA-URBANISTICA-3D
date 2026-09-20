@@ -1113,6 +1113,7 @@ function showBuildingTooltip(feature, point) {
     <div class="tt-title">${escapeHtml(props.name || ('Edificio #' + (props.osm_id || 'OSM')))}</div>
     <div class="tt-row"><span class="tt-key">Altura</span><span>${escapeHtml(props.height || '—')} m</span></div>
     <div class="tt-row"><span class="tt-key">${pilot ? 'Subzona piloto' : 'Ordenanza'}</span><span>${escapeHtml(props.subzona || props.subzona_piloto || '—')}${props.titulo_ordenanza ? ' · ' + escapeHtml(props.titulo_ordenanza) : ''}</span></div>
+    ${props.ambito ? `<div class="tt-row"><span class="tt-key">Ámbito</span><span>${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''}</span></div>` : ''}
     <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${escapeHtml(props.altura_maxima_subzona_m || '—')} m</span></div>
     <div class="tt-badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</div>
   `;
@@ -1237,7 +1238,8 @@ function renderOfficialContext(ctx) {
   // Planeamiento vigente destacado
   const siotuga = (ctx && ctx.siotuga) || {};
   const clas = (ctx && ctx.clasificacion_siotuga) || {};
-  if (rows.length || siotuga.plan_title || clas.clasificacion_ley) {
+  const amb = (ctx && ctx.ambito) || null;
+  if (rows.length || siotuga.plan_title || clas.clasificacion_ley || amb || (ctx && ctx.ambito_detectado)) {
     html += '<div class="info-card">';
     html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Planeamiento vigente</div>';
     if (clas.clasificacion_ley_label) {
@@ -1260,6 +1262,18 @@ function renderOfficialContext(ctx) {
     }
     if (clas.observaciones_zona) {
       html += `<div class="info-row"><span class="key">Observaciones</span><span class="val">${escapeHtml(clas.observaciones_zona)}</span></div>`;
+    }
+    if (amb && amb.codigo) {
+      const ambNom = amb.instrumento || amb.denominacion || '';
+      const ambFecha = amb.data_ad ? ' · AD ' + amb.data_ad : '';
+      html += `<div class="info-row"><span class="key">Ámbito</span><span class="val" style="font-weight:600">${escapeHtml(amb.codigo)}${ambNom ? ' · ' + escapeHtml(ambNom) : ''}${escapeHtml(ambFecha)} ${qualityBadge('official')}</span></div>`;
+      if (amb.tipo === 'api') {
+        html += `<div class="hint">Ámbito de planeamento incorporado — ríxese polo seu propio instrumento (${escapeHtml(amb.tipo_instrumento || '')}), non polas ordenanzas xerais.</div>`;
+      } else if (amb.fuente) {
+        html += `<div class="hint">Ficha oficial: ${escapeHtml(amb.fuente)}</div>`;
+      }
+    } else if (ctx && ctx.ambito_detectado) {
+      html += `<div class="info-row"><span class="key">Ámbito</span><span class="val">${escapeHtml(ctx.ambito_detectado)} — ficha non indexada, verificar no planeamento municipal</span></div>`;
     }
     if (siotuga.plan_title) {
       const planLabel = String(siotuga.plan_title).startsWith('_') ? `PXOM de ${ctx.municipio || 'municipio'}` : siotuga.plan_title;
@@ -1666,6 +1680,7 @@ async function generateLicenciaDoc() {
   if (props.retranqueo_min_subzona_m != null) paramsUrbanisticos['Retranqueo mínimo (m)'] = props.retranqueo_min_subzona_m;
   if (props.subzona) paramsUrbanisticos['Ordenanza oficial'] = props.subzona;
   else if (props.subzona_piloto) paramsUrbanisticos['Subzona piloto (orientativa)'] = props.subzona_piloto;
+  if (props.ambito) paramsUrbanisticos['Ámbito de planeamento (oficial)'] = props.ambito + (props.ambito_nombre ? ' — ' + props.ambito_nombre : '');
   // Datos de Catastro
   if (cat.superficie_construida_m2) paramsUrbanisticos['Sup. construida (Catastro)'] = cat.superficie_construida_m2;
   if (cat.uso_principal) paramsUrbanisticos['Uso principal (Catastro)'] = cat.uso_principal;
@@ -1865,6 +1880,7 @@ async function generateReport() {
   if (municipio) autoData += `<li>Municipio: ${escapeHtml(municipio)}</li>`;
   if (subzona) autoData += `<li>Ordenanza oficial: ${escapeHtml(subzona)}</li>`;
   else if (props.subzona_piloto) autoData += `<li>Subzona piloto (orientativa): ${escapeHtml(props.subzona_piloto)}</li>`;
+  if (props.ambito) autoData += `<li>Ámbito de planeamento: ${escapeHtml(props.ambito)}${props.ambito_nombre ? ' — ' + escapeHtml(props.ambito_nombre) : ''}</li>`;
   if (cat.refcat) autoData += `<li>Ref. catastral: ${escapeHtml(cat.refcat)}</li>`;
   if (cat.superficie_parcela_m2) autoData += `<li>Sup. parcela (Catastro): ${cat.superficie_parcela_m2} m²</li>`;
   if (cat.superficie_construida_m2) autoData += `<li>Sup. construida (Catastro): ${cat.superficie_construida_m2} m²</li>`;
@@ -1953,6 +1969,8 @@ async function submitGenerateReport() {
     municipio: municipio,
     subzona: subzona,
     subzona_piloto: props.subzona_piloto || null,
+    ambito: props.ambito || null,
+    ambito_nombre: props.ambito_nombre || null,
     crs: 'EPSG:4326',
     height_m: height,
     footprint_m2: footprint,
@@ -2028,6 +2046,7 @@ async function selectBuilding(feature) {
   html += `<div class="info-row"><span class="key">Plantas OSM</span><span class="val">${escapeHtml(levels)}</span></div>`;
   if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
   html += `<div class="info-row"><span class="key">${props.subzona ? 'Ordenanza oficial' : 'Subzona piloto'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
+  if (props.ambito) html += `<div class="info-row"><span class="key">Ámbito de planeamento</span><span class="val">${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''} ${qualityBadge('official')}</span></div>`;
   html += `<div class="info-row"><span class="key">${pilot ? 'Límite de altura piloto' : 'Altura máx. subzona'}</span><span class="val">${escapeHtml(alturaSubzona)}</span></div>`;
   if (props.normative_source) html += `<div class="info-row"><span class="key">Fuente del límite</span><span class="val">${escapeHtml(props.normative_source)}</span></div>`;
   const osmId = String(props.osm_id || '');
@@ -2306,6 +2325,7 @@ function chatBuildingContext() {
     lat: lat,
     municipio: props.municipio || activeMunicipio || null,
     subzona: props.subzona || null,
+    ambito: props.ambito || null,
     ref_catastral: (ctx.catastro && ctx.catastro.refcat) || null,
   };
 }
@@ -2316,6 +2336,7 @@ function updateChatContext() {
   const partes = [];
   if (c.municipio) partes.push(c.municipio);
   if (c.subzona) partes.push('subzona ' + c.subzona);
+  if (c.ambito) partes.push('ámbito ' + c.ambito);
   if (c.ref_catastral) partes.push('ref. ' + c.ref_catastral);
   el.textContent = partes.length
     ? 'Contexto: ' + partes.join(' · ')

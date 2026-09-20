@@ -25,9 +25,10 @@ _OVERPASS_DISK_CACHE_DIR = os.path.join(
 )
 _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # Esquema de las props horneadas por edificio: sube la versión cuando
-# cambie (v2: subzona oficial + subzona_piloto + normative_status) —
-# las cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 2
+# cambie (v2: subzona oficial + subzona_piloto + normative_status;
+# v3: ámbito de planeamento API/SUB/SUNC) — las cachés antiguas con
+# 'subzona: R-1' quedan invalidadas.
+_PROPS_SCHEMA = 3
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -829,11 +830,40 @@ def find_subzone_for_point(lon: float, lat: float,
                 break
 
     muni_eff = municipio or (pilot_props or {}).get("municipio")
+    resultado = None
     if muni_eff:
         real = _ordenanza_municipal_punto(lon, lat, muni_eff)
         if real:
-            return real
-    return pilot_props
+            resultado = real
+    if resultado is None:
+        # copiar: las props piloto vienen del lru_cache compartido y
+        # _attach_ambito añade campos por punto
+        resultado = dict(pilot_props) if pilot_props else None
+    if resultado is not None:
+        _attach_ambito(resultado, lon, lat, muni_eff)
+    return resultado
+
+
+def _attach_ambito(props: dict[str, Any], lon: float, lat: float,
+                   municipio: str | None) -> None:
+    """Etiqueta el ámbito de planeamento oficial (API-n, SUNC-n…)
+    que contiene el punto — atributo oficial SIOTUGA, no inferido."""
+    if not municipio:
+        return
+    try:
+        from app.main import _get_ine_for_municipio
+        ine = _get_ine_for_municipio(municipio)
+        from src.ambitos_service import ambito_en_punto
+        amb = ambito_en_punto(lon, lat, ine)
+    except Exception:
+        return
+    if not amb:
+        return
+    props["ambito"] = amb.get("codigo")
+    if amb.get("instrumento"):
+        props["ambito_nombre"] = amb["instrumento"]
+    elif amb.get("denominacion"):
+        props["ambito_nombre"] = amb["denominacion"]
 
 
 def find_subzone_by_name(municipio: str, subzona: str) -> dict[str, Any] | None:
@@ -950,6 +980,8 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                                   else None,
                 "ordenanza": (subzone_props or {}).get("ordenanza"),
                 "titulo_ordenanza": (subzone_props or {}).get("titulo"),
+                "ambito": (subzone_props or {}).get("ambito"),
+                "ambito_nombre": (subzone_props or {}).get("ambito_nombre"),
                 "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
                 "normative_status": (subzone_props or {}).get("normative_status"),

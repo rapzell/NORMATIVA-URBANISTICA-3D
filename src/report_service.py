@@ -178,9 +178,15 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         pass
     muni = (body.get('municipio') or '').strip() if isinstance(body, dict) else ''
     subz = (body.get('subzona') or '').strip() if isinstance(body, dict) else ''
+    amb = (body.get('ambito') or '').strip() if isinstance(body, dict) else ''
+    amb_nom = (body.get('ambito_nombre') or '').strip() if isinstance(body, dict) else ''
     loc_txt = ''
     if muni or subz:
         loc_txt = f"<div class=muted>Municipio: {esc(muni) or '—'}{(' · Subzona: ' + esc(subz)) if subz else ''}</div>"
+    if amb:
+        loc_txt += (f"<div class=muted>Ámbito de planeamento: "
+                    f"{esc(amb)}{(' — ' + esc(amb_nom)) if amb_nom else ''}"
+                    " (oficial, PXOM)</div>")
     import datetime as _dt
     gen_date = _dt.datetime.now().strftime('%Y-%m-%d %H:%M')
     ttl = esc(title) if title else 'Informe de Viabilidad'

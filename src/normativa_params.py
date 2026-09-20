@@ -163,6 +163,21 @@ def extraer_ordenanzas_municipio(ine: str, *, forzar: bool = False) -> dict:
             pass
     out = {}
     pdfs = sorted((_DATOS / str(ine)).glob('*.pdf')) if (_DATOS / str(ine)).is_dir() else []
+    # Solo el documento vigente: los PDFs de instrumentos descargados
+    # (PERI/ED de un API, manifest 'instrumentos'/'iddoc' por fichero)
+    # traen sus propias ordenanzas y no deben contaminar las del plan.
+    try:
+        manifest = json.loads(
+            (_DATOS / str(ine) / '_manifest.json').read_text(
+                encoding='utf-8'))
+        vigente = manifest.get('iddoc')
+        permitidos = {f.get('pathesperado') for f in
+                      manifest.get('ficheros', [])
+                      if f.get('iddoc') in (None, vigente)}
+        if permitidos:
+            pdfs = [p for p in pdfs if p.name in permitidos]
+    except Exception:
+        pass
     for pdf in pdfs:
         pages = _pdf_pages_text(pdf)
         if not pages:

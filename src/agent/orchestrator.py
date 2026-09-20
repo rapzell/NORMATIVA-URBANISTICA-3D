@@ -52,6 +52,10 @@ REGLAS ESTRICTAS:
    muestra el razonamiento paso a paso con los valores concretos.
 8. Cierra siempre con las condiciones a verificar y la advertencia de que es
    una evaluación preliminar que requiere verificación municipal.
+9. Si el contexto o la pregunta menciona un ámbito de planeamento
+   (API-106, SUNC-201, SUB-…), la ficha oficial del ámbito tiene
+   prioridad sobre las ordenanzas xerais: los API se rigen por su
+   instrumento incorporado (ED/PERI/PP/PE), no por las ordenanzas U.
 
 Responde en español, de forma estructurada y profesional.
 """
@@ -145,6 +149,14 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         partes.append(f"**Ordenanza**: {ord_p['ordenanza']}"
                       + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
                       + _origen_ordenanza(ord_p, ctx))
+    elif ctx.get('ambito'):
+        partes.append('**Ámbito de planeamento**: '
+                      + _linea_ambito(ctx['ambito']))
+    elif ctx.get('ambito_detectado'):
+        partes.append(
+            f"**Ámbito de planeamento**: {ctx['ambito_detectado']} "
+            '(indicado nos atributos oficiais da zona; ficha non '
+            'indexada — verificar no planeamento municipal)')
     elif ord_p.get('ordenanzas_disponibles'):
         codigos = ', '.join(ord_p['ordenanzas_disponibles'][:14])
         _res = ctx.get('ordenanza_resolucion') or {}
@@ -160,7 +172,7 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         faltan.append('altura medida')
     if not (clas.get('clasificacion_ley') or clas.get('clase_ley')):
         faltan.append('clasificación SIOTUGA')
-    if not ord_p.get('ordenanza'):
+    if not ord_p.get('ordenanza') and not ctx.get('ambito'):
         faltan.append('ordenanza aplicable (subzona)')
     out = ['Datos del edificio seleccionado (fuentes oficiales):', '']
     out += partes
@@ -168,6 +180,37 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         out.append('')
         out.append('*No disponible: ' + ', '.join(faltan) + '.*')
     return '\n'.join(out)
+
+
+def _linea_ambito(amb: dict) -> str:
+    """Línea legible del ámbito de planeamento detectado."""
+    if (amb or {}).get('tipo') == 'api':
+        txt = f"**{amb['codigo']}**"
+        if amb.get('instrumento'):
+            txt += f" — {amb['instrumento']}"
+        detalles = [d for d in (amb.get('tipo_instrumento'),
+                                f"AD {amb['data_ad']}"
+                                if amb.get('data_ad') else None) if d]
+        if detalles:
+            txt += f" ({'; '.join(detalles)})"
+        txt += (' — réxime propio: o PXOM remítese ao instrumento '
+                'incorporado, non ás ordenanzas xerais do SUC')
+        return txt
+    txt = f"**{amb.get('codigo')}**"
+    if amb.get('denominacion'):
+        txt += f" «{amb['denominacion']}»"
+    txt += ' — ficha oficial do PXOM'
+    p = amb.get('parametros') or {}
+    detalles = []
+    if p.get('edificabilidade_m2_m2'):
+        detalles.append(f"edificabilidade {p['edificabilidade_m2_m2']} m²/m²")
+    if p.get('uso_global'):
+        detalles.append(f"uso global {p['uso_global']}")
+    if p.get('ordenanza_referencia'):
+        detalles.append(f"ordenanza de referencia {p['ordenanza_referencia']}")
+    if detalles:
+        txt += ': ' + '; '.join(detalles)
+    return txt
 
 
 def _origen_ordenanza(ord_p: dict, ctx: dict) -> str:
@@ -226,6 +269,16 @@ def _respuesta_suelo(ctx: dict) -> str:
         out.append(f"**Ordenanza aplicable**: {ord_p['ordenanza']}"
                    + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
                    + _origen_ordenanza(ord_p, ctx))
+        if ctx.get('ambito'):
+            out.append('**Ámbito**: ' + _linea_ambito(ctx['ambito']))
+    elif ctx.get('ambito'):
+        out.append('**Ámbito de planeamento**: '
+                   + _linea_ambito(ctx['ambito']))
+    elif ctx.get('ambito_detectado'):
+        out.append(f"**Ámbito de planeamento**: "
+                   f"{ctx['ambito_detectado']} (indicado nos atributos "
+                   'oficiais da zona; ficha non indexada — verificar '
+                   'no planeamento municipal)')
     elif ord_p.get('ordenanzas_disponibles'):
         res = ctx.get('ordenanza_resolucion') or {}
         if res.get('estado') == 'ambigua' and res.get('candidatas'):
@@ -273,9 +326,11 @@ def _respuesta_saludo(ctx: dict) -> str:
 def _contexto_edificio(lon: float | None, lat: float | None,
                        ine: str | None, municipio: str | None,
                        subzona: str | None,
-                       ref_catastral: str | None) -> tuple[dict, list[str]]:
+                       ref_catastral: str | None,
+                       ambito: str | None = None) -> tuple[dict, list[str]]:
     """Ejecuta las herramientas de contexto en paralelo."""
     ctx: dict = {'municipio': municipio, 'subzona': subzona,
+                 'ambito_input': ambito, 'ine': ine,
                  'ref_catastral_input': ref_catastral}
     usadas: list[str] = []
 
@@ -346,13 +401,15 @@ def _contexto_edificio(lon: float | None, lat: float | None,
         ctx['ordenanza_resolucion'] = {
             'estado': 'usuario' if subzona else 'oficial',
             'ordenanza': ords['ordenanza'], 'confianza': 'alta'}
-    elif (ords.get('ordenanzas')
-          or (ctx.get('ordenanza_wfs') or {})
-          .get('data_quality') == 'official'):
+    else:
         try:
             from src.agent.ordinance_resolver import resolver_ordenanza
             res = resolver_ordenanza(ctx)
             ctx['ordenanza_resolucion'] = res
+            if res.get('ambito'):
+                ctx['ambito'] = res['ambito']
+            if res.get('ambito_detectado'):
+                ctx['ambito_detectado'] = res['ambito_detectado']
             if res.get('ordenanza') and res['estado'] in ('oficial',
                                                         'inferida'):
                 op = ctx['ordenanzas_params']
@@ -486,6 +543,7 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                       municipio: str | None = None,
                       ref_catastral: str | None = None,
                       subzona: str | None = None,
+                      ambito: str | None = None,
                       top_k: int = 10,
                       chat_id: str | None = None) -> dict:
     """Fase 1-4: contexto + RAG + cálculo + prompt (sin invocar el LLM).
@@ -512,7 +570,7 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     with ThreadPoolExecutor(max_workers=1) as ex:
         fut_int = ex.submit(clasificar_intencion, pregunta, True)
         ctx, herramientas = _contexto_edificio(
-            lon, lat, ine, municipio, subzona, ref_catastral)
+            lon, lat, ine, municipio, subzona, ref_catastral, ambito)
         intencion = fut_int.result()
 
     ctx['punto'] = {'lon': lon, 'lat': lat}
@@ -582,6 +640,91 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                 for i, f in enumerate(fragmentos):
                     f['id'] = i + 1
                 break
+
+    # Ámbitos de planeamento (API-n / SUB-n / SUNC-n / PE-n): código
+    # citado en la pregunta o detectado en los atributos oficiales
+    # SIOTUGA de la parcela → ficha oficial como fuente determinista.
+    try:
+        from src.ambitos_service import detectar_codigo_en_texto
+        codes: list[str] = []
+        if pregunta:
+            c = detectar_codigo_en_texto(pregunta)
+            if c:
+                codes.append(c)
+        amb_ctx = ctx.get('ambito') or {}
+        if amb_ctx.get('codigo'):
+            codes.append(amb_ctx['codigo'])
+        if ctx.get('ambito_detectado'):
+            codes.append(ctx['ambito_detectado'])
+        vistos: set[str] = set()
+        for code in codes:
+            if code in vistos:
+                continue
+            vistos.add(code)
+            amb = (amb_ctx if amb_ctx.get('codigo') == code
+                   else tools.get_ambito_ficha(code, ine=ine))
+            if not amb or amb.get('data_quality') != 'official':
+                continue
+            herramientas.append('get_ambito_ficha')
+            if amb.get('tipo') == 'api':
+                partes = [
+                    f"ÁMBITO DE PLANEAMENTO INCORPORADO {amb['codigo']}"]
+                if amb.get('instrumento'):
+                    partes.append(f"Instrumento: {amb['instrumento']}")
+                det = [x for x in (
+                    f"tipo {amb.get('tipo_instrumento')}"
+                    if amb.get('tipo_instrumento') else None,
+                    f"aprobado {amb.get('data_ad')}"
+                    if amb.get('data_ad') else None,
+                    f"DOG {amb.get('data_dog')}"
+                    if amb.get('data_dog') else None) if x]
+                if det:
+                    partes.append('; '.join(det))
+                partes.append(
+                    'O Plan Xeral remítese ao instrumento '
+                    'incorporado: réxese polas súas determinacións, '
+                    'non polas ordenanzas xerais do solo urbano.')
+                for mn in (amb.get('menciones') or [])[:2]:
+                    if mn.get('contexto'):
+                        partes.append(mn['contexto'])
+                if amb.get('iddoc'):
+                    partes.append(
+                        f"Documento do instrumento en SIOTUGA: iddoc "
+                        f"{amb['iddoc']} ({amb.get('docnome_siotuga')})")
+                texto = '\n'.join(partes)
+                pagina = amb.get('pagina')
+                referencia = '28719nu003.pdf'
+            else:
+                p = amb.get('parametros') or {}
+                partes = [
+                    f"FICHA DO ÁMBITO {amb['codigo']}"
+                    + (f" «{amb['denominacion']}»"
+                       if amb.get('denominacion') else '')]
+                partes += [f"{k}: {v}" for k, v in p.items()]
+                if amb.get('texto'):
+                    partes.append(amb['texto'][:1200])
+                texto = '\n'.join(partes)
+                pagina = amb.get('pagina_inicio')
+                referencia = '28719nu004.pdf'
+            url_pdf = ('https://siotuga.xunta.gal/siotuga/documentos/'
+                       'urbanismo/VIGO/documents/'
+                       f"{referencia}#page={pagina}") if pagina else None
+            fragmentos = [{
+                'documento': 'PXOM Vigo 2025 — ámbitos de '
+                             'planeamento (PDF oficial SIOTUGA)',
+                'referencia': referencia,
+                'pagina': pagina,
+                'texto': texto,
+                'extracto': texto[:400],
+                'fuente': amb.get('fuente'),
+                'url': url_pdf,
+                'ambito': 'municipal',
+                'score': 98.0,
+            }] + fragmentos
+            for i, f in enumerate(fragmentos):
+                f['id'] = i + 1
+    except Exception:
+        pass
 
     calculo = None
     if _PISCINA_RE.search(pregunta or ''):
@@ -657,6 +800,12 @@ def finalizar_respuesta(prep: dict, respuesta: str | None,
                               for k in ('clase_ley', 'clasificacion_ley',
                                         'categoria_wiug', 'data_quality')},
             'ordenanzas': ctx.get('ordenanzas_params'),
+            'ambito': ctx.get('ambito'),
+            'ambito_detectado': ctx.get('ambito_detectado'),
+            'ordenanza_resolucion': {
+                k: v for k, v in
+                (ctx.get('ordenanza_resolucion') or {}).items()
+                if k != 'ambito'},
         },
         'calculo': calculo,
         'validacion': validacion,
@@ -677,11 +826,13 @@ def responder_consulta_edificio(pregunta: str, lon: float | None = None,
                                 municipio: str | None = None,
                                 ref_catastral: str | None = None,
                                 subzona: str | None = None,
+                                ambito: str | None = None,
                                 top_k: int = 10,
                                 chat_id: str | None = None) -> dict:
     """Consulta normativa con contexto de edificio — flujo completo."""
     prep = preparar_consulta(pregunta, lon, lat, municipio,
-                             ref_catastral, subzona, top_k, chat_id)
+                             ref_catastral, subzona, ambito, top_k,
+                             chat_id)
 
     respuesta = None
     llm_ok = False

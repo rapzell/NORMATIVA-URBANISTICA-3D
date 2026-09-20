@@ -1279,6 +1279,7 @@ class QAEdificioRequest(BaseModel):
     municipio: str | None = None
     ref_catastral: str | None = None
     subzona: str | None = None
+    ambito: str | None = None
     top_k: int = 10
     chat_id: str | None = None
 
@@ -1300,7 +1301,8 @@ async def qa_edificio(req: QAEdificioRequest):
         return responder_consulta_edificio(
             req.pregunta.strip(), lon=req.lon, lat=req.lat,
             municipio=req.municipio, ref_catastral=req.ref_catastral,
-            subzona=req.subzona, top_k=req.top_k, chat_id=req.chat_id)
+            subzona=req.subzona, ambito=req.ambito, top_k=req.top_k,
+            chat_id=req.chat_id)
     except Exception as e:
         logging.getLogger(__name__).warning("/qa/edificio fallo: %s", e)
         return {'pregunta': req.pregunta,
@@ -1331,14 +1333,16 @@ async def qa_edificio_stream(req: QAEdificioRequest):
             prep = preparar_consulta(
                 req.pregunta.strip(), lon=req.lon, lat=req.lat,
                 municipio=req.municipio, ref_catastral=req.ref_catastral,
-                subzona=req.subzona, top_k=req.top_k,
-                chat_id=req.chat_id)
+                subzona=req.subzona, ambito=req.ambito,
+                top_k=req.top_k, chat_id=req.chat_id)
         except Exception as e:
             yield f"data: {_json.dumps({'tipo': 'error', 'error': str(e)})}\n\n"
             return
         yield 'data: ' + _json.dumps({'tipo': 'contexto',
                                       'herramientas': prep['herramientas'],
                                       'municipio': prep['ctx'].get('municipio'),
+                                      'ambito': prep['ctx'].get('ambito'),
+                                      'ambito_detectado': prep['ctx'].get('ambito_detectado'),
                                       'calculo': prep['calculo'],
                                       'advertencias': prep['ctx'].get('advertencias') or []},
                                      ensure_ascii=False) + '\n\n'
@@ -1568,6 +1572,92 @@ def ordenanzas_municipio(municipio: str):
 @app.get("/ordenanzas/{municipio}/{subzona}")
 def ordenanzas_subzona(municipio: str, subzona: str):
     return get_ordenanza_subzona(municipio, subzona)
+
+
+@app.get("/ambitos/{municipio}/{codigo}")
+def ambito_ficha(municipio: str, codigo: str):
+    """Ficha oficial de un ámbito de planeamento (API-106, SUNC-201…).
+
+    Datos extraídos de los PDFs oficiales del plan vigente
+    (``scripts/extract_vigo_ambitos.py`` → ``ambitos.json``):
+    para los API, el instrumento incorporado que rige el ámbito;
+    para SUB/SUNC/PE, los parámetros de la ficha del anexo.
+    """
+    from src.ambitos_service import get_ambito, cargar_ambitos
+    ine = _get_ine_for_municipio(municipio)
+    if not ine:
+        return {'error': 'Municipio no encontrado en el mapeo INE',
+                'data_quality': 'unavailable'}
+    if not cargar_ambitos(ine):
+        return {'error': 'Sin índice de ámbitos para el municipio '
+                         '(ejecutar scripts/extract_vigo_ambitos.py)',
+                'data_quality': 'unavailable'}
+    amb = get_ambito(ine, codigo)
+    if not amb:
+        return {'error': f'{codigo} no consta en el índice de ámbitos',
+                'data_quality': 'unavailable'}
+    return amb
+
+
+@app.get("/ambitos/{municipio}/{codigo}/documento")
+def ambito_documento(municipio: str, codigo: str):
+    """Descarga el documento oficial del instrumento del ámbito.
+
+    Los API enlazados a SIOTUGA (``iddoc``) tienen su ED/PERI/PP
+    publicado como documento propio; este endpoint lo descarga a
+    ``datos/normativa/{ine}/`` para que el RAG municipal lo indexe.
+    Sin ``iddoc`` → ``unavailable`` honesto.
+    """
+    from src.ambitos_service import get_ambito
+    ine = _get_ine_for_municipio(municipio)
+    amb = get_ambito(ine, codigo)
+    if not amb:
+        return {'error': f'{codigo} non consta no índice de ámbitos',
+                'data_quality': 'unavailable'}
+    iddoc = amb.get('iddoc')
+    if not iddoc:
+        return {'ambito': amb.get('codigo'),
+                'error': 'o instrumento non está enlazado a un '
+                         'documento SIOTUGA — consultar o arquivo '
+                         'municipal',
+                'data_quality': 'unavailable'}
+    try:
+        from src.siotuga.document_client import descargar_documentos
+        man = descargar_documentos(ine, iddoc=int(iddoc))
+        ficheros = [f for f in man.get('ficheros', [])
+                    if f.get('iddoc') == int(iddoc)
+                    and f.get('status') in ('downloaded', 'cached')]
+        return {'ambito': amb.get('codigo'),
+                'iddoc': iddoc,
+                'instrumento': amb.get('instrumento'),
+                'ficheros': [{'fichero': f.get('pathesperado'),
+                              'seccion': f.get('seccion'),
+                              'url': f.get('url'),
+                              'status': f.get('status')}
+                             for f in ficheros],
+                'n_descargados': len(ficheros),
+                'data_quality': 'official' if ficheros
+                                else 'unavailable'}
+    except Exception as e:
+        return {'ambito': amb.get('codigo'), 'iddoc': iddoc,
+                'error': str(e), 'data_quality': 'unavailable'}
+
+
+@app.get("/ambitos/{municipio}")
+def ambitos_municipio(municipio: str):
+    """Lista los ámbitos de planeamento indexados del municipio."""
+    from src.ambitos_service import cargar_ambitos
+    ine = _get_ine_for_municipio(municipio)
+    idx = cargar_ambitos(ine) if ine else None
+    if not idx:
+        return {'error': 'Sin índice de ámbitos para el municipio',
+                'data_quality': 'unavailable'}
+    return {'ine': ine,
+            'instrumento': idx.get('instrumento'),
+            'fuentes': idx.get('fuentes'),
+            'apis': sorted((idx.get('apis') or {}).keys()),
+            'fichas': sorted((idx.get('fichas') or {}).keys()),
+            'data_quality': 'official'}
 
 
 class NormativaConsultaRequest(BaseModel):
@@ -3351,6 +3441,29 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
     clas = results.get('siotuga_clas') or {}
     if clas:
       ctx['clasificacion_siotuga'] = clas
+    # Ámbito de planeamento singular (API / SUB / SUNC / PE) — desde
+    # los atributos oficiales del polígono o por punto-en-polígono
+    # sobre la copia local 3CLAS.
+    try:
+      from src.ambitos_service import (detectar_ambito_en_clasificacion,
+                                       get_ambito, ambito_en_punto)
+      ine_amb = _get_ine_for_municipio(municipio) if municipio else None
+      det = detectar_ambito_en_clasificacion(clas)
+      if det:
+        amb = get_ambito(ine_amb, det['codigo'])
+        if amb:
+          amb['origen_deteccion'] = det.get('origen')
+          ctx['ambito'] = amb
+        else:
+          ctx['ambito_detectado'] = det['codigo']
+      elif lon is not None and lat is not None and ine_amb:
+        amb = ambito_en_punto(lon, lat, ine_amb)
+        if amb and amb.get('data_quality') == 'official':
+          ctx['ambito'] = amb
+        elif amb and amb.get('codigo'):
+          ctx['ambito_detectado'] = amb['codigo']
+    except Exception:
+      pass
     # Datos del edificio (altura medida MDSN/LiDAR, Catastro BU)
     edif = results.get('edificio') or {}
     if edif:

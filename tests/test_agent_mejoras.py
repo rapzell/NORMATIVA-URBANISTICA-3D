@@ -233,7 +233,7 @@ def test_orquestador_cambio_uso_invoca_checker(monkeypatch):
 def test_orquestador_memoria_resuelve_referencia(monkeypatch):
     capturado = {}
 
-    def _ctx(lon, lat, ine, municipio, subzona, refcat):
+    def _ctx(lon, lat, ine, municipio, subzona, refcat, ambito=None):
         capturado.update({'lon': lon, 'lat': lat, 'municipio': municipio})
         return ({'municipio': municipio, 'resumen': {},
                  'ordenanzas_params': {}}, ['catastro'])

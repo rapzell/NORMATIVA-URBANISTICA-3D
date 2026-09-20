@@ -314,6 +314,7 @@ def descargar_documentos(
     sess = SiotugaSession(session_factory)
     sess.open(ine_code)
 
+    es_vigente = iddoc is None
     doc = None
     if iddoc is None:
         try:
@@ -333,12 +334,19 @@ def descargar_documentos(
                     'ficheros': []}
         iddoc = doc.get('id')
 
-    det = componentes_documento(int(iddoc), ine_code, session=sess)
+    iddoc = int(iddoc)
+    det = componentes_documento(iddoc, ine_code, session=sess)
     manifest = _load_manifest(ine_code)
-    manifest['iddoc'] = iddoc
-    manifest['denominacion'] = det.get('denominacion')
-    manifest['figura'] = det.get('figura')
-    manifest['datos_xerais'] = det.get('datos_xerais')
+    if es_vigente:
+        manifest['iddoc'] = iddoc
+        manifest['denominacion'] = det.get('denominacion')
+        manifest['figura'] = det.get('figura')
+        manifest['datos_xerais'] = det.get('datos_xerais')
+    else:
+        instrumentos = manifest.setdefault('instrumentos', {})
+        instrumentos[str(iddoc)] = {
+            'denominacion': det.get('denominacion'),
+            'figura': det.get('figura')}
     manifest['source'] = 'SIOTUGA inventario documental'
     manifest['data_quality'] = 'official'
 
@@ -362,6 +370,7 @@ def descargar_documentos(
                 'seccion': sec_code,
                 'seccion_desc': sec_desc,
                 'component_id': comp.get('id'),
+                'iddoc': iddoc,
                 'descripcion': comp.get('descripcion'),
                 'url': comp['url'],
                 'local_path': dest,
@@ -394,7 +403,13 @@ def descargar_documentos(
                 entry['error'] = str(e)
             ficheros.append(entry)
 
-    manifest['ficheros'] = ficheros
+    # Merge: los ficheros de otros instrumentos ya descargados (p.ej.
+    # el PXOM vigente al bajar el documento de un API) se conservan.
+    new_paths = {e['pathesperado'] for e in ficheros}
+    otros = [f for f in manifest.get('ficheros', [])
+             if f.get('pathesperado') not in new_paths
+             and f.get('iddoc') != iddoc]
+    manifest['ficheros'] = otros + ficheros
     manifest['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     _save_manifest(ine_code, manifest)
     return manifest

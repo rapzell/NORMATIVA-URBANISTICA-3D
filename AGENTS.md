@@ -16,6 +16,10 @@ venv_rag\Scripts\python.exe -m uvicorn src.rag.embedding_service:app --host 127.
 # Regenerar embeddings del corpus (tras cambiar datos/corpus/, requiere :8003 activo)
 venv\Scripts\python.exe scripts\precompute_embeddings.py
 
+# Regenerar el índice de ámbitos de Vigo (API + fichas SUB/SUNC/PE)
+# Requiere los PDFs NU en datos/normativa/36057/ (28719nu003/004)
+venv\Scripts\python.exe scripts\extract_vigo_ambitos.py
+
 # Tests focalizados
 venv\Scripts\python.exe -m pytest tests/test_geolibre_view.py -q
 venv\Scripts\python.exe -m pytest tests/test_habitabilidad_checker.py -q
@@ -59,6 +63,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Memoria conversacional multi-turno (chat_id, TTL 30 min, RAM) | `src/agent/memory.py` |
 | Detector de contradicciones (altura medida vs ordenanza, etc.) | `src/agent/contradictions.py` |
 | Resolución parcela → ordenanza (oficial/inferida/ambigua) | `src/agent/ordinance_resolver.py` |
+| Ámbitos de planeamento singular (API/SUB/SUNC/PE): índice, detección por atributos y punto-en-polígono | `src/ambitos_service.py`, `datos/normativa/{ine}/ambitos.json`, `scripts/extract_vigo_ambitos.py` |
 | Etiquetado de calidad de datos | `src/data_quality.py` |
 | Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
@@ -151,6 +156,38 @@ en el mapa** (se comentó `renderSubzones3D`). `/planeamiento/subzonas`
 adjunta `ordenanzas_reales` (extraídas del PDF oficial) y
 `capa_ordenanzas_oficial`.
 
+### Ámbitos de planeamento singular (`src/ambitos_service.py`)
+
+Los ámbitos API (planeamento incorporado) y SUB/SUNC/PE (ordenación
+detallada) se rigen por su propio instrumento — el Plan Xeral se remite
+a él — por encima de las ordenanzas xerais del SUC.
+
+- **Índice**: `datos/normativa/{ine}/ambitos.json`, generado por
+  `scripts/extract_vigo_ambitos.py` desde los PDFs oficiales (Vigo:
+  tabla API→instrumento de la DF Quinta de `28719nu003.pdf`, pág. 347,
+  + 158 fichas de `28719nu004.pdf` con parámetros estructurados).
+  No se versiona (`datos/` está en `.gitignore`): se regenera con el
+  script tras descargar la normativa.
+- **Detección**: `detectar_ambito_en_clasificacion` lee los atributos
+  oficiales del polígono (`obsv` lleva «API-106»; `denom` lleva el
+  número de ámbito en SUB/SUNC, p.ej. «201 Guixar-Santa Tegra» →
+  SUNC-201). `ambito_en_punto` hace lo propio espacialmente con un
+  STRtree sobre la copia local 3CLAS (solo polígonos con código).
+- **Lookup**: `get_ambito(ine, codigo)` normaliza variantes
+  («api 106», «sunc201», «API-201_P-8») y devuelve la entrada oficial
+  con `data_quality='official'`, página y fuente; lo no indexado queda
+  `unavailable`.
+- **Integración**: `ordinance_resolver` lo resuelve antes que la
+  ordenanza xeral (incl. si el usuario seleccionó otra — se informa);
+  `_build_official_context` lo expone como `ctx.ambito`; los edificios
+  llevan `props.ambito`/`props.ambito_nombre`; `GET
+  /ambitos/{municipio}[/{codigo}]` expone el índice; la herramienta del
+  agente es `get_ambito_ficha`.
+- **API sin ficha de parámetros** (p.ej. API-106): se informa del
+  instrumento (ED UE I-06 Rosalía Castro 2, AD 1995) y se declara que
+  los parámetros requieren el documento del instrumento — nunca se
+  inventan.
+
 ### Tests
 
 - Los tests usan `monkeypatch` para mockear servicios externos
@@ -180,12 +217,16 @@ seleccionado en el visor con respuestas citadas a fuentes oficiales.
      (`muni_wfs` — Vigo: GeoServer `mapas-ogc.vigo.org`, capa
      `4ordsuc`; `srsName=EPSG:4326` imprescindible o la geometría
      vuelve en UTM 29N).
-  3. Resolución parcela→ordenanza (`ordinance_resolver`): WFS municipal
-     oficial → código en atributos de zona → `oficial`; título
-     coincidente → `inferida`; varios → `ambigua`; nada →
-     `no_resuelta` + lista de ordenanzas. Nunca se inventa ni se elige
-     entre candidatas. Códigos de subzona (`U6.5`) resuelven por
-     prefijo a la ordenanza del PDF (`U6`).
+  3. Resolución parcela→ordenanza (`ordinance_resolver`): **ámbito de
+     planeamento singular primero** (`ambitos_service` — `obsv`
+     «API-106» o `denom` numerado en SUB/SUNC → ficha oficial del
+     `ambitos.json`); el instrumento incorporado (ED/PERI/PP) rige el
+     ámbito y prevalece sobre la ordenanza xeral del SUC y sobre una
+     selección manual. Después: WFS municipal oficial → código en
+     atributos de zona → `oficial`; título coincidente → `inferida`;
+     varios → `ambigua`; nada → `no_resuelta` + lista de ordenanzas.
+     Nunca se inventa ni se elige entre candidatas. Códigos de subzona
+     (`U6.5`) resuelven por prefijo a la ordenanza del PDF (`U6`).
   4. Contradicciones (`contradictions.detectar_contradicciones`):
      altura medida vs altura máx. de la ordenanza, parcela vs parcela
      mínima, edificabilidad real vs máxima → avisos `⚠` visibles.
