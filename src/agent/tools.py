@@ -30,6 +30,14 @@ def get_siotuga_clasificacion(lon: float, lat: float, ine: str | None) -> dict:
     try:
         from src.siotuga.vector_downloader import consultar_clasificacion_punto
         data = consultar_clasificacion_punto(lon, lat, ine)
+        if not data:
+            # Caché vectorial fría: resolver la capa vigente vía
+            # GetCapabilities y repetir con consulta WFS puntual.
+            from app.main import _fetch_siotuga_wms_layer
+            layer = (_fetch_siotuga_wms_layer(ine) or {}).get('layer_name')
+            if layer:
+                data = consultar_clasificacion_punto(
+                    lon, lat, ine, layer_name=layer)
         if data:
             data['data_quality'] = 'official'
             data['fuente'] = 'SIOTUGA 3CLAS'
