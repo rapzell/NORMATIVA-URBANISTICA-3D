@@ -30,7 +30,7 @@ EMB_PATH = os.path.join(RAG_DIR, 'embeddings_corpus.npz')
 META_PATH = os.path.join(RAG_DIR, 'embeddings_corpus.meta.json')
 
 SERVICE_URL = os.getenv('EMBEDDING_SERVICE_URL', 'http://127.0.0.1:8003')
-_TIMEOUT = float(os.getenv('EMBEDDING_TIMEOUT_S', '8'))
+_TIMEOUT = float(os.getenv('EMBEDDING_TIMEOUT_S', '25'))
 
 _health_cache: tuple[float, bool] = (0.0, False)
 

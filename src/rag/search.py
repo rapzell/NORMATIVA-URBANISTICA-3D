@@ -196,7 +196,7 @@ def buscar_normativa(query: str, ine: str | None = None,
             rerank_modo = 'local'
         else:
             # Cross-encoder remoto en el microservicio (si está vivo)
-            docs = [(f.get('texto') or f.get('extracto') or '')
+            docs = [(f.get('texto') or f.get('extracto') or '')[:1200]
                     for f in unicos[:10]]
             scores = rerank_remoto(query, docs)
             if scores:
