@@ -539,18 +539,29 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             try:
                 from app.main import centroid_lonlat_from_geojson
                 lon, lat = centroid_lonlat_from_geojson(body.get('geometry'))
-                diag_subzone = find_subzone_for_point(lon, lat)
+                diag_subzone = find_subzone_for_point(
+                    lon, lat, muni if isinstance(muni, str) else None)
             except Exception:
                 pass
+        # Hueco de cobertura de la capa oficial o punto ambiguo:
+        # no hay ordenanza asignable — se trata como "sin subzona".
+        diag_nota = None
+        if diag_subzone and str((diag_subzone.get('normative_status') or '')).lower() \
+                in ('unavailable', 'ambiguous'):
+            diag_nota = diag_subzone.get('nota') or \
+                'La capa oficial de ordenanzas no determina una ordenanza para este punto.'
+            diag_subzone = None
         # Parámetros oficiales del PGOM: si la subzona coincide con una
         # ordenanza extraída de la normativa, tienen prioridad sobre el piloto.
+        _ord_code = subz or (diag_subzone or {}).get('ordenanza') \
+            or (diag_subzone or {}).get('subzona') or ''
         norma_oficial = None
         try:
             from app.main import _get_ine_for_municipio
             from src.normativa_params import parametros_subzona
             _ine = _get_ine_for_municipio(muni) if muni else None
-            if _ine and subz:
-                _prs = parametros_subzona(_ine, subz)
+            if _ine and _ord_code:
+                _prs = parametros_subzona(_ine, _ord_code)
                 if _prs.get('params'):
                     norma_oficial = _prs
         except Exception:
@@ -664,10 +675,14 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                     diag_rows += f"<tr><td>Retranqueo mín.</td><td>—</td><td>≥ {retranqueo_min} m</td><td>—</td></tr>"
             verdict_label = {'compatible': 'Compatible (orientativo)', 'supera_altura': 'Supera parámetros (orientativo)', 'sin_dato': 'Sin datos'}.get(verdict, verdict)
             verdict_color = '#2e7d32' if verdict == 'compatible' else '#c62828'
+            _diag_status = str((diag_subzone or {}).get('normative_status') or '').lower()
             if norma_oficial:
-                _ord = esc((norma_oficial.get('resultado') or {}).get('ordenanza') or subz or '')
+                _ord = esc((norma_oficial.get('resultado') or {}).get('ordenanza') or _ord_code or '')
                 _fn = esc((norma_oficial.get('resultado') or {}).get('fuente') or 'PGOM')
                 norma_tag = f"<span style='color:#2e7d32'>(ordenanza {_ord}, oficial PGOM — {_fn})</span>"
+            elif _diag_status == 'official':
+                _fs = esc((diag_subzone or {}).get('fuente') or 'capa oficial municipal')
+                norma_tag = f"<span style='color:#2e7d32'>(ordenanza oficial — {_fs}; sin parámetros extraídos del PDF)</span>"
             else:
                 norma_tag = "<span style='color:#f57f17'>(parámetros de subzona piloto, no oficiales)</span>"
             issues_html = ''.join(f"<li>{esc(i)}</li>" for i in issues) if issues else ''
@@ -680,8 +695,9 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 "</tbody></table>"
                 f"{'<ul>' + issues_html + '</ul>' if issues_html else ''}"
                 "<div class='muted' style='margin-top:6px'>Nota: las alturas de edificios existentes pueden ser estimadas a partir de OSM y no sustituyen un levantamiento topográfico. "
-                "Los parámetros de la subzona son orientativos (datos piloto), no oficiales. "
-                "Consulte el planeamiento municipal para los valores normativos reales.</div>"
+                + ("Los parámetros normativos proceden de la ordenanza oficial extraída del PGOM. " if norma_oficial else
+                   "Los parámetros de la subzona son orientativos (datos piloto), no oficiales. Consulte el planeamiento municipal para los valores normativos reales. ")
+                + "</div>"
                 "</section>"
             )
         else:
@@ -708,7 +724,8 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
                 diagnostic_html = (
                     "<section>"
                     "<div class='muted' style='margin-bottom:8px'>Sin subzona normativa asociada. "
-                    "Los parámetros normativos (altura máxima, ocupación, edificabilidad, retranqueo) "
+                    + (esc(diag_nota) + ' ' if diag_nota else '')
+                    + "Los parámetros normativos (altura máxima, ocupación, edificabilidad, retranqueo) "
                     "no están disponibles para esta zona.</div>"
                     "<table><thead><tr><th>Parámetro</th><th>Edificio</th><th>Norma</th><th>Estado</th></tr></thead><tbody>"
                     f"{diag_rows}"

@@ -3532,7 +3532,7 @@ def zoning_building_diagnostic(
   if subzone_props is None and lon is not None and lat is not None:
     try:
       from src.subzones_service import find_subzone_for_point
-      subzone_props = find_subzone_for_point(lon, lat)
+      subzone_props = find_subzone_for_point(lon, lat, municipio)
     except Exception:
       pass
 
@@ -3542,6 +3542,20 @@ def zoning_building_diagnostic(
       'error': 'No se encontró subzona normativa para los parámetros proporcionados',
       'comparisons': [],
       'verdict': 'sin_dato',
+    }
+
+  _status = str(subzone_props.get('normative_status') or '').lower()
+  if _status in ('unavailable', 'ambiguous'):
+    return {
+      'available': False,
+      'error': subzone_props.get('nota') or
+               'La capa oficial de ordenanzas no determina una ordenanza para este punto',
+      'subzonas_candidatas': subzone_props.get('subzonas_candidatas'),
+      'comparisons': [],
+      'verdict': 'sin_dato',
+      'normative_status': _status,
+      'source': subzone_props.get('fuente'),
+      'instrumento': subzone_props.get('instrumento'),
     }
 
   altura_max = subzone_props.get('altura_maxima_m')
@@ -4213,8 +4227,26 @@ def planeamento_subzonas(municipio: Optional[str] = None):
   """Devuelve el GeoJSON de subzonas espaciales piloto.
 
   Si se indica municipio, filtra por coincidencia case-insensitive sin acentos.
+  Adjunta ``ordenanzas_reales``: los códigos de ordenanza extraídos del
+  PDF oficial del plan (cuando existen) — los únicos válidos como
+  ``subzona`` en el resto de endpoints.
   """
-  return get_subzones(municipio)
+  data = get_subzones(municipio)
+  if municipio and isinstance(data, dict):
+    try:
+      ine_ord = _get_ine_for_municipio(municipio)
+      if ine_ord:
+        from src.normativa_params import extraer_ordenanzas_municipio
+        ords = extraer_ordenanzas_municipio(ine_ord) or {}
+        data['ordenanzas_reales'] = {
+          code: {'titulo': d.get('titulo'), 'params': d.get('params'),
+                 'fuente': d.get('fuente')}
+          for code, d in sorted(ords.items())}
+        from src.muni_wfs import ORDSUC_LAYERS
+        data['capa_ordenanzas_oficial'] = ine_ord in ORDSUC_LAYERS
+    except Exception:
+      pass
+  return data
 
 
 @app.get("/planeamiento/subzonas/municipios")
@@ -4224,11 +4256,17 @@ def planeamento_subzonas_municipios():
 
 
 @app.get("/planeamiento/subzonas/lookup")
-def planeamento_subzonas_lookup(lon: float, lat: float):
-  """Busca la subzona espacial que contiene el punto (lon, lat) en EPSG:4326."""
-  props = find_subzone_for_point(lon, lat)
+def planeamento_subzonas_lookup(lon: float, lat: float,
+                                municipio: Optional[str] = None):
+  """Busca la subzona que contiene el punto: capa oficial municipal
+  primero, dataset piloto (marcado) si no hay capa oficial."""
+  props = find_subzone_for_point(lon, lat, municipio)
   if props is None:
     return {"found": False, "subzona": None}
+  props = dict(props)
+  if str(props.get('normative_status') or '').lower() == 'pilot' \
+          and 'subzona' in props:
+    props['subzona_piloto'] = props.pop('subzona')
   return {"found": True, "subzona": props}
 
 

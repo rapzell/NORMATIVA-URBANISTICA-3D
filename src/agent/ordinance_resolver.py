@@ -51,6 +51,23 @@ def resolver_ordenanza(ctx: dict) -> dict:
         if ords:
             key, found = buscar_ordenanza(ords, ctx['subzona'])
             if key is not None:
+                # Si la capa oficial confirma el mismo código (p. ej.
+                # la subzona venía horneada del GeoServer municipal),
+                # el origen real es oficial, no la selección.
+                _wfs = ctx.get('ordenanza_wfs') or {}
+                if _wfs.get('data_quality') == 'official' \
+                        and not _wfs.get('ambigua'):
+                    wkey, _wf = buscar_ordenanza(
+                        ords, _wfs.get('ordenanza') or '')
+                    if wkey == key:
+                        return {'estado': 'oficial', 'ordenanza': key,
+                                'params': found.get('params') or {},
+                                'titulo': found.get('titulo'),
+                                'confianza': 'alta',
+                                'origen': _wfs.get('fuente'),
+                                'instrumento': _wfs.get('instrumento'),
+                                'nota': _wfs.get('nota'),
+                                'codigo_zona': _wfs.get('ordenanza')}
                 return {'estado': 'usuario', 'ordenanza': key,
                         'params': found.get('params') or {},
                         'titulo': found.get('titulo'),
@@ -92,6 +109,16 @@ def resolver_ordenanza(ctx: dict) -> dict:
         return {'estado': 'no_resuelta', 'ordenanza': None,
                 'candidatas': [], 'confianza': 'ninguna',
                 'origen': 'sin ordenanzas extraídas del municipio'}
+
+    # Capa oficial consultada pero sin polígono contenedor (hueco de
+    # cobertura o ámbito de planeamiento singular): se conserva la
+    # traza para explicar el "no resuelta" — nunca se toma el
+    # polígono más cercano.
+    wfs_gap = None
+    if wfs and wfs.get('data_quality') != 'official' and wfs.get('error'):
+        wfs_gap = {'error': wfs.get('error'),
+                   'fuente': wfs.get('fuente'),
+                   'instrumento': wfs.get('instrumento')}
 
     # Nivel 2: código literal en atributos oficiales de la zona
     encontradas: dict[str, str] = {}  # codigo -> origen
@@ -139,7 +166,16 @@ def resolver_ordenanza(ctx: dict) -> dict:
                 'candidatas': sorted(titulos), 'confianza': 'baja',
                 'origen': 'varios títulos compatibles con la zona'}
 
-    return {'estado': 'no_resuelta', 'ordenanza': None,
-            'candidatas': sorted(ords), 'confianza': 'ninguna',
-            'origen': 'sin correspondencia automática',
-            'ordenanzas_disponibles': sorted(ords)}
+    res = {'estado': 'no_resuelta', 'ordenanza': None,
+           'candidatas': sorted(ords), 'confianza': 'ninguna',
+           'origen': 'sin correspondencia automática',
+           'ordenanzas_disponibles': sorted(ords)}
+    if wfs_gap:
+        res['nota'] = (
+            f"La capa oficial consultada no cubre este punto "
+            f"({wfs_gap['error']}). Puede tratarse de un ámbito de "
+            f"planeamiento singular o de un hueco de la cartografía — "
+            f"verificar en el visor municipal o el planeamiento "
+            f"detallado aplicable.")
+        res['fuente_capa_oficial'] = wfs_gap.get('fuente')
+    return res

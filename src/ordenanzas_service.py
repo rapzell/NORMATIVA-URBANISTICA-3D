@@ -77,6 +77,39 @@ def get_ordenanza_municipio(municipio: str) -> dict[str, Any]:
     norm = _normalize_municipio(municipio)
     muni_dir = ORDENANZAS_DIR / norm
     if not muni_dir.exists():
+        # Ordenanzas reales extraídas automáticamente del PDF oficial
+        # del plan (normativa_params) — datos oficiales con página.
+        try:
+            from app.main import _get_ine_for_municipio
+            ine = _get_ine_for_municipio(municipio)
+        except Exception:
+            ine = None
+        ords: dict = {}
+        if ine:
+            try:
+                from src.normativa_params import \
+                    extraer_ordenanzas_municipio
+                ords = extraer_ordenanzas_municipio(ine) or {}
+            except Exception:
+                ords = {}
+        if ords:
+            return {
+                "disponible": True,
+                "municipio": municipio,
+                "origen": "extracción automática del PDF oficial del plan",
+                "subzonas": {code: {
+                    "titulo": d.get("titulo"),
+                    "parametros": d.get("params") or {},
+                    "fuente": d.get("fuente"),
+                    "nota": d.get("nota"),
+                } for code, d in sorted(ords.items())},
+                "requisitos_generales_licencia": None,
+                "fuentes": ["PDFs normativos del plan (oficiales)"],
+                "mensaje": ("Ordenanzas extraídas del documento oficial. "
+                            "Los requisitos específicos de cambio de uso "
+                            "aportados por el estudio se suman en "
+                            f"datos/ordenanzas/{norm}/."),
+            }
         return {
             "disponible": False,
             "municipio": municipio,

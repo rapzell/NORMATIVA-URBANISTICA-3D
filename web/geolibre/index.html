@@ -604,6 +604,7 @@ async function loadOrdenanzas(municipio) {
   const panel = document.getElementById('info-panel');
   let html = '<div class="info-card" id="ordenanzas-card">';
   html += '<div style="font-weight:600;margin-bottom:6px">Ordenanzas municipales de cambio de uso</div>';
+  if (data.origen) html += `<div class="hint">${escapeHtml(data.origen)}</div>`;
   if (!data.disponible) {
     html += `<div class="hint" style="color:#d29922">${escapeHtml(data.mensaje || 'No disponible')}</div>`;
     html += '<div class="hint">Si tienes los datos del ayuntamiento, añádelos en datos/ordenanzas/.</div>';
@@ -612,7 +613,13 @@ async function loadOrdenanzas(municipio) {
     if (subzonas.length > 0) {
       html += `<div class="info-row"><span class="key">Subzonas</span><span class="val">${subzonas.join(', ')}</span></div>`;
       for (const [code, sz] of Object.entries(data.subzonas)) {
-        html += `<details style="margin-top:6px"><summary style="cursor:pointer;font-weight:600">${escapeHtml(code)}</summary>`;
+        html += `<details style="margin-top:6px"><summary style="cursor:pointer;font-weight:600">${escapeHtml(code)}${sz.titulo ? ' — ' + escapeHtml(sz.titulo) : ''}</summary>`;
+        if (sz.parametros && Object.keys(sz.parametros).length) {
+          for (const [k, v] of Object.entries(sz.parametros)) {
+            html += `<div class="hint">${escapeHtml(k)}: ${escapeHtml(String(v))}</div>`;
+          }
+        }
+        if (sz.nota) html += `<div class="hint">${escapeHtml(sz.nota)}</div>`;
         const req = sz.requisitos_cambio_uso || {};
         if (req.superficie_minima_vivienda_m2 != null) html += `<div class="hint">Sup. mínima vivienda: ${req.superficie_minima_vivienda_m2} m²</div>`;
         if (req.altura_minima_m != null) html += `<div class="hint">Altura mínima: ${req.altura_minima_m} m</div>`;
@@ -708,7 +715,7 @@ function renderSubzones3D(data) {
     type: 'symbol',
     source: 'subzones',
     layout: {
-      'text-field': ['get', 'subzona'],
+      'text-field': ['coalesce', ['get', 'subzona'], ['get', 'subzona_piloto']],
       'text-size': 12,
       'text-anchor': 'center'
     },
@@ -1105,7 +1112,7 @@ function showBuildingTooltip(feature, point) {
   tooltipEl.innerHTML = `
     <div class="tt-title">${escapeHtml(props.name || ('Edificio #' + (props.osm_id || 'OSM')))}</div>
     <div class="tt-row"><span class="tt-key">Altura</span><span>${escapeHtml(props.height || '—')} m</span></div>
-    <div class="tt-row"><span class="tt-key">Subzona${pilot ? ' piloto' : ''}</span><span>${escapeHtml(props.subzona || '—')}</span></div>
+    <div class="tt-row"><span class="tt-key">${pilot ? 'Subzona piloto' : 'Ordenanza'}</span><span>${escapeHtml(props.subzona || props.subzona_piloto || '—')}${props.titulo_ordenanza ? ' · ' + escapeHtml(props.titulo_ordenanza) : ''}</span></div>
     <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${escapeHtml(props.altura_maxima_subzona_m || '—')} m</span></div>
     <div class="tt-badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</div>
   `;
@@ -1123,7 +1130,7 @@ function showSubzoneTooltip(feature, point) {
   if (!tooltipEl || !feature) return;
   const props = feature.properties || {};
   tooltipEl.innerHTML = `
-    <div class="tt-title">Subzona ${props.subzona || '—'}</div>
+    <div class="tt-title">${props.normative_status === 'pilot' ? 'Subzona piloto' : 'Subzona'} ${props.subzona || props.subzona_piloto || '—'}</div>
     <div class="tt-row"><span class="tt-key">Municipio</span><span>${props.municipio || '—'}</span></div>
     <div class="tt-row"><span class="tt-key">Altura máx.</span><span>${props.altura_maxima_m || '—'} m</span></div>
     <div class="tt-row"><span class="tt-key">Ocupación</span><span>${props.ocupacion_max != null ? Math.round(props.ocupacion_max * 100) : '—'}%</span></div>
@@ -1657,7 +1664,8 @@ async function generateLicenciaDoc() {
   if (props.ocupacion_max_subzona != null) paramsUrbanisticos['Ocupación máxima'] = props.ocupacion_max_subzona;
   if (props.edificabilidad_max_subzona != null) paramsUrbanisticos['Edificabilidad máxima (m²/m²)'] = props.edificabilidad_max_subzona;
   if (props.retranqueo_min_subzona_m != null) paramsUrbanisticos['Retranqueo mínimo (m)'] = props.retranqueo_min_subzona_m;
-  if (props.subzona) paramsUrbanisticos['Subzona'] = props.subzona;
+  if (props.subzona) paramsUrbanisticos['Ordenanza oficial'] = props.subzona;
+  else if (props.subzona_piloto) paramsUrbanisticos['Subzona piloto (orientativa)'] = props.subzona_piloto;
   // Datos de Catastro
   if (cat.superficie_construida_m2) paramsUrbanisticos['Sup. construida (Catastro)'] = cat.superficie_construida_m2;
   if (cat.uso_principal) paramsUrbanisticos['Uso principal (Catastro)'] = cat.uso_principal;
@@ -1855,7 +1863,8 @@ async function generateReport() {
   if (height) autoData += `<li>Altura edificio: ${height} m</li>`;
   if (footprint) autoData += `<li>Huella: ${footprint} m²</li>`;
   if (municipio) autoData += `<li>Municipio: ${escapeHtml(municipio)}</li>`;
-  if (subzona) autoData += `<li>Subzona: ${escapeHtml(subzona)}</li>`;
+  if (subzona) autoData += `<li>Ordenanza oficial: ${escapeHtml(subzona)}</li>`;
+  else if (props.subzona_piloto) autoData += `<li>Subzona piloto (orientativa): ${escapeHtml(props.subzona_piloto)}</li>`;
   if (cat.refcat) autoData += `<li>Ref. catastral: ${escapeHtml(cat.refcat)}</li>`;
   if (cat.superficie_parcela_m2) autoData += `<li>Sup. parcela (Catastro): ${cat.superficie_parcela_m2} m²</li>`;
   if (cat.superficie_construida_m2) autoData += `<li>Sup. construida (Catastro): ${cat.superficie_construida_m2} m²</li>`;
@@ -1943,6 +1952,7 @@ async function submitGenerateReport() {
     retranqueo_min_m: props.retranqueo_min_subzona_m ?? null,
     municipio: municipio,
     subzona: subzona,
+    subzona_piloto: props.subzona_piloto || null,
     crs: 'EPSG:4326',
     height_m: height,
     footprint_m2: footprint,
@@ -1997,7 +2007,9 @@ async function selectBuilding(feature) {
   const panel = document.getElementById('info-panel');
   const h = props.height != null ? `${props.height} m` : 'No disponible';
   const levels = props.levels || 'No disponible';
-  const subzona = props.subzona || 'No asociada';
+  const subzona = props.subzona
+    ? `${props.subzona}${props.titulo_ordenanza ? ' — ' + props.titulo_ordenanza : ''}`
+    : (props.subzona_piloto ? props.subzona_piloto + ' (piloto)' : 'No asociada');
   const alturaSubzona = props.altura_maxima_subzona_m != null ? `${props.altura_maxima_subzona_m} m` : 'No disponible';
   const status = props.cumplimiento_altura || 'sin_dato';
   const pilot = props.normative_status === 'pilot';
@@ -2015,7 +2027,7 @@ async function selectBuilding(feature) {
   html += `<div class="info-row"><span class="key">Procedencia altura</span><span class="val">${escapeHtml(heightSourceLabel(props.height_source))}</span></div>`;
   html += `<div class="info-row"><span class="key">Plantas OSM</span><span class="val">${escapeHtml(levels)}</span></div>`;
   if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
-  html += `<div class="info-row"><span class="key">${pilot ? 'Subzona piloto' : 'Subzona'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
+  html += `<div class="info-row"><span class="key">${props.subzona ? 'Ordenanza oficial' : 'Subzona piloto'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
   html += `<div class="info-row"><span class="key">${pilot ? 'Límite de altura piloto' : 'Altura máx. subzona'}</span><span class="val">${escapeHtml(alturaSubzona)}</span></div>`;
   if (props.normative_source) html += `<div class="info-row"><span class="key">Fuente del límite</span><span class="val">${escapeHtml(props.normative_source)}</span></div>`;
   const osmId = String(props.osm_id || '');
@@ -2092,13 +2104,13 @@ async function selectSubzone(feature) {
   const props = feature.properties || {};
   const panel = document.getElementById('info-panel');
 
-  let html = `<h2>Subzona ${props.subzona || '—'}</h2>`;
+  let html = `<h2>Subzona piloto ${props.subzona_piloto || props.subzona || '—'}</h2>`;
   html += '<div class="info-card">';
   html += '<div class="hint" style="color:#d29922;margin-bottom:8px">⚠ Subzona piloto: los parámetros normativos son orientativos y la geometría no coincide con las zonas reales del planeamiento. Activa "Zonificación oficial" para ver la clasificación real del suelo.</div>';
 
   const fields = [
     ['Municipio', props.municipio],
-    ['Subzona', props.subzona],
+    ['Subzona piloto', props.subzona_piloto || props.subzona],
     ['Altura maxima', props.altura_maxima_m != null ? props.altura_maxima_m + ' m' : '—'],
     ['Retranqueo min', props.retranqueo_min_m != null ? props.retranqueo_min_m + ' m' : '—'],
     ['Retranq. frente', props.setback_front_m != null ? props.setback_front_m + ' m' : '—'],
@@ -2189,7 +2201,7 @@ async function exportSubzoneIFC() {
     altura_maxima_m: props.altura_maxima_m || 12.0,
     retranqueo_min_m: props.retranqueo_min_m || 0.0,
     municipio: props.municipio || null,
-    subzona: props.subzona || null,
+    subzona: props.subzona || props.subzona_piloto || null,
     setback_front_m: props.setback_front_m || null,
     setback_side_m: props.setback_side_m || null,
     setback_back_m: props.setback_back_m || null,
@@ -2212,7 +2224,7 @@ async function exportSubzoneIFC() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `subzona_${props.subzona || 'building'}.ifc`;
+    a.download = `subzona_${props.subzona || props.subzona_piloto || 'building'}.ifc`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2234,7 +2246,7 @@ async function assessSubzone() {
     altura_maxima_m: props.altura_maxima_m || null,
     retranqueo_min_m: props.retranqueo_min_m || null,
     municipio: props.municipio || null,
-    subzona: props.subzona || null,
+    subzona: props.subzona || props.subzona_piloto || null,
     setback_front_m: props.setback_front_m || null,
     setback_side_m: props.setback_side_m || null,
     setback_back_m: props.setback_back_m || null,

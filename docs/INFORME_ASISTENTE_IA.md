@@ -156,12 +156,13 @@ Panel de chat con: contexto del último edificio seleccionado (municipio/subzona
 
 ## 11. Estado verificado
 
-- 396 tests pasan (60 del asistente: orquestador + mejoras). Herméticos: sin red, sin :8003.
+- 404 tests pasan (64 del asistente: orquestador + mejoras). Herméticos: sin red, sin :8003.
 - `/qa/health`: provider `openrouter`, `servicio_embeddings: true`, `embeddings_disponibles: true`, `memoria` activa.
 - Microservicio :8003 (`venv_rag`, Python 3.13): embedder + reranker ALIA legal ES cargados y respondiendo.
 - En vivo verificado: contexto <1 s · multi-turno con correferencia ("y ahí puedo hacer una piscina" sin coordenadas → resolvió la parcela previa) · cambio de uso → `check_cambio_uso` NHV con `no_verificable` · SSE `contexto→fuentes→final` sin tokens en preguntas de contexto.
-- **Vigo en vivo**: punto dentro de polígono SUC → «U1 MANTEMENTO DA EDIFICACIÓN EXISTENTE — oficial (GeoServer municipal Concello de Vigo)»; «¿edificabilidad máxima de U6?» → «0,7 m²/m² [FUENTE 1]» citando el PDF oficial pág. 179; punto fuera de capa → `unavailable` limpio.
-- Commits: `ff2dfe0` (asistente completo) → `1c11ee5`, `3adcd4c`, `84bde50`, `ed2a6c1` → `7488cec` (guía del experto) → PXOM 2025 + WFS municipal de Vigo (este cambio).
+- **Vigo en vivo**: punto dentro de polígono SUC → «U1 MANTEMENTO DA EDIFICACIÓN EXISTENTE — oficial (GeoServer municipal Concello de Vigo)»; «¿edificabilidad máxima de U6?» → «0,7 m²/m² [FUENTE 1]» citando el PDF oficial pág. 179.
+- **Separación piloto/oficial**: los edificios OSM de Vigo llevan la ordenanza real de la capa municipal (`subzona: U6.6`, `normative_status: official`); los códigos piloto (`R-1`…) viajan solo como `subzona_piloto` marcada y solo en municipios sin capa oficial. Hueco de cobertura (RU COUTO 2, `observ: API-106`) → `unavailable` con nota explicativa, nunca el polígono más cercano ni el piloto.
+- Commits: `ff2dfe0` (asistente completo) → `1c11ee5`, `3adcd4c`, `84bde50`, `ed2a6c1` → `7488cec` (guía del experto) → PXOM 2025 + WFS municipal de Vigo → `ce22db6` (subzona inválida no bloquea WFS) → separación piloto/oficial + caché STRtree (este cambio).
 
 ## 12. Guía del experto implementada — módulos nuevos
 

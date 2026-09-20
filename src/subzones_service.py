@@ -24,11 +24,17 @@ _OVERPASS_DISK_CACHE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos", "cache", "osm_buildings"
 )
 _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
+# Esquema de las props horneadas por edificio: sube la versión cuando
+# cambie (v2: subzona oficial + subzona_piloto + normative_status) —
+# las cachés antiguas con 'subzona: R-1' quedan invalidadas.
+_PROPS_SCHEMA = 2
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in muni_key)
-    return os.path.join(_OVERPASS_DISK_CACHE_DIR, f"{safe}_{int(limit)}.json")
+    return os.path.join(
+        _OVERPASS_DISK_CACHE_DIR,
+        f"{safe}_{int(limit)}_v{_PROPS_SCHEMA}.json")
 
 
 def _overpass_disk_read(muni_key: str, limit: int) -> dict[str, Any] | None:
@@ -666,8 +672,22 @@ def _load_subzones_raw() -> dict[str, Any]:
         return json.load(f)
 
 
+def _pilot_public_feature(feat: dict[str, Any]) -> dict[str, Any]:
+    """Copia del feature piloto con el código en ``subzona_piloto``.
+
+    El campo genérico ``subzona`` se reserva a la capa oficial
+    municipal: un código piloto en ``subzona`` entraba en los flujos
+    oficiales como si fuera una ordenanza real.
+    """
+    props = dict(feat.get("properties") or {})
+    if "subzona" in props:
+        props["subzona_piloto"] = props.pop("subzona")
+    props["normative_status"] = "pilot"
+    return {**feat, "properties": props}
+
+
 def get_subzones(municipio: str | None = None) -> dict[str, Any]:
-    """Devuelve el GeoJSON de subzonas, opcionalmente filtrado por municipio.
+    """Devuelve el GeoJSON de subzonas piloto, opcionalmente filtrado por municipio.
 
     Args:
         municipio: si se proporciona, filtra features cuyo municipio coincide
@@ -677,15 +697,15 @@ def get_subzones(municipio: str | None = None) -> dict[str, Any]:
         GeoJSON FeatureCollection con las subzonas que coincidan.
     """
     data = _load_subzones_raw()
-    if not municipio:
-        return data
-
-    target = _normalize(municipio)
-    filtered = [
-        feat for feat in data.get("features", [])
-        if _normalize(feat.get("properties", {}).get("municipio", "")) == target
-    ]
-    return {"type": "FeatureCollection", "features": filtered}
+    feats = data.get("features", [])
+    if municipio:
+        target = _normalize(municipio)
+        feats = [
+            feat for feat in feats
+            if _normalize(feat.get("properties", {}).get("municipio", "")) == target
+        ]
+    return {"type": "FeatureCollection",
+            "features": [_pilot_public_feature(f) for f in feats]}
 
 
 def list_municipios_with_subzones() -> list[str]:
@@ -699,12 +719,92 @@ def list_municipios_with_subzones() -> list[str]:
     return seen
 
 
-def find_subzone_for_point(lon: float, lat: float) -> dict[str, Any] | None:
+def _ordenanza_municipal_punto(lon: float, lat: float,
+                               municipio: str) -> dict[str, Any] | None:
+    """Ordenanza real del punto vía la capa oficial municipal
+    (``src.muni_wfs`` — GeoServer del concello, copia cacheada).
+
+    Devuelve props con ``normative_status='official'`` y los
+    parámetros extraídos del PDF del plan, o ``None`` si el municipio
+    no tiene capa o el punto no cae en ninguna zona.
+    """
+    try:
+        from app.main import _get_ine_for_municipio
+        ine = _get_ine_for_municipio(municipio)
+    except Exception:
+        ine = None
+    if not ine:
+        return None
+    try:
+        from src.muni_wfs import consultar_ordenanza_punto
+        r = consultar_ordenanza_punto(lon, lat, ine)
+    except Exception:
+        return None
+    if r is None:
+        return None  # municipio sin capa oficial → se permite piloto
+    if r.get('data_quality') != 'official':
+        # Hay capa oficial pero el punto cae fuera de su cobertura:
+        # no se inventa ni se rellena con el piloto — se declara
+        # indisponible con la traza de la fuente consultada.
+        return {'subzona': None, 'municipio': municipio,
+                'normative_status': 'unavailable',
+                'fuente': r.get('fuente'),
+                'instrumento': r.get('instrumento'),
+                'nota': r.get('error')}
+    if r.get('ambigua'):
+        return {'subzona': None, 'municipio': municipio,
+                'normative_status': 'ambiguous',
+                'subzonas_candidatas': r.get('candidatas'),
+                'fuente': r.get('fuente')}
+    code = r.get('ordenanza')
+    if not code:
+        return None
+    # Parámetros reales de la ordenanza extraídos del PDF del plan
+    titulo = None
+    params: dict = {}
+    try:
+        from src.normativa_params import (buscar_ordenanza,
+                                          extraer_ordenanzas_municipio)
+        key, found = buscar_ordenanza(
+            extraer_ordenanzas_municipio(ine), code)
+        if found:
+            titulo = found.get('titulo')
+            params = found.get('params') or {}
+    except Exception:
+        key = None
+    return {
+        'subzona': code,
+        'ordenanza': key or code,
+        'titulo': titulo,
+        'municipio': municipio,
+        'normative_status': 'official',
+        'fuente': r.get('fuente'),
+        'instrumento': r.get('instrumento'),
+        'nota': r.get('nota'),
+        'altura_maxima_m': params.get('altura_maxima_m'),
+        'ocupacion_max': params.get('ocupacion_max_pct'),
+        'edificabilidad_max_m2_m2': params.get('edificabilidad_max_m2_m2'),
+        'retranqueo_min_m': params.get('retranqueo_frontal_m'),
+        'parcela_minima_m2': params.get('parcela_minima_m2'),
+    }
+
+
+def find_subzone_for_point(lon: float, lat: float,
+                           municipio: str | None = None
+                           ) -> dict[str, Any] | None:
     """Busca la subzona que contiene el punto (lon, lat) en EPSG:4326.
+
+    Prioridad: capa oficial municipal de ordenanzas (datos reales);
+    el dataset piloto solo se usa si no hay capa oficial y queda
+    siempre marcado ``normative_status='pilot'``.
 
     Usa shapely si esta disponible; si no, hace un bounding-box match simple.
     Devuelve las propiedades de la subzona o None.
     """
+    # Localizar primero el feature piloto (si existe): sirve también
+    # para inferir el municipio cuando no se indica — con él la capa
+    # oficial puede resolverse igualmente.
+    pilot_props = None
     data = _load_subzones_raw()
     try:
         from shapely.geometry import Point, shape
@@ -712,7 +812,8 @@ def find_subzone_for_point(lon: float, lat: float) -> dict[str, Any] | None:
         for feat in data.get("features", []):
             geom = feat.get("geometry")
             if geom and shape(geom).contains(pt):
-                return feat.get("properties")
+                pilot_props = feat.get("properties")
+                break
     except Exception:
         # Fallback: bounding-box simple
         for feat in data.get("features", []):
@@ -724,8 +825,15 @@ def find_subzone_for_point(lon: float, lat: float) -> dict[str, Any] | None:
             xs = [c[0] for c in ring]
             ys = [c[1] for c in ring]
             if min(xs) <= lon <= max(xs) and min(ys) <= lat <= max(ys):
-                return feat.get("properties")
-    return None
+                pilot_props = feat.get("properties")
+                break
+
+    muni_eff = municipio or (pilot_props or {}).get("municipio")
+    if muni_eff:
+        real = _ordenanza_municipal_punto(lon, lat, muni_eff)
+        if real:
+            return real
+    return pilot_props
 
 
 def find_subzone_by_name(municipio: str, subzona: str) -> dict[str, Any] | None:
@@ -831,7 +939,18 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "levels": tags.get("building:levels") or None,
                 "_altura_visual": round(float(height), 2),
                 "municipio": (subzone_props or {}).get("municipio") or municipio,
-                "subzona": (subzone_props or {}).get("subzona"),
+                # 'subzona' solo lleva códigos de la capa oficial
+                # municipal — nunca códigos piloto. El piloto viaja en
+                # 'subzona_piloto' para la comparación orientativa.
+                "subzona": (subzone_props or {}).get("subzona")
+                           if (subzone_props or {}).get("normative_status") == "official"
+                           else None,
+                "subzona_piloto": (subzone_props or {}).get("subzona")
+                                  if (subzone_props or {}).get("normative_status") == "pilot"
+                                  else None,
+                "ordenanza": (subzone_props or {}).get("ordenanza"),
+                "titulo_ordenanza": (subzone_props or {}).get("titulo"),
+                "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
                 "normative_status": (subzone_props or {}).get("normative_status"),
                 "normative_source": (subzone_props or {}).get("fuente"),
@@ -855,7 +974,7 @@ def _find_subzone_for_ring(coords: list[list[float]], municipio: str | None) -> 
         ys = [c[1] for c in coords]
         lon = (min(xs) + max(xs)) / 2.0
         lat = (min(ys) + max(ys)) / 2.0
-        return find_subzone_for_point(float(lon), float(lat))
+        return find_subzone_for_point(float(lon), float(lat), municipio)
     except Exception:
         return None
 

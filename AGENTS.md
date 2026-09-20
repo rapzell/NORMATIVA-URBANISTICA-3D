@@ -6,7 +6,7 @@
 # Arrancar servidor (puerto 8002)
 venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 
-# Tests completos (~380 tests, ~30s)
+# Tests completos (~404 tests, ~30s)
 venv\Scripts\python.exe -m pytest -q --ignore=tests/test_asistente_normativa_rules.py --ignore=tests/test_evaluar_dataset_helpers.py
 
 # Microservicio de embeddings/reranker RAG (puerto 8003, entorno Python 3.13)
@@ -63,7 +63,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
 | Documentos oficiales SIOTUGA (PDFs normativa, sesión+token) | `src/siotuga/document_client.py` |
-| Ordenanza SUC por punto vía WFS municipal propio (Vigo GeoServer) | `src/muni_wfs.py` |
+| Ordenanza SUC por punto vía capa municipal oficial (Vigo GeoServer, caché local + STRtree) | `src/muni_wfs.py` |
 | RAG normativo sobre PDFs oficiales (índice BM25 + citas) | `src/normativa_rag.py` |
 | Cliente Catastro (OVC/INSPIRE/BU/ATOM) | `src/catastro/client.py` |
 | Alturas LiDAR + huellas Overture | `src/building_data/height_extractor.py` |
@@ -118,14 +118,38 @@ Se construyen en `_build_official_context` y se renderizan en:
 
 Formato de cada link: `{name, url, label}`
 
-### Subzonas piloto
+### Subzonas piloto y jerarquía oficial
 
-Las subzonas en `datos/subzonas_piloto.geojson` tienen:
-- Parámetros normativos orientativos (altura, ocupación, edificabilidad, retranqueo)
-- Geometrías rectangulares inventadas (no reales)
+`find_subzone_for_point(lon, lat, municipio)` resuelve la ordenanza del
+punto con esta jerarquía (datos reales primero, nunca se rellena con
+piloto un hueco de la capa oficial):
 
-**No se muestran en el mapa** (se comentó `renderSubzones3D` en `goToMunicipio`).
-Se usan solo para los cálculos del backend (diagnóstico, viabilidad).
+1. **Capa oficial municipal** (`src.muni_wfs`): GeoServer del concello
+   copiado en `datos/cache/muni_wfs/{ine}.json` (TTL 30 días) +
+   `STRtree` en memoria (~1 ms/punto; sin él sería inusable para 500
+   edificios). Devuelve `normative_status='official'` + `subzona`
+   (código de zona, p.ej. `U6.6`) + `ordenanza` (normalizada al PDF,
+   p.ej. `U6`) + parámetros extraídos del PDF del plan.
+2. **Hueco de cobertura**: si el municipio tiene capa pero el punto cae
+   fuera de todo polígono → `normative_status='unavailable'` + `nota`.
+   El polígono más cercano NO se usa: puede ser un ámbito de
+   planeamiento singular (p.ej. `observ: API-106` en RU COUTO 2).
+3. **Piloto**: solo si el municipio no tiene capa configurada →
+   `normative_status='pilot'` y el código viaja como `subzona_piloto`,
+   nunca como `subzona`.
+
+Contrato en las props de edificio (`/proxy/osm-buildings`):
+`subzona` = solo códigos oficiales · `subzona_piloto` = piloto
+orientativo · `normative_status` = official|pilot|unavailable|ambiguous.
+La caché de Overpass en disco lleva `_PROPS_SCHEMA` en el nombre del
+fichero para invalidarse cuando cambia este contrato.
+
+Los polígonos piloto (`datos/subzonas_piloto.geojson`) tienen parámetros
+orientativos y geometrías inventadas: se sirven con `subzona_piloto` +
+`normative_status='pilot'` (`_pilot_public_feature`) y **no se muestran
+en el mapa** (se comentó `renderSubzones3D`). `/planeamiento/subzonas`
+adjunta `ordenanzas_reales` (extraídas del PDF oficial) y
+`capa_ordenanzas_oficial`.
 
 ### Tests
 

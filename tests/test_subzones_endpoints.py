@@ -32,10 +32,12 @@ def test_subzonas_filtra_por_municipio():
     data = resp.json()
     assert data["type"] == "FeatureCollection"
     assert len(data["features"]) >= 3
-    subzonas = {feat["properties"]["subzona"] for feat in data["features"]}
+    subzonas = {feat["properties"]["subzona_piloto"] for feat in data["features"]}
     assert {"R-1", "R-2", "R-3"}.issubset(subzonas)
     for feat in data["features"]:
         assert feat["properties"]["municipio"] == "Vigo"
+        assert feat["properties"]["normative_status"] == "pilot"
+        assert "subzona" not in feat["properties"]
 
 
 def test_subzonas_filtra_por_municipio_sin_acentos():
@@ -44,7 +46,7 @@ def test_subzonas_filtra_por_municipio_sin_acentos():
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["features"]) >= 2
-    subzonas = {feat["properties"]["subzona"] for feat in data["features"]}
+    subzonas = {feat["properties"]["subzona_piloto"] for feat in data["features"]}
     assert {"UC-1", "UC-2"}.issubset(subzonas)
     for feat in data["features"]:
         assert feat["properties"]["municipio"] == "A Coruna"
@@ -60,13 +62,38 @@ def test_subzonas_municipios_lista():
 
 
 def test_subzonas_lookup_punto_dentro():
-    """Punto dentro de la subzona R-1 de Vigo."""
-    resp = client.get("/planeamiento/subzonas/lookup", params={"lon": -8.72, "lat": 42.235})
+    """Punto dentro de la subzona piloto UC-1 (A Coruña no tiene capa
+    oficial configurada → cae al piloto etiquetado)."""
+    resp = client.get("/planeamiento/subzonas/lookup",
+                      params={"lon": -8.40, "lat": 43.37})
     assert resp.status_code == 200
     data = resp.json()
     assert data["found"] is True
-    assert data["subzona"]["municipio"] == "Vigo"
-    assert data["subzona"]["subzona"] == "R-1"
+    assert data["subzona"]["municipio"] == "A Coruna"
+    assert data["subzona"]["subzona_piloto"] == "UC-1"
+    assert data["subzona"]["normative_status"] == "pilot"
+    assert "subzona" not in data["subzona"] or \
+        data["subzona"].get("subzona") is None
+
+
+def test_subzonas_lookup_municipio_con_capa(monkeypatch):
+    """En un municipio con capa oficial el lookup la consulta primero;
+    un hueco de cobertura devuelve indisponible, nunca el piloto."""
+    import src.subzones_service as _ss
+    monkeypatch.setattr(
+        _ss, "_ordenanza_municipal_punto",
+        lambda lon, lat, municipio: {
+            "subzona": None, "municipio": municipio,
+            "normative_status": "unavailable",
+            "nota": "Punto fuera de la capa de ordenanzas SUC"})
+    resp = client.get("/planeamiento/subzonas/lookup",
+                      params={"lon": -8.72, "lat": 42.235,
+                              "municipio": "Vigo"})
+    data = resp.json()
+    assert data["found"] is True
+    assert data["subzona"]["normative_status"] == "unavailable"
+    assert data["subzona"].get("subzona") is None
+    assert "subzona_piloto" not in data["subzona"]
 
 
 def test_subzonas_lookup_punto_fuera():
@@ -86,11 +113,13 @@ def test_subzonas_tiene_propiedades_normativas():
         props = feat["properties"]
         assert "altura_maxima_m" in props
         assert "retranqueo_min_m" in props
-        assert "subzona" in props
+        assert "subzona_piloto" in props
+        assert "subzona" not in props
+        assert props["normative_status"] == "pilot"
         assert "fuente" in props
 
 
-def test_proxy_osm_buildings_returns_geojson(monkeypatch):
+def _fake_overpass():
     class _FakeResp:
         def __enter__(self):
             return self
@@ -113,9 +142,25 @@ def test_proxy_osm_buildings_returns_geojson(monkeypatch):
                 ]
             }
             return json.dumps(payload).encode("utf-8")
+    return lambda req, timeout=25: _FakeResp()
 
+
+def _osm_test(monkeypatch, ordenanza_result):
+    """Cablea Overpass falso + resolución de ordenanza + cachés limpias."""
     import src.subzones_service as _ss
-    monkeypatch.setattr(_ss, "urlopen", lambda req, timeout=25: _FakeResp(), raising=True)
+    monkeypatch.setattr(_ss, "urlopen", _fake_overpass(), raising=True)
+    monkeypatch.setattr(_ss, "_ordenanza_municipal_punto",
+                        lambda lon, lat, municipio: ordenanza_result)
+    _ss._OVERPASS_CACHE.clear()
+    monkeypatch.setattr(_ss, "_overpass_disk_read",
+                        lambda muni_key, limit: None)
+    monkeypatch.setattr(_ss, "_overpass_disk_write",
+                        lambda muni_key, limit, data: None)
+
+
+def test_proxy_osm_buildings_returns_geojson(monkeypatch):
+    # Sin capa oficial → cae al piloto etiquetado (nunca como 'subzona')
+    _osm_test(monkeypatch, None)
 
     resp = client.get("/proxy/osm-buildings", params={"municipio": "Vigo", "limit": 10})
     assert resp.status_code == 200
@@ -132,4 +177,46 @@ def test_proxy_osm_buildings_returns_geojson(monkeypatch):
     assert "height_source" in props
     assert "height_estimated" in props
     assert props["normative_status"] == "pilot"
+    assert props["subzona"] is None
+    assert props["subzona_piloto"] is not None
     assert props["cumplimiento_altura"] in ("orientativo_dentro", "orientativo_supera", "sin_dato")
+
+
+def test_proxy_osm_buildings_subzona_oficial(monkeypatch):
+    """Con capa oficial, el edificio lleva la ordenanza real en
+    'subzona' — nunca un código piloto."""
+    _osm_test(monkeypatch, {
+        "subzona": "U1.1", "ordenanza": "U1",
+        "titulo": "MANTEMENTO DA EDIFICACIÓN EXISTENTE",
+        "municipio": "Vigo",
+        "normative_status": "official",
+        "fuente": "GeoServer municipal Concello de Vigo",
+        "instrumento": "capa 4ordsuc",
+        "altura_maxima_m": 7.0,
+    })
+
+    resp = client.get("/proxy/osm-buildings",
+                      params={"municipio": "Vigo", "limit": 10})
+    assert resp.status_code == 200
+    props = resp.json()["features"][0]["properties"]
+    assert props["subzona"] == "U1.1"
+    assert props["ordenanza"] == "U1"
+    assert props["normative_status"] == "official"
+    assert props["subzona_piloto"] is None
+
+
+def test_proxy_osm_buildings_hueco_cobertura(monkeypatch):
+    """Punto fuera de la capa oficial → indisponible, sin piloto."""
+    _osm_test(monkeypatch, {
+        "subzona": None, "municipio": "Vigo",
+        "normative_status": "unavailable",
+        "fuente": "GeoServer municipal Concello de Vigo",
+        "nota": "Punto fuera de la capa de ordenanzas SUC"})
+
+    resp = client.get("/proxy/osm-buildings",
+                      params={"municipio": "Vigo", "limit": 10})
+    assert resp.status_code == 200
+    props = resp.json()["features"][0]["properties"]
+    assert props["subzona"] is None
+    assert props["subzona_piloto"] is None
+    assert props["normative_status"] == "unavailable"

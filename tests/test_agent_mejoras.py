@@ -381,7 +381,8 @@ def test_muni_wfs_punto_en_poligono():
         def json(self):
             return _wfs_geojson(['U8'])
 
-    with patch('src.muni_wfs.requests.get', return_value=R()):
+    with patch('src.muni_wfs.capa_features', return_value=[]), \
+         patch('src.muni_wfs.requests.get', return_value=R()):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
     assert r['data_quality'] == 'official'
     assert r['ordenanza'] == 'U8'
@@ -395,14 +396,16 @@ def test_muni_wfs_punto_fuera_de_capa():
         def json(self):
             return _wfs_geojson([])
 
-    with patch('src.muni_wfs.requests.get', return_value=R()):
+    with patch('src.muni_wfs.capa_features', return_value=[]), \
+         patch('src.muni_wfs.requests.get', return_value=R()):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
     assert r['data_quality'] == 'unavailable'
 
 
 def test_muni_wfs_error_red_degrada():
     from src import muni_wfs
-    with patch('src.muni_wfs.requests.get',
+    with patch('src.muni_wfs.capa_features', return_value=[]), \
+         patch('src.muni_wfs.requests.get',
                side_effect=RuntimeError('timeout')):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
     assert r['data_quality'] == 'unavailable'
@@ -423,11 +426,28 @@ def test_muni_wfs_ambigua_dos_poligonos():
                     [-8.72, 42.23]]]}})
             return g
 
-    with patch('src.muni_wfs.requests.get', return_value=R()):
+    with patch('src.muni_wfs.capa_features', return_value=[]), \
+         patch('src.muni_wfs.requests.get', return_value=R()):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
     assert r['ambigua'] is True
     assert set(r['candidatas']) == {'U6', 'U8'}
     assert r['ordenanza'] is None
+
+
+def test_muni_wfs_capa_local_cacheada():
+    """La copia local cacheada evita la red y hace pip real."""
+    from src import muni_wfs
+    feats = _wfs_geojson(['U6'])['features']
+    with patch('src.muni_wfs.capa_features', return_value=feats), \
+         patch('src.muni_wfs.requests.get',
+               side_effect=AssertionError('no debe llamar a la red')):
+        r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
+        r_fuera = muni_wfs.consultar_ordenanza_punto(
+            -8.5, 42.5, '36057')
+    assert r['data_quality'] == 'official'
+    assert r['ordenanza'] == 'U6'
+    assert r_fuera['data_quality'] == 'unavailable'
+    assert 'fuera de la capa' in (r_fuera.get('error') or '').lower()
 
 
 def test_muni_wfs_sin_capa_municipio():

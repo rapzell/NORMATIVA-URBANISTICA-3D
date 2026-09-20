@@ -147,10 +147,13 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
                       + _origen_ordenanza(ord_p, ctx))
     elif ord_p.get('ordenanzas_disponibles'):
         codigos = ', '.join(ord_p['ordenanzas_disponibles'][:14])
+        _res = ctx.get('ordenanza_resolucion') or {}
         partes.append(
             f"**Ordenanza**: no determinada automáticamente — "
             f"disponibles en el municipio: {codigos} "
             f"(indícala, p.ej. «subzona U6», o selecciónala en el visor)")
+        if _res.get('nota'):
+            partes.append(f"*{_res['nota']}*")
 
     faltan = []
     if alt_v is None:
@@ -237,6 +240,8 @@ def _respuesta_suelo(ctx: dict) -> str:
                        "automáticamente — disponibles en el municipio: "
                        f"{codigos} (indícala, p.ej. «subzona U6», "
                        "o selecciónala en el visor)")
+            if res.get('nota'):
+                out.append(f"*{res['nota']}*")
     extras = []
     if res.get('superficie_parcela_m2'):
         extras.append(f"parcela {res['superficie_parcela_m2']:,.0f} m²"
