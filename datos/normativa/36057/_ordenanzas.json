@@ -1,0 +1,273 @@
+{
+ "_extracted_at": 1789762959.3270528,
+ "municipio_ine": "36057",
+ "ordenanzas": {
+  "U9": {
+   "ordenanza": "U9",
+   "titulo": "UNIDADES Edificio Non Exclusivo",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.5,
+    "ocupacion_max_pct": 40.0,
+    "retranqueo_lateral_m": 2.0,
+    "retranqueo_posterior_m": 3.0,
+    "retranqueo_frontal_m": 3.0,
+    "altura_maxima_m": 10.5,
+    "parcela_minima_m2": 500.0
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 119,
+     "texto": "fectos de parcelación unha parcela mínima de 500 m2 e unha edificabilidade de 0,50 m2/m2. Poderán facerse agrupacións parcelarias sempre que non or"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 119,
+     "texto": "A edificabilidade máxima establécese en 0,70 m 2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade das plantas incluídas as plant"
+    },
+    "retranqueo_lateral_m": {
+     "pagina": 119,
+     "texto": "conforme aos mapas estratéxicos de ruído. Establécense uns recuados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corr"
+    },
+    "retranqueo_posterior_m": {
+     "pagina": 119,
+     "texto": "uados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corredoura non se permitirá a edificación"
+    },
+    "retranqueo_frontal_m": {
+     "pagina": 119,
+     "texto": "- A edificación principal poderase situar na aliñación ou recuarse con respecto a ela un máximo de 3,00 metros, respectando en todo caso a situación da contigua si se tra"
+    },
+    "altura_maxima_m": {
+     "pagina": 119,
+     "texto": "de ancho máximo 25 metros medidos desde a aliñación. A altura máxima de edificación será de baixo e dúas plantas, equivalente a 10,50 metros de altura. En edificación de altura máxima baixo e unha pl"
+    },
+    "parcela_minima_m2": {
+     "pagina": 119,
+     "texto": "s existentes, establecéndose a efectos de parcelación unha parcela mínima de 500 m2 e unha edificabilidade de 0,50 m2/m2. Poderán facerse agru"
+    }
+   },
+   "fuente": "28719nu003.pdf pág. 119"
+  },
+  "U1": {
+   "ordenanza": "U1",
+   "titulo": "MANTEMENTO DA EDIFICACIÓN EXISTENTE",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 165",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "U2": {
+   "ordenanza": "U2",
+   "titulo": "CUARTEIRÓN PECHADO",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 168",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "U3": {
+   "ordenanza": "U3",
+   "titulo": "EDIFICACIÓN LINEAL DENSA",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 171",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "U4": {
+   "ordenanza": "U4",
+   "titulo": "EDIFICACIÓN ABERTA",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 174",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "U5": {
+   "ordenanza": "U5",
+   "titulo": "EDIFICACIÓN MIXTA",
+   "params": {
+    "edificabilidad_max_m2_m2": 1.0,
+    "ocupacion_max_pct": 60.0,
+    "altura_maxima_m": 10.5
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 177,
+     "texto": "unha fronte de 6,00 metros en contacto coa vía pública. A edificabilidade máxima fíxase en 1,00 m2/m2 sobre parcela edificable. A ocupación máxima será do 60% s"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 177,
+     "texto": "ade máxima fíxase en 1,00 m2/m2 sobre parcela edificable. A ocupación máxima será do 60% sobre parcela edificable, e establécese unha franxa de posi"
+    },
+    "altura_maxima_m": {
+     "pagina": 177,
+     "texto": "• boppo@depo.es Núm. Luns, 4 de agosto de 2025 146 BOPPO A altura máxima de edificación será de baixo e dúas plantas, equivalente a 10,50 metros de altura. En edificación de altura máxima baixo e unha pl"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 177"
+  },
+  "U6": {
+   "ordenanza": "U6",
+   "titulo": "VIVENDA UNIFAMILIAR",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.7,
+    "ocupacion_max_pct": 40.0,
+    "retranqueo_lateral_m": 2.0,
+    "retranqueo_posterior_m": 3.0,
+    "retranqueo_frontal_m": 3.0,
+    "altura_maxima_m": 7.0,
+    "parcela_minima_m2": 250.0
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 179,
+     "texto": "s unha fronte de 6,00 metros en contacto coa vía pública. A edificabilidade máxima establécese en 0,70 m2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 179,
+     "texto": "a. A edificabilidade máxima establécese en 0,70 m2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade das plantas incluídas as plant"
+    },
+    "retranqueo_lateral_m": {
+     "pagina": 179,
+     "texto": "conforme aos mapas estratéxicos de ruído. Establécense uns recuados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corr"
+    },
+    "retranqueo_posterior_m": {
+     "pagina": 179,
+     "texto": "ados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corredoura non se permitirá a edificació"
+    },
+    "retranqueo_frontal_m": {
+     "pagina": 179,
+     "texto": "• A edificación principal poderase situar na aliñación ou recuarse con respecto a ela un máximo de 3,00 metros, respectando en todo caso a situación da contigua si se tra"
+    },
+    "altura_maxima_m": {
+     "pagina": 179,
+     "texto": "e a viario de sección igual ou menor de catro metros. • A altura máxima fíxase en baixo e unha planta, equivalente a 7,00 metros medidos conforme ao establecido no artigo 62.5 desta Norma"
+    },
+    "parcela_minima_m2": {
+     "pagina": 179,
+     "texto": "acaroada. Para efectos de nova parcelación establécese una parcela mínima de 250 m2 e terá polo menos unha fronte de 6,00 metros en contacto c"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 179"
+  },
+  "U7": {
+   "ordenanza": "U7",
+   "titulo": "FINCAS SINGULARES EN SOLO URBANO",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.15,
+    "ocupacion_max_pct": 10.0,
+    "altura_maxima_m": 7.0
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 190,
+     "texto": "s será de baixo e unha planta equivalente a 7,00 metros, a edificabilidade máxima de 0,15 m2/m2 e cunha ocupación máxima do 10% de parcela, en ambos os do"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 190,
+     "texto": ",00 metros, a edificabilidade máxima de 0,15 m2/m2 e cunha ocupación máxima do 10% de parcela, en ambos os dous casos incluíndo edificacións e"
+    },
+    "altura_maxima_m": {
+     "pagina": 190,
+     "texto": "cerramento e xardinería e mantendo a unidade parcelaria. A altura máxima dos novos edificios será de baixo e unha planta equivalente a 7,00 metros, a edificabilidade máxima de 0,15 m2/m2 e cunha ocupación"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 190"
+  },
+  "U8": {
+   "ordenanza": "U8",
+   "titulo": "ACTUACIÓNS UNITARIAS CONSOLIDADAS",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 192",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "U10": {
+   "ordenanza": "U10",
+   "titulo": "DOTACIONAL-EQUIPAMENTOS",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.4,
+    "ocupacion_max_pct": 40.0
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 200,
+     "texto": "establécense os seguintes parámetros de edificación: • A edificabilidade máxima fíxase mediante un coeficiente de 0,40 m2/m2 sobre parcela edificable. A parcela mínima a efectos de ed"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 200,
+     "texto": "adas ou que se imposibilite acadar a parcela mínima. • A ocupación máxima de parcela neta será do 40% computando só a edificación principal, podendo chegar ata"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 200"
+  },
+  "SRPO": {
+   "ordenanza": "SRPO",
+   "titulo": "DO SOLO RÚSTICO DE PROTECCIÓN ORDINARIA",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 211",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPA": {
+   "ordenanza": "SRPA",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN AGROPECUARIA",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 212",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPF": {
+   "ordenanza": "SRPF",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN FORESTAL",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 213",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPC": {
+   "ordenanza": "SRPC",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE COSTAS",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 215",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPIN": {
+   "ordenanza": "SRPIN",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE INFRAESTRUTURAS",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 217",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPAU": {
+   "ordenanza": "SRPAU",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DAS AUGAS",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 218",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPPX": {
+   "ordenanza": "SRPPX",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE INTERESE",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 220",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPEN": {
+   "ordenanza": "SRPEN",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE ESPAZOS NATURAIS",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 221",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  },
+  "SRPP": {
+   "ordenanza": "SRPP",
+   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN PATRIMONIAL",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 223",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+  }
+ }
+}

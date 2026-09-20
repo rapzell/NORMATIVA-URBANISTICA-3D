@@ -1,5 +1,28 @@
 # Guía para continuar el desarrollo
 
+## Setup en una máquina nueva
+
+```bash
+git clone https://github.com/rapzell/NORMATIVA-URBANISTICA-3D.git
+cd NORMATIVA-URBANISTICA-3D
+git checkout feat/demo-silencioso
+
+# Entorno principal
+python -m venv venv
+venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Entorno RAG/embeddings (Python 3.13)
+py -3.13 -m venv venv_rag          # o: python3.13 -m venv venv_rag
+venv_rag\Scripts\python.exe -m pip install -r requirements_rag.txt
+```
+
+Los PDFs oficiales (corpus RAG + normativa Vigo PXOM 2025 + fichas de
+ámbitos) y los embeddings precalculados **van en el repo** — no hay que
+descargar nada. Lo que se regenera solo: `datos/cache/` (capas SIOTUGA
+y WFS municipal al primer uso) y `_index.json` (BM25, automático).
+Las API keys (`api.txt`, `docs/apikey*`) NO están en el repo —
+copiarlas a mano o crear el fichero en la máquina nueva.
+
 ## Comandos esenciales
 
 ```bash

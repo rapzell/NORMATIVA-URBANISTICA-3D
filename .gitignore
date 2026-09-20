@@ -55,9 +55,20 @@ datos/*
 !datos/subzonas_piloto.geojson
 !datos/ordenanzas/
 !datos/ordenanzas/_esquema.json
+# Corpus RAG: PDFs oficiales + manifiesto (los indexa corpus.py)
 !datos/corpus/
 datos/corpus/*
 !datos/corpus/_manifest.json
+!datos/corpus/*.pdf
+# Normativa municipal descargada de SIOTUGA (Vigo): PDFs + indices
+# derivados (ambitos.json, _ordenanzas.json, _manifest.json). El
+# _index.json BM25 (8 MB) se regenera solo — queda excluido.
+!datos/normativa/
+datos/normativa/*
+!datos/normativa/36057/
+datos/normativa/36057/_index.json
+# Embeddings precalculados del corpus (3 MB — evita regenerarlos)
+!datos/rag/
  
 # Auto: excluir artefactos demo y pesados
 exports/
