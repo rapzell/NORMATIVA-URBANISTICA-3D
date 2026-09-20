@@ -48,8 +48,21 @@ def resolver_ordenanza(ctx: dict) -> dict:
     from src.normativa_params import buscar_ordenanza
 
     if ctx.get('subzona'):
-        return {'estado': 'usuario', 'ordenanza': ctx['subzona'],
-                'confianza': 'alta', 'origen': 'selección del usuario'}
+        if ords:
+            key, found = buscar_ordenanza(ords, ctx['subzona'])
+            if key is not None:
+                return {'estado': 'usuario', 'ordenanza': key,
+                        'params': found.get('params') or {},
+                        'titulo': found.get('titulo'),
+                        'confianza': 'alta',
+                        'origen': 'selección del usuario'}
+            # Código declarado que no existe en el PGOM (p. ej. un
+            # código de piloto obsoleto) → no bloquea la resolución
+            # oficial; se reporta la discrepancia vía contradicciones.
+        else:
+            return {'estado': 'usuario', 'ordenanza': ctx['subzona'],
+                    'confianza': 'alta',
+                    'origen': 'selección del usuario'}
 
     # Nivel 1b: capa vectorial oficial municipal (WFS punto-en-
     # polígono). Es la fuente más fiable: geometría oficial del

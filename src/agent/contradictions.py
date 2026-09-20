@@ -19,6 +19,38 @@ def detectar_contradicciones(ctx: dict) -> list[str]:
     cat = ctx.get('catastro') or {}
     res = ctx.get('resumen') or {}
 
+    # Subzona indicada manualmente vs realidad: si el código no existe
+    # en el PGOM o difiere de la capa oficial municipal, se avisa — la
+    # selección nunca se descarta en silencio.
+    sub = ctx.get('subzona')
+    resolucion = ctx.get('ordenanza_resolucion') or {}
+    if sub:
+        ords_map = (ctx.get('ordenanzas') or {}).get('ordenanzas') or {}
+        wfs = ctx.get('ordenanza_wfs') or {}
+        if ords_map:
+            from src.normativa_params import buscar_ordenanza, \
+                _norm_code
+            key, found = buscar_ordenanza(ords_map, sub)
+            if key is None:
+                resuelta = resolucion.get('ordenanza')
+                adv.append(
+                    f"La ordenanza indicada «{sub}» no existe en las "
+                    f"ordenanzas del PGOM del municipio"
+                    + (f" — la capa oficial asigna {resuelta}."
+                       if resuelta else
+                       " — se ha ignorado al no existir."))
+            elif (wfs.get('data_quality') == 'official'
+                  and wfs.get('ordenanza')
+                  and not _norm_code(wfs['ordenanza']).startswith(
+                      _norm_code(key))
+                  and not _norm_code(key).startswith(
+                      _norm_code(wfs['ordenanza']))):
+                adv.append(
+                    f"La ordenanza indicada ({key}) difiere de la que "
+                    f"asigna la capa oficial municipal "
+                    f"({wfs['ordenanza']}) — verificar en la ficha "
+                    f"urbanística.")
+
     ordenanza = ord_p.get('ordenanza')
     if not ordenanza:
         return adv

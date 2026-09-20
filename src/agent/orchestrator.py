@@ -332,16 +332,18 @@ def _contexto_edificio(lon: float | None, lat: float | None,
         ctx['ordenanzas_params']['ordenanzas_disponibles'] = \
             sorted(ords['ordenanzas'].keys())
 
-    # Resolución automática parcela → ordenanza (solo sin selección del
-    # usuario). Rellena parámetros marcando siempre el origen y la
-    # confianza — una inferencia nunca se presenta como dato oficial.
+    # Resolución automática parcela → ordenanza. Una selección del
+    # usuario solo manda si el código existe en el PGOM; si no existe
+    # (código obsoleto/erróneo) la capa oficial sigue resolviendo.
+    # Rellena parámetros marcando siempre el origen y la confianza —
+    # una inferencia nunca se presenta como dato oficial.
     if ords.get('ordenanza'):
         ctx['ordenanza_resolucion'] = {
             'estado': 'usuario' if subzona else 'oficial',
             'ordenanza': ords['ordenanza'], 'confianza': 'alta'}
-    elif not subzona and (ords.get('ordenanzas')
-                          or (ctx.get('ordenanza_wfs') or {})
-                          .get('data_quality') == 'official'):
+    elif (ords.get('ordenanzas')
+          or (ctx.get('ordenanza_wfs') or {})
+          .get('data_quality') == 'official'):
         try:
             from src.agent.ordinance_resolver import resolver_ordenanza
             res = resolver_ordenanza(ctx)

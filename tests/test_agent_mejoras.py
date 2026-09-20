@@ -488,6 +488,56 @@ def test_resolver_wfs_unavailable_cae_a_atributos():
     assert r['origen'] != 'GeoServer municipal'
 
 
+def test_resolver_subzona_invalida_no_bloquea_wfs():
+    """Caso real: subzona 'R-1' seleccionada en el visor no existe en
+    el PGOM — no debe impedir que el WFS oficial resuelva."""
+    from src.agent.ordinance_resolver import resolver_ordenanza
+    ctx = _ctx_res(subzona='R-1')
+    ctx['ordenanza_wfs'] = {
+        'data_quality': 'official', 'ordenanza': 'U2',
+        'candidatas': ['U2'], 'fuente': 'GeoServer municipal'}
+    r = resolver_ordenanza(ctx)
+    assert r['estado'] == 'oficial' and r['ordenanza'] == 'U2'
+
+
+def test_contradiccion_subzona_inexistente():
+    ctx = {
+        'building': {}, 'catastro': {}, 'resumen': {},
+        'subzona': 'R-1',
+        'ordenanzas': {'ordenanzas': {'U2': {}}},
+        'ordenanza_resolucion': {'estado': 'oficial',
+                                 'ordenanza': 'U2'},
+        'ordenanzas_params': {'ordenanza': 'U2'},
+    }
+    adv = detectar_contradicciones(ctx)
+    assert adv and 'R-1' in adv[0] and 'U2' in adv[0]
+
+
+def test_contradiccion_subzona_difiere_de_wfs():
+    ctx = {
+        'building': {}, 'catastro': {}, 'resumen': {},
+        'subzona': 'U6',
+        'ordenanzas': {'ordenanzas': {'U6': {}}},
+        'ordenanza_wfs': {'data_quality': 'official',
+                          'ordenanza': 'U2'},
+        'ordenanzas_params': {'ordenanza': 'U6'},
+    }
+    adv = detectar_contradicciones(ctx)
+    assert adv and 'difiere' in adv[0]
+
+
+def test_contradiccion_subzona_valida_sin_aviso():
+    ctx = {
+        'building': {}, 'catastro': {}, 'resumen': {},
+        'subzona': 'U6',
+        'ordenanzas': {'ordenanzas': {'U6': {}}},
+        'ordenanza_wfs': {'data_quality': 'official',
+                          'ordenanza': 'U6.5'},
+        'ordenanzas_params': {'ordenanza': 'U6'},
+    }
+    assert detectar_contradicciones(ctx) == []
+
+
 # ---------- validación semántica (env-gated) ----------
 
 def test_semantica_desactivada_por_defecto(monkeypatch):
