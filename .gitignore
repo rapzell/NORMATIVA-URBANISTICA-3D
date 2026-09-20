@@ -81,6 +81,8 @@ web/examples/threejs-viewer/index_recovery.html
 # Secrets y API keys
 docs/apikey*
 api.txt
+api key.txt
+api*.txt
 api.env
 *.secret
 nul
