@@ -319,6 +319,7 @@
     </div>
     <div id="building-tooltip"></div>
     <div id="map-summary" style="display:none"></div>
+    <div id="map-legend" style="display:none;position:absolute;bottom:32px;left:12px;z-index:10;background:rgba(22,27,34,0.92);border:1px solid #30363d;border-radius:8px;padding:8px 12px;color:#c9d1d9;font-size:11px;max-width:250px;line-height:1.7"></div>
     <button id="toggle-chat" onclick="toggleChat()">Asistente normativa</button>
     <div id="chat-panel">
       <div id="chat-header">
@@ -615,6 +616,13 @@ async function goToMunicipio(municipio) {
 
     // Cargar zonificación oficial de SIOTUGA automáticamente
     loadSiotugaWMS(municipio).catch(e => console.error('Error WMS:', e));
+
+    // Capas de referencia oficial en el suelo activadas por defecto:
+    // clasificación vectorial, plano de ordenación y ordenanzas del
+    // concello — todas debajo de las extrusiones 3D.
+    if (!showClasificacion) toggleClasificacion();
+    if (!showPord) togglePord();
+    if (!showOrds) toggleOrds();
 
     // Cargar edificios reales de OpenStreetMap
     loadBuildings(municipio).catch(e => console.error('Error buildings:', e));
@@ -938,7 +946,7 @@ async function loadClasificacion() {
               'SUNC', '#e67e22', 'SUB', '#f39c12', 'SUN', '#f39c12',
               'SNR', '#27ae60',
               '#95a5a6'],  // rústico / resto — gris
-            'fill-opacity': 0.10
+            'fill-opacity': 0.16
           }
         }, beforeId);
         map.addLayer({
@@ -950,7 +958,7 @@ async function loadClasificacion() {
               'SUNC', '#e67e22', 'SUB', '#f39c12', 'SUN', '#f39c12',
               'SNR', '#27ae60',
               '#95a5a6'],
-            'line-width': 1.2, 'line-opacity': 0.85
+            'line-width': 1.6, 'line-opacity': 0.9
           }
         }, beforeId);
         map.on('click', 'clasificacion-fill', (e) => {
@@ -982,6 +990,7 @@ async function loadClasificacion() {
     clasificacionMode = hasFeatures ? 'vector' : 'raster';
     btn.textContent = hasFeatures ? 'Clasificación: ON' : 'Clasificación: raster';
     btn.classList.add('active');
+    updateMapLegend();
     if (!hasFeatures || meta.note) {
       const panel = document.getElementById('info-panel');
       const msg = !hasFeatures
@@ -1011,6 +1020,7 @@ async function togglePord() {
     btn.textContent = 'Plano oficial: OFF';
     btn.classList.remove('active');
     if (map.getLayer('pord-layer')) map.setLayoutProperty('pord-layer', 'visibility', 'none');
+    updateMapLegend();
     return;
   }
   btn.textContent = 'Plano oficial: cargando…';
@@ -1049,6 +1059,7 @@ async function togglePord() {
     btn.textContent = 'Plano oficial: error';
     showPord = false;
   }
+  updateMapLegend();
 }
 
 // Plano de ordenanzas del GeoServer municipal (visor oficial del
@@ -1061,6 +1072,7 @@ async function toggleOrds() {
     btn.textContent = 'Ordenanzas mapa: OFF';
     btn.classList.remove('active');
     if (map.getLayer('ords-layer')) map.setLayoutProperty('ords-layer', 'visibility', 'none');
+    updateMapLegend();
     return;
   }
   const ine = MUNI_INE[activeMunicipio];
@@ -1079,8 +1091,11 @@ async function toggleOrds() {
     } else {
       map.addSource('ords', { type: 'raster', tiles: [tiles], tileSize: 512,
         attribution: 'Concello de Vigo — ordenanzas y alineaciones' });
+      // En el suelo, debajo de las extrusiones 3D: las etiquetas de
+      // ordenanza quedan visibles en calles y parcelas sin edificar.
+      const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
       map.addLayer({ id: 'ords-layer', type: 'raster', source: 'ords',
-        paint: { 'raster-opacity': 0.5 } });
+        paint: { 'raster-opacity': 0.55 } }, beforeId);
     }
     btn.textContent = 'Ordenanzas mapa: ON';
     btn.classList.add('active');
@@ -1089,6 +1104,33 @@ async function toggleOrds() {
     btn.textContent = 'Ordenanzas mapa: error';
     showOrds = false;
   }
+  updateMapLegend();
+}
+
+// Leyenda de las capas de referencia activas (se actualiza al tocar
+// cualquier toggle): explica qué significa cada color/capa.
+function updateMapLegend() {
+  const el = document.getElementById('map-legend');
+  if (!el) return;
+  let h = '';
+  if (showClasificacion && clasificacionLoaded && clasificacionMode === 'vector') {
+    const sw = c => `<span style="display:inline-block;width:10px;height:10px;background:${c};border-radius:2px;margin-right:4px;vertical-align:-1px"></span>`;
+    h += '<div style="font-weight:600;margin-bottom:2px">Clasificación del suelo</div>'
+      + `${sw('#e74c3c')}Urbano (SUC) &nbsp;${sw('#e67e22')}No consolidado<br>`
+      + `${sw('#f39c12')}Urbanizable &nbsp;${sw('#27ae60')}Núcleo rural<br>`
+      + `${sw('#95a5a6')}Rústico/resto<br>`
+      + '<span style="color:#8b949e">Clic en el suelo → ficha de la zona</span>';
+  }
+  if (showPord) {
+    h += (h ? '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:4px">' : '<div>')
+      + '<b>Plano oficial PXOM</b> — parcelario, alineaciones y cotas oficiales (SIOTUGA)</div>';
+  }
+  if (showOrds) {
+    h += (h ? '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:4px">' : '<div>')
+      + '<b>Ordenanzas Concello</b> — códigos U-n dibujados sobre cada zona; leer el código en la parcela</div>';
+  }
+  el.innerHTML = h;
+  el.style.display = h ? 'block' : 'none';
 }
 
 function toggleClasificacion() {
@@ -1109,6 +1151,7 @@ function toggleClasificacion() {
     for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster'])
       if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
   }
+  updateMapLegend();
 }
 
 let currentShadowHour = 12;
