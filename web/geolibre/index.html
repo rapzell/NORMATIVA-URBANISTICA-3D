@@ -938,12 +938,20 @@ async function loadClasificacion() {
               'SUNC', '#e67e22', 'SUB', '#f39c12', 'SUN', '#f39c12',
               'SNR', '#27ae60',
               '#95a5a6'],  // rústico / resto — gris
-            'fill-opacity': 0.35
+            'fill-opacity': 0.10
           }
         }, beforeId);
         map.addLayer({
           id: 'clasificacion-line', type: 'line', source: 'clasificacion',
-          paint: { 'line-color': '#2da44e', 'line-width': 0.6, 'line-opacity': 0.7 }
+          paint: {
+            'line-color': ['match', ['get', 'clase_ley'],
+              'SUC', '#e74c3c', 'SU', '#e74c3c',
+              'SUR', '#e74c3c', 'SUT', '#e74c3c', 'SUI', '#e74c3c',
+              'SUNC', '#e67e22', 'SUB', '#f39c12', 'SUN', '#f39c12',
+              'SNR', '#27ae60',
+              '#95a5a6'],
+            'line-width': 1.2, 'line-opacity': 0.85
+          }
         }, beforeId);
         map.on('click', 'clasificacion-fill', (e) => {
           if (!e.features || !e.features.length) return;
@@ -1028,8 +1036,11 @@ async function togglePord() {
     } else {
       map.addSource('pord', { type: 'raster', tiles: [tiles], tileSize: 512,
         attribution: 'SIOTUGA — plano de ordenación oficial' });
+      // Debajo de las extrusiones 3D: referencia oficial de parcelario
+      // y alineaciones sin tapar los edificios.
+      const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
       map.addLayer({ id: 'pord-layer', type: 'raster', source: 'pord',
-        paint: { 'raster-opacity': 0.85 } });
+        paint: { 'raster-opacity': 0.55 } }, beforeId);
     }
     btn.textContent = 'Plano oficial: ON';
     btn.classList.add('active');
@@ -1069,7 +1080,7 @@ async function toggleOrds() {
       map.addSource('ords', { type: 'raster', tiles: [tiles], tileSize: 512,
         attribution: 'Concello de Vigo — ordenanzas y alineaciones' });
       map.addLayer({ id: 'ords-layer', type: 'raster', source: 'ords',
-        paint: { 'raster-opacity': 0.75 } });
+        paint: { 'raster-opacity': 0.5 } });
     }
     btn.textContent = 'Ordenanzas mapa: ON';
     btn.classList.add('active');
@@ -1343,7 +1354,7 @@ function renderOfficialContext(ctx) {
   if (cat.superficie_comercial_m2) html += `<div class="info-row"><span class="key">Sup. no resid.</span><span class="val">${escapeHtml(cat.superficie_comercial_m2)} m²${qualityBadge('official')}</span></div>`;
   if (cat.num_unidades) html += `<div class="info-row"><span class="key">Unidades</span><span class="val">${escapeHtml(cat.num_unidades)}</span></div>`;
   if (cat.edificios_oficiales) html += `<div class="info-row"><span class="key">Edificios Catastro</span><span class="val">${escapeHtml(cat.edificios_oficiales)}${qualityBadge('official')}</span></div>`;
-  if (cat.plantas_oficiales) html += `<div class="info-row"><span class="key">Plantas (Catastro)</span><span class="val">${escapeHtml(cat.plantas_oficiales)}${qualityBadge('official')}</span></div>`;
+  if (cat.plantas_oficiales) html += `<div class="info-row"><span class="key">Plantas (Catastro)</span><span class="val">${escapeHtml(cat.plantas_oficiales)}${cat.sotanos_oficiales ? ' · ' + escapeHtml(String(cat.sotanos_oficiales)) + ' sót.' : ''}${qualityBadge('official')}</span></div>`;
   if (cat.coord_consistency) html += `<div class="info-row"><span class="key">Coord. consistentes</span><span class="val">${cat.coord_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
   if (cat.municipio_consistency) html += `<div class="info-row"><span class="key">Muni. consistente</span><span class="val">${cat.municipio_consistency === 'ok' ? '✓' : '⚠ revisar'}</span></div>`;
   // Altura medida por LiDAR / estimada OSM (de /official/building-data)
@@ -2170,7 +2181,7 @@ async function selectBuilding(feature) {
           ? ` → aplicable ≈${props.altura_aplicable_m} m (ancho est. ~${props.ancho_rua_estimado_m} m)`
           : '')
        : (props.cumplimiento_altura === 'sin_limite'
-          ? 'no fijada — conserva la edificación existente'
+          ? 'no fijada por la ordenanza'
           : 'No disponible'));
   const status = props.cumplimiento_altura || 'sin_dato';
   const pilot = props.normative_status === 'pilot';
@@ -2187,8 +2198,8 @@ async function selectBuilding(feature) {
   html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}${props.height != null ? qualityBadge(props.height_estimated === false ? 'measured' : 'estimated') : ''}</span></div>`;
   if (props.altura_medida_m != null && props.altura_osm_m != null && Math.abs(props.altura_medida_m - props.altura_osm_m) > 2) html += `<div class="hint" style="margin:-4px 0 6px">Altura medida LiDAR (${props.altura_medida_m} m) — OSM estimaba ~${props.altura_osm_m} m.</div>`;
   html += `<div class="info-row"><span class="key">Procedencia altura</span><span class="val">${escapeHtml(heightSourceLabel(props.height_source))}</span></div>`;
-  html += `<div class="info-row"><span class="key">Plantas</span><span class="val">${escapeHtml(levels)}${props.levels ? '' : (props.plantas_estimadas ? qualityBadge('estimated') : '')}</span></div>`;
-  if (!props.levels) html += `<div class="hint" style="margin:-4px 0 6px">OSM no declara <code>building:levels</code> en este edificio${props.plantas_estimadas ? ' — las plantas se estiman desde la altura (~3,2 m/planta)' : '; la altura mostrada es una estimación por tipo'} — orientativo, no oficial.</div>`;
+  html += `<div class="info-row"><span class="key">Plantas</span><span class="val" id="plantas-val">${escapeHtml(levels)}${props.levels ? '' : (props.plantas_estimadas ? qualityBadge('estimated') : '')}</span></div>`;
+  if (!props.levels) html += `<div class="hint" id="plantas-hint" style="margin:-4px 0 6px">OSM no declara <code>building:levels</code> en este edificio${props.plantas_estimadas ? ' — las plantas se estiman desde la altura (~3,2 m/planta)' : '; la altura mostrada es una estimación por tipo'} — orientativo, no oficial.</div>`;
   if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
   html += `<div class="info-row"><span class="key">${props.subzona || props.normative_status === 'unavailable' ? 'Ordenanza oficial' : 'Subzona piloto'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
   if (!props.subzona && Array.isArray(props.candidatas_proximas) && props.candidatas_proximas.length) {
@@ -2272,6 +2283,15 @@ async function selectBuilding(feature) {
       diagHtml += '</div>';
     }
     panel.innerHTML = html + diagHtml + renderOfficialContext(ctx);
+    // Plantas oficiales (Catastro BuildingPart) tienen prioridad sobre
+    // la estimación por altura — parchear la fila si no hay levels OSM.
+    const catCtx = (ctx && ctx.catastro) || {};
+    if (catCtx.plantas_oficiales && !props.levels) {
+      const pv = document.getElementById('plantas-val');
+      if (pv) pv.innerHTML = `${escapeHtml(String(catCtx.plantas_oficiales))} (Catastro)${qualityBadge('official')}`;
+      const ph = document.getElementById('plantas-hint');
+      if (ph) ph.textContent = `Plantas oficiales Catastro INSPIRE (BuildingPart)${catCtx.sotanos_oficiales ? ' · ' + catCtx.sotanos_oficiales + ' sótano(s)' : ''}${props.plantas_estimadas ? ' — la estimación por altura daba ≈' + props.plantas_estimadas : ''}.`;
+    }
   } catch (e) {
     panel.innerHTML = html + '<div class="hint">No se pudo cargar el contexto oficial.</div>';
   }

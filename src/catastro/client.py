@@ -304,6 +304,56 @@ def obtener_edificios_por_parcela(refcat: str, fetch: Fetch | None = None) -> di
     return result
 
 
+def obtener_plantas_buildingpart(refcat: str,
+                                 fetch: Fetch | None = None) -> dict:
+    """Plantas oficiales del edificio vía BU.BUILDINGPART.
+
+    El WFS INSPIRE de Catastro no publica ``numberOfFloorsAboveGround``
+    en ``bu:Building`` pero sí en ``bu:BuildingPart`` (stored query
+    ``GetBuildingPartByParcel``). Devuelve el máximo de plantas sobre
+    rasante entre las partes del edificio, los sótanos y el nº de
+    partes — ``{}`` si el servicio no tiene la volumetría.
+    """
+    fetch = fetch or _default_fetch
+    rc = ''.join(ch for ch in (refcat or '') if ch.isalnum()).upper()[:14]
+    if len(rc) < 14:
+        return {}
+    cached = disk_get('catastro', f'bup_{rc}', CAT_TTL_S)
+    if cached is not None:
+        return cached
+    url = (
+        f'{WFS_BU_URL}?service=wfs&version=2&request=getfeature'
+        f'&STOREDQUERIE_ID=GetBuildingPartByParcel&refcat={rc}'
+        '&srsname=EPSG:4326'
+    )
+    try:
+        root = ET.fromstring(fetch(url))
+    except Exception:
+        return {}
+    above: list[int] = []
+    below: list[int] = []
+    for elem in root.iter():
+        tag = elem.tag.split('}')[-1]
+        if tag == 'numberOfFloorsAboveGround':
+            n = _try_int(elem.text)
+            if n is not None:
+                above.append(n)
+        elif tag == 'numberOfFloorsBelowGround':
+            n = _try_int(elem.text)
+            if n is not None:
+                below.append(n)
+    if not above:
+        return {}
+    result = {
+        'plantas_sobre_rasante': max(above),
+        'sotanos': max(below) if below else 0,
+        'partes': len(above),
+        'fuente': 'Catastro INSPIRE WFS BU (BuildingPart)',
+    }
+    disk_set('catastro', f'bup_{rc}', result)
+    return result
+
+
 def obtener_atom_feed_url(codigo_ine: str) -> str:
     """URL del feed ATOM INSPIRE BU para descarga masiva por municipio.
 

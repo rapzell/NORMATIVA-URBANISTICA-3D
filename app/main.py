@@ -3472,7 +3472,8 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
     refcat = cat.get('refcat')
     if refcat and len(refcat) >= 14:
       try:
-        from src.catastro.client import obtener_edificios_por_parcela
+        from src.catastro.client import (
+            obtener_edificios_por_parcela, obtener_plantas_buildingpart)
         bu = obtener_edificios_por_parcela(refcat)
         if bu.get('num_edificios'):
           cat['edificios_oficiales'] = bu['num_edificios']
@@ -3480,7 +3481,15 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
           for ed in eds:
             if ed.get('plantas') and not cat.get('plantas_oficiales'):
               cat['plantas_oficiales'] = ed['plantas']
-          ctx['catastro'] = cat
+        # BuildingPart: Catastro publica las plantas por parte
+        # constructiva, no en Building — fallback oficial.
+        if not cat.get('plantas_oficiales'):
+          bp = obtener_plantas_buildingpart(refcat)
+          if bp.get('plantas_sobre_rasante'):
+            cat['plantas_oficiales'] = bp['plantas_sobre_rasante']
+            if bp.get('sotanos'):
+              cat['sotanos_oficiales'] = bp['sotanos']
+        ctx['catastro'] = cat
       except Exception:
         pass
     # Calidad de datos siempre presente
