@@ -49,7 +49,12 @@ echo MODEL_PROFILE=%MODEL_PROFILE%
 IF DEFINED MODEL_PROVIDER echo MODEL_PROVIDER=%MODEL_PROVIDER%
 IF DEFINED MODEL_NAME echo MODEL_NAME=%MODEL_NAME%
 
-REM Ejecutar uvicorn con autoreload
-py -m uvicorn app.main:app --host %HOST% --port %PORT% --reload --log-level %LOG_LEVEL%
+REM Ejecutar uvicorn con el venv del proyecto (lleva rasterio/numpy
+REM para la altura medida MDSN; el Python de sistema no los tiene).
+IF EXIST "venv\Scripts\python.exe" (
+  venv\Scripts\python.exe -m uvicorn app.main:app --host %HOST% --port %PORT% --reload --log-level %LOG_LEVEL%
+) ELSE (
+  py -m uvicorn app.main:app --host %HOST% --port %PORT% --reload --log-level %LOG_LEVEL%
+)
 
 ENDLOCAL

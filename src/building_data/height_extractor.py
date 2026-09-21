@@ -219,17 +219,19 @@ def obtener_altura_lidar(footprint: dict | None = None,
     files = _laz_files_covering(lon, lat)
     if not files:
         # Sin LAZ local: nDSM oficial del IDEE vía WCS (sin captcha).
+        mds_note = 'MDSN WCS no consultado'
         try:
             from src.building_data.mds_wcs import altura_mdsn_edificio
             dp = altura_mdsn_edificio(footprint, lon, lat)
             if dp.quality != DataQuality.UNAVAILABLE:
                 return dp
-        except Exception:
-            pass
+            mds_note = f'MDSN WCS: {dp.notes}'
+        except Exception as e:
+            mds_note = f'MDSN WCS error: {e}'
         return unavailable(
             'PNOA LiDAR',
             'Sin cobertura LiDAR en caché local '
-            f'({os.path.relpath(LIDAR_CACHE_DIR)}) ni MDSN WCS disponible')
+            f'({os.path.relpath(LIDAR_CACHE_DIR)}) — {mds_note}')
     try:
         import laspy
         from shapely.geometry import Point, shape
