@@ -1374,8 +1374,8 @@ function renderOfficialContext(ctx) {
       const ambNom = amb.instrumento || amb.denominacion || '';
       const ambFecha = amb.data_ad ? ' · AD ' + amb.data_ad : '';
       html += `<div class="info-row"><span class="key">Ámbito</span><span class="val" style="font-weight:600">${escapeHtml(amb.codigo)}${ambNom ? ' · ' + escapeHtml(ambNom) : ''}${escapeHtml(ambFecha)} ${qualityBadge('official')}</span></div>`;
-      if (amb.tipo === 'api') {
-        html += `<div class="hint">Ámbito de planeamento incorporado — ríxese polo seu propio instrumento (${escapeHtml(amb.tipo_instrumento || '')}), non polas ordenanzas xerais.</div>`;
+      if (amb.tipo === 'api' || amb.figura) {
+        html += `<div class="hint">Ámbito de planeamento singular — ríxese polo seu propio instrumento (${escapeHtml(amb.tipo_instrumento || amb.figura || '')}), non polas ordenanzas xerais. Por iso a capa de ordenanzas non cobre esta parcela.</div>`;
       } else if (amb.fuente) {
         html += `<div class="hint">Ficha oficial: ${escapeHtml(amb.fuente)}</div>`;
       }

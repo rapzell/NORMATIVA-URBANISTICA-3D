@@ -33,7 +33,7 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v7: estado sin_limite para ordenanzas de conservación;
 # v8: altura_medida_m/altura_osm_m — altura real MDSN por huella) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 10
+_PROPS_SCHEMA = 11
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -887,8 +887,15 @@ def _attach_ambito(props: dict[str, Any], lon: float, lat: float,
     try:
         from app.main import _get_ine_for_municipio
         ine = _get_ine_for_municipio(municipio)
-        from src.ambitos_service import ambito_en_punto
+        from src.ambitos_service import (ambito_en_punto,
+                                         ambito_oficial_en_punto)
         amb = ambito_en_punto(lon, lat, ine)
+        if not amb:
+            # Fallback: capas oficiales de ámbitos del PXOM 2025 en el
+            # FeatureServer ArcGIS del Concello — cubren los huecos de
+            # la capa de ordenanzas generales (zonas con instrumento
+            # propio: PEP, PERI, PP, API…).
+            amb = ambito_oficial_en_punto(lon, lat, ine)
     except Exception:
         return
     if not amb:

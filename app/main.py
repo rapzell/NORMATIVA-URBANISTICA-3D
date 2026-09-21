@@ -3458,6 +3458,12 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
           ctx['ambito_detectado'] = det['codigo']
       elif lon is not None and lat is not None and ine_amb:
         amb = ambito_en_punto(lon, lat, ine_amb)
+        if not amb:
+          # Fallback: capas de ámbitos del PXOM 2025 en el
+          # FeatureServer ArcGIS del Concello (PEP/PERI/PP/API) —
+          # cubren los huecos de la capa de ordenanzas generales.
+          from src.ambitos_service import ambito_oficial_en_punto
+          amb = ambito_oficial_en_punto(lon, lat, ine_amb)
         if amb and amb.get('data_quality') == 'official':
           ctx['ambito'] = amb
         elif amb and amb.get('codigo'):

@@ -249,3 +249,138 @@ def ambito_en_punto(lon: float, lat: float,
     except Exception:
         return None
     return None
+
+
+# ------------------------------------------------------------------
+# Ámbitos oficiales del PXOM vía ArcGIS FeatureServer del Concello
+#
+# El GeoServer municipal no publica las ordenanzas del PXOM 2025
+# definitivo, pero el portal ArcGIS del Concello (vigo.maps.arcgis.com)
+# sí sirve como Feature Services públicos las capas de ámbitos de la
+# aprobación definitiva: 5APR (ámbitos con figura: PEP/PERI/PP/PLS…)
+# y 7API (ámbitos de planeamiento incorporado). Cubren los huecos de
+# ``4ordsuc`` donde la zona se rige por instrumento propio.
+# ------------------------------------------------------------------
+_ARCGIS_AMBITOS = {
+    '36057': {
+        'base': ('https://services9.arcgis.com/ss3qikvq575kYKRJ'
+                 '/arcgis/rest/services'),
+        'capas': ['36057_PXOM_202502_AD01_5APR',
+                  '36057_PXOM_202502_AD01_7API'],
+    },
+}
+_ARCGIS_TTL_S = 30 * 24 * 3600
+_ARCGIS_FEATS: dict[str, list[dict]] = {}
+_ARCGIS_TREE: dict[str, tuple] = {}
+
+
+def _arcgis_cache_path(ine: str, svc: str):
+    from pathlib import Path
+    return Path('datos/cache/arcgis_ambitos') / f'{ine}_{svc}.geojson'
+
+
+def _arcgis_features(ine: str | None) -> list[dict]:
+    """Features de las capas de ámbitos del PXOM (ArcGIS Concello),
+    cacheadas en disco 30 días. ``[]`` si el municipio no tiene capas
+    configuradas o el servicio falla."""
+    import requests
+    cfg = _ARCGIS_AMBITOS.get(str(ine or ''))
+    if not cfg:
+        return []
+    key = str(ine)
+    if key in _ARCGIS_FEATS:
+        return _ARCGIS_FEATS[key]
+    feats: list[dict] = []
+    for svc in cfg['capas']:
+        path = _arcgis_cache_path(key, svc)
+        data = None
+        if path.exists() and \
+                (time.time() - path.stat().st_mtime) < _ARCGIS_TTL_S:
+            try:
+                data = json.loads(path.read_text(encoding='utf-8'))
+            except Exception:
+                data = None
+        if data is None:
+            try:
+                r = requests.get(
+                    f"{cfg['base']}/{svc}/FeatureServer/0/query",
+                    params={'where': '1=1', 'outFields': '*',
+                            'f': 'geojson', 'outSR': '4326'},
+                    timeout=60)
+                data = r.json()
+                if data.get('features'):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(data), encoding='utf-8')
+            except Exception:
+                continue
+        for f in data.get('features') or []:
+            if f.get('geometry'):
+                (f.setdefault('properties', {}))['_svc'] = svc
+                feats.append(f)
+    _ARCGIS_FEATS[key] = feats
+    return feats
+
+
+def _arcgis_tree(ine: str, feats: list[dict]):
+    key = str(ine)
+    hit = _ARCGIS_TREE.get(key)
+    if hit and hit[0] is feats:
+        return hit[1], hit[2], hit[3]
+    from shapely.geometry import shape
+    from shapely.strtree import STRtree
+    geoms, kept = [], []
+    for f in feats:
+        try:
+            geoms.append(shape(f['geometry']))
+            kept.append(f)
+        except Exception:
+            continue
+    tree = STRtree(geoms) if geoms else None
+    _ARCGIS_TREE[key] = (feats, tree, geoms, kept)
+    return tree, geoms, kept
+
+
+def ambito_oficial_en_punto(lon: float, lat: float,
+                            ine: str | None) -> dict | None:
+    """Ámbito oficial del PXOM (ArcGIS FeatureServer del Concello) que
+    contiene el punto — cubre los huecos de la capa de ordenanzas
+    generales donde la zona se rige por instrumento propio (PEP, PERI,
+    PP, API…). ``None`` si no hay capa o el punto cae fuera."""
+    feats = _arcgis_features(ine)
+    if not feats:
+        return None
+    tree, geoms, kept = _arcgis_tree(str(ine), feats)
+    if tree is None:
+        return None
+    try:
+        from shapely.geometry import Point
+        pt = Point(lon, lat)
+        for i in tree.query(pt):
+            g = geoms[int(i)]
+            if not g.contains(pt):
+                continue
+            p = kept[int(i)].get('properties') or {}
+            figura = str(p.get('figura') or '').strip().upper()
+            cod = str(p.get('cod') or '').strip()
+            if not cod:
+                continue
+            codigo = f'{figura}-{cod}' if figura else f'API-{cod}'
+            return {
+                'codigo': codigo,
+                'tipo': 'ambito',
+                'tipo_instrumento': figura or 'API',
+                'instrumento': str(p.get('nome') or '').strip(),
+                'figura': figura or 'API',
+                'cat': p.get('cat'),
+                'edificabilidad': p.get('edif'),
+                'sup_m2': p.get('sup'),
+                'enl_ficha': p.get('enl_ficha'),
+                'observ': p.get('observ'),
+                'data_quality': 'official',
+                'fuente': ('ArcGIS Concello de Vigo — PXOM 2025 '
+                           'aprobación definitiva'),
+                'capa': p.get('_svc'),
+            }
+    except Exception:
+        return None
+    return None
