@@ -377,13 +377,7 @@ def _contexto_edificio(lon: float | None, lat: float | None,
     ctx['ordenanzas_params'] = {
         'ordenanza': ords.get('ordenanza'),
         'titulo': resultado.get('titulo'),
-        'ocupacion_max_pct': params.get('ocupacion_max_pct'),
-        'edificabilidad_max_m2_m2': params.get('edificabilidad_max_m2_m2'),
-        'altura_maxima_m': params.get('altura_maxima_m'),
-        'parcela_minima_m2': params.get('parcela_minima_m2'),
-        'retranqueo_frontal_m': params.get('retranqueo_frontal_m'),
-        'retranqueo_lateral_m': params.get('retranqueo_lateral_m'),
-        'retranqueo_posterior_m': params.get('retranqueo_posterior_m'),
+        **params,
         'fuente': resultado.get('fuente'),
         'trazas': resultado.get('trazas'),
         'data_quality': ords.get('data_quality'),
@@ -463,19 +457,32 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
             f" (aprobado {r0.get('fecha_aprobacion') or r0.get('aprobacion') or 's/f'},"
             f" {r0.get('estado') or ''})")
     if ord_p.get('ordenanza'):
-        lineas += [
+        lineas.append(
             f"- Ordenanza aplicable: {ord_p['ordenanza']}"
             f" {ord_p.get('titulo') or ''} (oficial PGOM,"
-            f" {ord_p.get('fuente')})",
-            f"  · Ocupación máx: {ord_p.get('ocupacion_max_pct')}%",
-            f"  · Edificabilidad máx: {ord_p.get('edificabilidad_max_m2_m2')} m²/m²",
-            f"  · Altura máx: {ord_p.get('altura_maxima_m')} m",
-            f"  · Parcela mínima: {ord_p.get('parcela_minima_m2')} m²",
-            f"  · Retranqueos frontal/lateral/posterior:"
-            f" {ord_p.get('retranqueo_frontal_m')}/"
-            f"{ord_p.get('retranqueo_lateral_m')}/"
-            f"{ord_p.get('retranqueo_posterior_m')} m",
-        ]
+            f" {ord_p.get('fuente')})")
+        _ORD_LABELS = {
+            'ocupacion_max_pct': 'Ocupación máx (%)',
+            'ocupacion_condicional': 'Ocupación condicional',
+            'edificabilidad_max_m2_m2': 'Edificabilidad máx (m²/m²)',
+            'altura_maxima_m': 'Altura máx (m)',
+            'altura_por_ancho_rua': 'Altura según ancho de rúa',
+            'parcela_minima_m2': 'Parcela mínima (m²)',
+            'frente_minima_m': 'Frente mínima de parcela (m)',
+            'retranqueo_frontal_m': 'Retranqueo frontal (m)',
+            'retranqueo_lateral_m': 'Retranqueo lateral (m)',
+            'retranqueo_posterior_m': 'Retranqueo posterior (m)',
+            'voos_max_pct_fachada': 'Voos máx (% superficie fachada)',
+            'entreplantas_max_pct': 'Entreplantas máx (% locales planta baja)',
+            'usos_permitidos': 'Usos permitidos',
+        }
+        _ORD_META = {'ordenanza', 'titulo', 'fuente', 'trazas', 'data_quality',
+                     'ordenanzas_disponibles', 'resolucion',
+                     'origen_resolucion'}
+        for k, v in ord_p.items():
+            if k in _ORD_META or v is None:
+                continue
+            lineas.append(f"  · {_ORD_LABELS.get(k, k)}: {v}")
     elif ctx.get('subzona'):
         lineas.append(f"- Subzona declarada: {ctx['subzona']} "
                       '(sin parámetros oficiales extraídos — indicarlo)')

@@ -1,82 +1,135 @@
 {
- "_extracted_at": 1789762959.3270528,
+ "_extracted_at": 1789984239.4034803,
+ "_extractor_v": 2,
  "municipio_ine": "36057",
  "ordenanzas": {
-  "U9": {
-   "ordenanza": "U9",
-   "titulo": "UNIDADES Edificio Non Exclusivo",
-   "params": {
-    "edificabilidad_max_m2_m2": 0.5,
-    "ocupacion_max_pct": 40.0,
-    "retranqueo_lateral_m": 2.0,
-    "retranqueo_posterior_m": 3.0,
-    "retranqueo_frontal_m": 3.0,
-    "altura_maxima_m": 10.5,
-    "parcela_minima_m2": 500.0
-   },
-   "trazas": {
-    "edificabilidad_max_m2_m2": {
-     "pagina": 119,
-     "texto": "fectos de parcelación unha parcela mínima de 500 m2 e unha edificabilidade de 0,50 m2/m2. Poderán facerse agrupacións parcelarias sempre que non or"
-    },
-    "ocupacion_max_pct": {
-     "pagina": 119,
-     "texto": "A edificabilidade máxima establécese en 0,70 m 2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade das plantas incluídas as plant"
-    },
-    "retranqueo_lateral_m": {
-     "pagina": 119,
-     "texto": "conforme aos mapas estratéxicos de ruído. Establécense uns recuados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corr"
-    },
-    "retranqueo_posterior_m": {
-     "pagina": 119,
-     "texto": "uados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corredoura non se permitirá a edificación"
-    },
-    "retranqueo_frontal_m": {
-     "pagina": 119,
-     "texto": "- A edificación principal poderase situar na aliñación ou recuarse con respecto a ela un máximo de 3,00 metros, respectando en todo caso a situación da contigua si se tra"
-    },
-    "altura_maxima_m": {
-     "pagina": 119,
-     "texto": "de ancho máximo 25 metros medidos desde a aliñación. A altura máxima de edificación será de baixo e dúas plantas, equivalente a 10,50 metros de altura. En edificación de altura máxima baixo e unha pl"
-    },
-    "parcela_minima_m2": {
-     "pagina": 119,
-     "texto": "s existentes, establecéndose a efectos de parcelación unha parcela mínima de 500 m2 e unha edificabilidade de 0,50 m2/m2. Poderán facerse agru"
-    }
-   },
-   "fuente": "28719nu003.pdf pág. 119"
-  },
   "U1": {
    "ordenanza": "U1",
    "titulo": "MANTEMENTO DA EDIFICACIÓN EXISTENTE",
-   "params": {},
-   "trazas": {},
-   "fuente": "28719nu002.pdf pág. 165",
-   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+   "params": {
+    "usos_permitidos": "Residencial; Terciario: Hoteleiro; Terciario: Comercial. Categoría 1ª, 2ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª; Industrial: Nas seguintes categorías e grupos: — Produtiva: Categoría 1ª, 2ª — Almacenamento: Categoría 1ª; Garaxe aparcamento e servizo do automóbil nas seguintes categorías e graos: Categoría 1ª, 2ª, e 4ª, sempre que non implique operacións de chapistería e pintura, e; Dotacional-Equipamentos:; Educativo. En planta baixa da edificación e primeira vencellada directamente ca planta baixa ou en edificación exclusiva; Socio-Cultural. Categoría 1ª en edificación exclusiva e 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, en planta baixa da edificación e primeira vencellada directamente coa planta baixa. Categoría 2ª, 4ª en edificación exclusiva. Categoría 5ª, en planta baixa da edificación; Servizos público. Categoría 1ª, 3ª, en planta baixa da edificación; Administración institucional; Deportivo. Categoría 1ª, en planta baixa da edificación; Relixioso. Categoría 1ª, en planta baixa. Categoría 2ª en edificación exclusiva; Dotacional múltiple ART . 77"
+   },
+   "trazas": {
+    "usos_permitidos": {
+     "pagina": 165,
+     "texto": "As actuacións nos edificios existentes ou de nova edificación que supoñan cambios ou nova implantación de usos, quedan sometidas ás condicións establecidas no Título III, Capítulo I destas normas. Sen prexuízo dos uso"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 165"
   },
   "U2": {
    "ordenanza": "U2",
    "titulo": "CUARTEIRÓN PECHADO",
-   "params": {},
-   "trazas": {},
-   "fuente": "28719nu002.pdf pág. 168",
-   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+   "params": {
+    "frente_minima_m": 8.0,
+    "voos_max_pct_fachada": 25.0,
+    "entreplantas_max_pct": 50.0,
+    "altura_por_ancho_rua": "rúa <6 m: 3 plantas / 10,5 m; rúa 6–12 m: 4 plantas / 13 m; rúa 12–18 m: 5 plantas / 16,5 m; rúa 18–24 m: 6 plantas / 19 m; rúa ≥24 m: 7 plantas / 22,5 m",
+    "usos_permitidos": "Residencial; Terciario: Hoteleiro; Terciario: Comercial. Categoría 1ª, 2ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª; Industrial: Nas seguintes categorías e grupos:; Produtiva: Categoría 1ª, 2ª; Almacenamento: Categoría 1ª; Garaxe aparcamento e servizo do automóbil nas seguintes categorías e graos: Categoría 1ª, 2ª, e 4ª, sempre que non implique operacións de chapistería e pintura, e; Dotacional-Equipamentos:; Educativo. En planta baixa da edificación e primeira vencellada directamente coa planta baixa ou en edificación exclusiva; Socio-Cultural. Categoría 1ª en edificación exclusiva e 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, en planta baixa da edificación e primeira vencellada directamente coa planta baixa. Categoría 2ª, 4ª en edificación exclusiva. Categoría 5ª, en planta baixa da edificación; Servizos público. Categoría 1ª.3, en planta baixa da edificación; Administración institucional; Deportivo. Categoría 1ª, en planta baixa da edificación; Relixioso. Categoría 1ª, en planta baixa. Categoría 2ª en edificación exclusiva; Dotacional múltiple",
+    "ocupacion_condicional": "ata o 100% da parcela edificable (cuarteirón compacto sen indicación en planos)"
+   },
+   "trazas": {
+    "frente_minima_m": {
+     "pagina": 168,
+     "texto": "e parcela mínima. A efectos de parcelación establécese unha fronte mínima de parcela de 8 metros. Por enriba da altura máxima de edificación poderán autoriz"
+    },
+    "voos_max_pct_fachada": {
+     "pagina": 168,
+     "texto": "e fixan nas vixentes Normas de habitabilidade. Autorízanse voos nas condicións establecidas no artigo 62.13 e 14 das presentes Normas e sen ocupar máis do 25% da superficie de fachada. Autorizaranse semisotos sempre que "
+    },
+    "entreplantas_max_pct": {
+     "pagina": 168,
+     "texto": "cupar a totalidade da parcela. Autorízase a construción de entreplantas, que en ningún caso poderán ocupar máis do cincuenta (50) por cento dos locais de planta baixa, e computarán como superficie ed"
+    },
+    "altura_por_ancho_rua": {
+     "pagina": 168,
+     "tabla": [
+      {
+       "ancho_min_m": null,
+       "ancho_max_m": 6.0,
+       "plantas": 3,
+       "altura_m": 10.5
+      },
+      {
+       "ancho_min_m": 6.0,
+       "ancho_max_m": 12.0,
+       "plantas": 4,
+       "altura_m": 13.0
+      },
+      {
+       "ancho_min_m": 12.0,
+       "ancho_max_m": 18.0,
+       "plantas": 5,
+       "altura_m": 16.5
+      },
+      {
+       "ancho_min_m": 18.0,
+       "ancho_max_m": 24.0,
+       "plantas": 6,
+       "altura_m": 19.0
+      },
+      {
+       "ancho_min_m": 24.0,
+       "ancho_max_m": null,
+       "plantas": 7,
+       "altura_m": 22.5
+      }
+     ],
+     "texto": "o seguinte cadro: Ancho de Rúa Nº de plantas Altura en metros Menor de 6 m. 3 10,50 m. Desde 6 m. e menor de 12 m. 4 13,00 m. Desde 12 m. e menor de 18 m. 5 16,50 m. Desde 18 m. e menor de 24 m. 6 19,00 m. Desde 24 m. 7 "
+    },
+    "usos_permitidos": {
+     "pagina": 168,
+     "texto": "Permítense os seguintes usos: • Residencial. • Terciario: Hoteleiro. • Terciario: Comercial. Categoría 1ª, 2ª. • Terciario: Oficinas. • Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª. • Industria"
+    },
+    "ocupacion_condicional": {
+     "pagina": 168,
+     "texto": "pactos no se estableza indicación algunha en planos de ordenación autorízase a ocupación da totalidade da parcela edificable, sen prexuízo do cumprimento da lexislación aplicable. Can"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 168"
   },
   "U3": {
    "ordenanza": "U3",
    "titulo": "EDIFICACIÓN LINEAL DENSA",
-   "params": {},
-   "trazas": {},
-   "fuente": "28719nu002.pdf pág. 171",
-   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+   "params": {
+    "frente_minima_m": 8.0,
+    "entreplantas_max_pct": 50.0,
+    "usos_permitidos": "Residencial; Terciario: Hoteleiro; Terciario: Comercial. Categoría 1ª, 2ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª; Industrial: Nas seguintes categorías e grupos:; Produtiva: Categoría 1ª, 2ª; Almacenamento: Categoría 1ª; Garaxe aparcamento e servizo do automóbil nas seguintes categorías e graos: Categoría 1ª, 2ª, e 4ª, sempre que non implique operacións de chapistería e pintura, e; Dotacional-Equipamentos:; Educativo. En planta baixa da edificación e primeira vencellada directamente coa planta baixa, ou en edificación exclusiva; Socio-Cultural. Categoría 1ª en edificación exclusiva e 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, en planta baixa da edificación e primeira vencellada directamente coa planta baixa. Categoría 2ª, 4ª en edificación exclusiva. Categoría 5ª, en planta baixa da edificación; Servizos público. Categoría 1ª.3, en planta baixa da edificación; Administración institucional; Deportivo. Categoría 1ª, en planta baixa da edificación; Relixioso. Categoría 1ª, en planta baixa. Categoría 2ª en edificación exclusiva; Dotacional múltiple"
+   },
+   "trazas": {
+    "frente_minima_m": {
+     "pagina": 171,
+     "texto": "e parcela mínima. A efectos de parcelación establécese unha fronte mínima de parcela de 8 metros. A planta baixa poderá exceder o fondo máximo establecido a"
+    },
+    "entreplantas_max_pct": {
+     "pagina": 171,
+     "texto": "nta baixa e a súa prolongación. Autorízase a construción de entreplantas, que en ningún caso poderán ocupar máis do cincuenta (50) por cento dos locais de planta baixa, e computarán como superficie. P"
+    },
+    "usos_permitidos": {
+     "pagina": 171,
+     "texto": "Permítense os seguintes usos: • Residencial. • Terciario: Hoteleiro. • Terciario: Comercial. Categoría 1ª, 2ª. • Terciario: Oficinas. • Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª. • Industrial:"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 171"
   },
   "U4": {
    "ordenanza": "U4",
    "titulo": "EDIFICACIÓN ABERTA",
-   "params": {},
-   "trazas": {},
-   "fuente": "28719nu002.pdf pág. 174",
-   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+   "params": {
+    "entreplantas_max_pct": 50.0,
+    "usos_permitidos": "Residencial; Terciario: Hoteleiro; Terciario: Comercial. Categoría 1ª, 2ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª; Industrial: Nas seguintes categorías e grupos:; Produtiva: Categoría 1ª, 2ª; Almacenamento: Categoría 1ª; Garaxe aparcamento e servizo do automóbil nas seguintes categorías e graos: Categoría 1ª, 2ª, e 4ª, sempre que non implique operacións de chapistería e pintura, e; Dotacional-Equipamentos:; Educativo. Categoría En planta baixa da edificación e primeira vencellada directamente coa planta baixa ou en edificación exclusiva; Socio-Cultural. Categoría 1ª en edificación exclusiva e 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, en planta baixa da edificación e primeira vencellada directamente coa planta baixa; Categoría 2ª, 4ª en edificación exclusiva. Categoría 5ª, en planta baixa da edificación; Servizos público. Categoría 1ª.3, en planta baixa da edificación; Administración institucional; Deportivo. Categoría 1ª, en planta baixa da edificación; Relixioso. Categoría 1ª, en planta baixa. Categoría 2ª en edificación exclusiva; Dotacional múltiple"
+   },
+   "trazas": {
+    "entreplantas_max_pct": {
+     "pagina": 174,
+     "texto": "as de aparcamento obrigatorias. Autorízase a construción de entreplantas, que en ningún caso poderán ocupar máis do cincuenta (50) por cento dos locais de planta baixa, e computarán como superficie ed"
+    },
+    "usos_permitidos": {
+     "pagina": 174,
+     "texto": "Permítense os seguintes usos: • Residencial. • Terciario: Hoteleiro. • Terciario: Comercial. Categoría 1ª, 2ª. • Terciario: Oficinas. • Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª. • Industria"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 174"
   },
   "U5": {
    "ordenanza": "U5",
@@ -84,7 +137,8 @@
    "params": {
     "edificabilidad_max_m2_m2": 1.0,
     "ocupacion_max_pct": 60.0,
-    "altura_maxima_m": 10.5
+    "altura_maxima_m": 10.5,
+    "usos_permitidos": "Residencial; Terciario: Hoteleiro; Terciario: Comercial. Categoría 1ª, 2ª, 3ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª; Industrial: Nas seguintes categorías e grupos:; Produtiva: Categoría 1ª, 2ª; Almacenamento: Categoría 1ª; Garaxe aparcamento e servizo do automóbil nas seguintes categorías e graos:; Categoría 1ª, 2ª, 4ª, sempre que non implique operacións de chapistería e pintura, e garantindo a ausencia de vertidos que poidan deteriorar as instalacións de sumidoiros e depuración; Dotacional-Equipamentos:; Educativo. En planta baixa da edificación e primeira vencellada directamente coa planta baixa, ou en edificación exclusiva; Socio-Cultural. Categoría 1ª en edificación exclusiva e 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, en planta baixa da edificación e primeira vencellada directamente coa planta baixa. Categoría 2ª, 4ª en edificación exclusiva. Categoría 5ª, en planta baixa da edificación; Servizos público. Categoría 1ª.3, en planta baixa da edificación; Administración institucional; Deportivo. Categoría 1ª, en planta baixa da edificación. 3ª en edificio exclusivo; Relixioso. Categoría 1ª, en planta baixa. Categoría 2ª en edificación exclusiva; Dotacional múltiple ART . 81"
    },
    "trazas": {
     "edificabilidad_max_m2_m2": {
@@ -97,7 +151,11 @@
     },
     "altura_maxima_m": {
      "pagina": 177,
-     "texto": "• boppo@depo.es Núm. Luns, 4 de agosto de 2025 146 BOPPO A altura máxima de edificación será de baixo e dúas plantas, equivalente a 10,50 metros de altura. En edificación de altura máxima baixo e unha pl"
+     "texto": "ón de ancho máximo 25 metros medidos desde a aliñación. A altura máxima de edificación será de baixo e dúas plantas, equivalente a 10,50 metros de altura. En edificación de altura máxima baixo e unha pl"
+    },
+    "usos_permitidos": {
+     "pagina": 177,
+     "texto": "Permítense os usos: • Residencial. • Terciario: Hoteleiro. • Terciario: Comercial. Categoría 1ª, 2ª, 3ª. • Terciario: Oficinas. • Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II, 3ª. • Industrial: Nas s"
     }
    },
    "fuente": "28719nu002.pdf pág. 177"
@@ -112,7 +170,8 @@
     "retranqueo_posterior_m": 3.0,
     "retranqueo_frontal_m": 3.0,
     "altura_maxima_m": 7.0,
-    "parcela_minima_m2": 250.0
+    "parcela_minima_m2": 250.0,
+    "usos_permitidos": "Terciario: Hoteleiro. Hoteleiro Categoría 1ª. Apartamentos e Vivendas Turísticas Vivendas de uso turístico; Terciario: Comercial. Categoría 1ª; Terciario: Oficinas. Categoría 1ª; Terciario: Recreativo. Categoría 1ª, Tipo I; Industrial: Produtiva. Categoría 1ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª; Dotacional-Equipamentos:; Educativo. Categoría 1ª, 2ª; Socio-Cultural. Categoría 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, 5ª; Administración institucional; Dotacional múltiple; Relixioso. Categoría 1ª Ordenanza U6.2. Extensións lineais das agrupacións de carácter tradicional"
    },
    "trazas": {
     "edificabilidad_max_m2_m2": {
@@ -142,6 +201,10 @@
     "parcela_minima_m2": {
      "pagina": 179,
      "texto": "acaroada. Para efectos de nova parcelación establécese una parcela mínima de 250 m2 e terá polo menos unha fronte de 6,00 metros en contacto c"
+    },
+    "usos_permitidos": {
+     "pagina": 179,
+     "texto": "Permítese o uso residencial na Categoría 1ª de unifamiliar. En edificio exclusivo ou nos baixos da edificación principal autorízanse así mesmo os seguintes usos compatibles: • Terciario: Hoteleiro. Hoteleiro Categorí"
     }
    },
    "fuente": "28719nu002.pdf pág. 179"
@@ -152,7 +215,8 @@
    "params": {
     "edificabilidad_max_m2_m2": 0.15,
     "ocupacion_max_pct": 10.0,
-    "altura_maxima_m": 7.0
+    "altura_maxima_m": 7.0,
+    "usos_permitidos": "Uso residencial na Categoría 1ª de unifamiliar. Sen perder esta condición, poderase subdividir a edificación preexistente de vivenda unifamiliar nun máximo de dúas; Terciario: Hoteleiro. Categoría 1ª, 2ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, Tipo I; Industrial: Produtiva. Categoría 1ª, 2ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª; Dotacional-Equipamentos:; Educativo; Socio-Cultural; Asistencial-Sanitario; Administración institucional; Deportivo; Relixioso. Categoría; Dotacional múltiple ART . 83"
    },
    "trazas": {
     "edificabilidad_max_m2_m2": {
@@ -166,6 +230,10 @@
     "altura_maxima_m": {
      "pagina": 190,
      "texto": "cerramento e xardinería e mantendo a unidade parcelaria. A altura máxima dos novos edificios será de baixo e unha planta equivalente a 7,00 metros, a edificabilidade máxima de 0,15 m2/m2 e cunha ocupación"
+    },
+    "usos_permitidos": {
+     "pagina": 190,
+     "texto": "Permítese, sen segregación de parcela, os seguintes usos: • Uso residencial na Categoría 1ª de unifamiliar. Sen perder esta condición, poderase subdividir a edificación preexistente de vivenda unifamiliar nun máxim"
     }
    },
    "fuente": "28719nu002.pdf pág. 190"
@@ -173,10 +241,55 @@
   "U8": {
    "ordenanza": "U8",
    "titulo": "ACTUACIÓNS UNITARIAS CONSOLIDADAS",
-   "params": {},
-   "trazas": {},
-   "fuente": "28719nu002.pdf pág. 192",
-   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
+   "params": {
+    "usos_permitidos": "Residencial; Terciario: Hoteleiro; Terciario: Comercial. Categoría 1ª. 2ª 3ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, Tipo I; Industrial: Produtiva. Categoría 1ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª, 2ª e 4ª, sempre que non implique operacións de chapistería e pintura, e garantindo a ausencia de vertidos que; Dotacional-Equipamentos:; Educativo; Socio-Cultural; Asistencial-Sanitario; Servizos público; Administración institucional; Dotacional múltiple; Deportivo Categoría 1ª; Relixioso Para os centros comerciais existentes e autorizados cualificados coa presente ordenanza, autorízanse os usos Terciario Comercial e Recreativo en todas as categorías"
+   },
+   "trazas": {
+    "usos_permitidos": {
+     "pagina": 192,
+     "texto": "Permítense os seguintes usos: • Residencial. • Terciario: Hoteleiro. • Terciario: Comercial. Categoría 1ª. 2ª 3ª. • Terciario: Oficinas. • Terciario: Recreativo. Categoría 1ª, Tipo I. • Industrial: Produtiva"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 192"
+  },
+  "U9": {
+   "ordenanza": "U9",
+   "titulo": "ORDENANZA DE ACTIVIDADES",
+   "params": {
+    "edificabilidad_max_m2_m2": 1.5,
+    "ocupacion_max_pct": 70.0,
+    "altura_maxima_m": 10.0,
+    "parcela_minima_m2": 500.0,
+    "frente_minima_m": 10.0,
+    "usos_permitidos": "Industrial:; Produtiva: Categoría 1ª, 2º. Almacenamento: Categoría 1ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª, 2ª, 4ª; Terciario: Hoteleiro. Categoría 1ª, 2ª; Terciario: Comercial. Categoría 1ª, 2ª, 3ª; Terciario: Oficinas; Terciario: Recreativo. Categoría 1ª, 2ª, Tipo I e II; Dotacional-Equipamentos:; Educativo; Cultural; Asistencial-Sanitario; Servizos público; Administración institucional; Deportivo; Dotacional múltiple Ordenanza U9.2. Actividades de Industria produtiva, almacenaxe e comercial mediana e actividades terciarias"
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 194,
+     "texto": "edificacións ou ampliación das existentes, establécese unha edificabilidade máxima sobre parcela edificable de 1,50 m2/m2, altura máxima de 15 metros, medidos no arranque da cubert"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 194,
+     "texto": "ura máxima de 15 metros, medidos no arranque da cuberta, e ocupación máxima do 70% da parcela edificable, para novas edificacións ou ampliaci"
+    },
+    "altura_maxima_m": {
+     "pagina": 194,
+     "texto": "ade máxima sobre parcela edificable é de 1,00 m2/ m2, cunha altura máxima de 10,00 metros medidos no arranque de a cuberta. A ocupación máxima da par"
+    },
+    "parcela_minima_m2": {
+     "pagina": 194,
+     "texto": "adosarse á mesma. A efectos de parcelación, establécese una parcela mínima de 500 m2, cunha fronte mínima de 10,00 metros. A edificabilidade má"
+    },
+    "frente_minima_m": {
+     "pagina": 194,
+     "texto": "arcelación, establécese una parcela mínima de 500 m2, cunha fronte mínima de 10,00 metros. A edificabilidade máxima sobre parcela edificable é de 1,0"
+    },
+    "usos_permitidos": {
+     "pagina": 194,
+     "texto": "Permítense os seguintes usos: • Industrial: • Produtiva: Categoría 1ª, 2º. Almacenamento: Categoría 1ª. • Garaxe aparcamento e servizo do automóbil. Categoría 1ª, 2ª, 4ª. • Terciario: Hoteleiro. Categoría 1ª, 2ª"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 194"
   },
   "U10": {
    "ordenanza": "U10",

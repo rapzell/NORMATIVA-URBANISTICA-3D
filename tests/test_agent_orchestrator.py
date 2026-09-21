@@ -91,6 +91,11 @@ def prep_mocks(monkeypatch):
         orchestrator, '_contexto_edificio',
         lambda *a, **k: ({'municipio': 'Vigo', 'resumen': {},
                           'ordenanzas_params': {}}, ['catastro']))
+    # Hermético: sin clasificador LLM real (con key válida llamaría a
+    # la API y podría reclasificar la pregunta como CONTEXTO).
+    monkeypatch.setattr(
+        orchestrator, 'clasificar_intencion',
+        lambda *a, **k: 'normativa')
     monkeypatch.setattr(
         tools, 'search_normativa',
         lambda *a, **k: {'fragmentos': frag, 'n_corpus': 1,

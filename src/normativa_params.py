@@ -15,6 +15,7 @@ from pathlib import Path
 
 _DATOS = Path(__file__).resolve().parent.parent / 'datos' / 'normativa'
 _CACHE_TTL_S = 30 * 24 * 3600  # 30 días
+_EXTRACTOR_V = 2  # bump al añadir patrones: invalida el caché en disco
 
 # Cabeceras de ordenanza: "ART. 76. ORDENANZA U1. MANTEMENTO...", "ORDENANZA U.4 ...",
 # "ORDENANZA RZ-2 ...", "ORDENANZA DE RESIDENCIAL ..." (fallback genérico).
@@ -61,7 +62,122 @@ _PATTERNS = {
         re.compile(r'parcela\s+m[íi]nima\s+de\s+' + _NUM + r'\s*m2', re.I),
         re.compile(r'parcela\s+m[íi]nima\s+de\s+' + _NUM + r'\s*m[²2]', re.I),
     ],
+    'frente_minima_m': [
+        re.compile(r'fronte?\s+m[íi]nima[^.]{0,40}?' + _NUM + r'\s*metros?', re.I),
+    ],
+    'voos_max_pct_fachada': [
+        # 'sen ocupar máis do 25% da superficie de fachada' — [\s\S] permite
+        # cruzar saltos de línea y refs internas con punto (artigo 62.13)
+        re.compile(r'voos?[\s\S]{0,200}?' + _NUM + r'\s*%\s*da\s*superficie\s*de\s*fachada', re.I),
+        re.compile(r'voos?[\s\S]{0,80}?m[áa]is\s+d[oe]\s+' + _NUM + r'\s*%', re.I),
+    ],
+    'entreplantas_max_pct': [
+        # 'ocupar máis do cincuenta (50) por cento dos locais de planta baixa'
+        re.compile(r'entreplantas?[^.]{0,160}?\(?\s*' + _NUM + r'\s*\)?\s*(?:por\s+cento|%)', re.I),
+    ],
 }
+
+
+# Cabeceras/pies de página del BOPPO/DOG que quedan intercaladas en el
+# texto extraído y pueden cortar las ventanas de búsqueda de patrones.
+_BOILER_MARKED = re.compile(
+    r'^[^\n]*(?:Edita:\s*Deputa|Pode verificar|sede\.depo\.gal|'
+    r'C[óo]digo seguro|DOG\s+N[úu]m\.|CVE-DOG|ISSN|Dep[óo]sito legal|'
+    r'boppo@depo|www\.boppo\.depo\.es)[^\n]*$', re.I | re.M)
+_BOILER_EXACT = re.compile(
+    r'^\s*(?:N[úu]m\.?|BOPPO|DOG|(?:Luns|Martes|M[ée]rcores|Xoves|Venres|'
+    r'S[áa]bado|Domingo),[^\n]*)\s*$', re.I | re.M)
+_BOILER_PAGENUM = re.compile(r'^\s*\d{3,4}\s*$', re.M)
+
+
+def _clean_boilerplate(texto: str) -> str:
+    t = _BOILER_MARKED.sub(' ', texto)
+    t = _BOILER_EXACT.sub(' ', t)
+    return _BOILER_PAGENUM.sub(' ', t)
+
+
+def _tabla_ancho_rua(texto: str) -> list[dict]:
+    """Tablas 'ancho de rúa → nº plantas / altura m' de ordenanzas de
+    cuarteirón (U2, U3...). Solo si el bloque habla de ancho de rúa."""
+    if not re.search(r'ancho\s+d[aeo]\s*(?:r[úu]a|espazo|v[íi]a)|'
+                     r'n[ºo]\.?\s*de\s*plantas', texto, re.I):
+        return []
+    plantas_altura = r'\s*(\d{1,2})\s*(?:plantas?\.?\s*)?' + _NUM + r'\s*m\.?'
+    pat_rango = re.compile(
+        r'(?:desde|entre)\s+' + _NUM + r'\s*m\.?,?\s*(?:e|y|a|ata)\s*'
+        r'(?:menor|menos)\s+de\s+' + _NUM + r'\s*m\.?,?' + plantas_altura, re.I)
+    pat_menor = re.compile(
+        r'menor\s+de\s+' + _NUM + r'\s*m\.?,?' + plantas_altura, re.I)
+    pat_desde = re.compile(
+        r'(?:desde|a\s+partir\s+de|m[áa]is\s+de|superior\s+a)\s+' + _NUM
+        + r'\s*m\.?,?' + plantas_altura, re.I)
+    rows, spans = [], []
+    for m in pat_rango.finditer(texto):
+        rows.append({'ancho_min_m': _numtxt(m.group(1)),
+                     'ancho_max_m': _numtxt(m.group(2)),
+                     'plantas': int(m.group(3)),
+                     'altura_m': _numtxt(m.group(4))})
+        spans.append((m.start(), m.end()))
+    for m in pat_menor.finditer(texto):
+        if any(s <= m.start() < e for s, e in spans):
+            continue  # 'menor de' dentro de un rango ya capturado
+        rows.append({'ancho_min_m': None, 'ancho_max_m': _numtxt(m.group(1)),
+                     'plantas': int(m.group(2)), 'altura_m': _numtxt(m.group(3))})
+    for m in pat_desde.finditer(texto):
+        if any(s <= m.start() < e for s, e in spans):
+            continue
+        rows.append({'ancho_min_m': _numtxt(m.group(1)),
+                     'ancho_max_m': None,
+                     'plantas': int(m.group(2)), 'altura_m': _numtxt(m.group(3))})
+    rows.sort(key=lambda r: (r['ancho_min_m'] or 0))
+    return rows if len(rows) >= 2 else []
+
+
+def _fmt_num(v: float | None) -> str:
+    if v is None:
+        return ''
+    s = f'{v:.2f}'.rstrip('0').rstrip('.')
+    return s.replace('.', ',')
+
+
+def _tabla_ancho_txt(rows: list[dict]) -> str:
+    partes = []
+    for r in rows:
+        if r['ancho_min_m'] is None:
+            tramo = f"rúa <{_fmt_num(r['ancho_max_m'])} m"
+        elif r['ancho_max_m'] is None:
+            tramo = f"rúa ≥{_fmt_num(r['ancho_min_m'])} m"
+        else:
+            tramo = (f"rúa {_fmt_num(r['ancho_min_m'])}–"
+                     f"{_fmt_num(r['ancho_max_m'])} m")
+        partes.append(f"{tramo}: {r['plantas']} plantas "
+                      f"/ {_fmt_num(r['altura_m'])} m")
+    return '; '.join(partes)
+
+
+def _extract_usos(texto: str) -> list[str]:
+    """Lista de usos permitidos (bullets '•' tras el apartado 'Usos.')."""
+    m = re.search(r'(?im)^[ \t]*\d{0,2}\s*\.?\s*usos\s*[.:]?\s*$', texto)
+    if not m:
+        m = re.search(r'usos\s*(?:permitidos|autorizados)?\s*[.:]\s*\n',
+                      texto, re.I)
+    if not m:
+        return []
+    usos = []
+    for line in texto[m.end():m.end() + 6000].split('\n'):
+        s = line.strip()
+        if re.match(r'\d{1,2}\.\s+[A-ZÁÉÍÓÚ]|ORDENANZA\b|ART\.?\s*\d', s):
+            break
+        bm = re.match(r'[•·\u2022]\s*(.+)', s)
+        if bm:
+            item = bm.group(1).strip().rstrip('.').strip()
+            if len(item) > 2:
+                usos.append(item)
+        elif usos and s and len(usos[-1]) < 160:
+            usos[-1] += ' ' + s.rstrip('.').strip()
+        if len(usos) >= 20:
+            break
+    return usos
 
 
 def _numtxt(s: str) -> float | None:
@@ -84,6 +200,26 @@ def _pdf_pages_text(pdf_path: Path) -> list[str]:
         return []
 
 
+def _header_plausible(texto: str, start: int, end: int, title: str) -> bool:
+    """Descarta menciones de 'ORDENANZA X' que no son cabecera real:
+    filas de tablas resumen (p.ej. 'ORDENANZA U9 UNIDADES Edificio Non
+    Exclusivo ...' en la tabla de límites de instalaciones industriales).
+    Una cabecera real va precedida de 'ART. NN.' o seguida de un título
+    en mayúsculas / inicio de apartado numerado."""
+    prev = texto[max(0, start - 30):start]
+    if re.search(r'art\.?\s*\d+\s*[.:\-]?\s*$', prev, re.I):
+        return True
+    nxt = texto[end:end + 90]
+    if re.match(r'\s*(?:1\s*[.):]|delimitaci[oó]n|[áa]mbito|'
+                r'par[áa]metros|obxecto|usos\b|sistema)', nxt, re.I):
+        return True
+    cand = title or nxt[:60]
+    letras = [c for c in cand if c.isalpha()]
+    if letras and sum(c.isupper() for c in letras) / len(letras) >= 0.7:
+        return True
+    return False
+
+
 def _segment_ordenanzas(pages: list[str]) -> list[dict]:
     """Devuelve bloques {ordenanza, titulo, pag_ini, texto} uniendo páginas."""
     blocks = []
@@ -96,10 +232,14 @@ def _segment_ordenanzas(pages: list[str]) -> list[dict]:
             title = (m.group(2) or '').strip().rstrip('.')
             if len(code) < 2 or code.upper() in ('DE', 'LA', 'DO', 'DA', 'NON', 'QUE'):
                 continue
+            if not _header_plausible(text, m.start(), m.end(), title):
+                continue
             marks.append((m.start(), code, title))
         for gm in _ORD_GENERIC.finditer(text):
             code = gm.group(1).replace(' ', '')
             if all(abs(gm.start() - s) > 3 for s, _, _ in marks):
+                if not _header_plausible(text, gm.start(), gm.end(), ''):
+                    continue
                 marks.append((gm.start(), code, ''))
         marks.sort()
         if marks:
@@ -128,25 +268,60 @@ _EXCLUDE_PREV = {
 
 def _extract_params(block: dict) -> dict:
     """Extrae parámetros con trazabilidad sobre el texto del bloque."""
+    texto = _clean_boilerplate(block['texto'])
     params = {}
     trazas = {}
     for key, pats in _PATTERNS.items():
         excl = _EXCLUDE_PREV.get(key)
         for pat in pats:
             found = False
-            for m in pat.finditer(block['texto']):
-                if excl and excl.search(block['texto'][max(0, m.start() - 80):m.start()]):
+            for m in pat.finditer(texto):
+                if excl and excl.search(texto[max(0, m.start() - 80):m.start()]):
                     continue
                 val = _numtxt(m.group(1))
                 if val is None:
                     continue
                 params[key] = val
-                snippet = block['texto'][max(0, m.start() - 60):m.end() + 60]
+                snippet = texto[max(0, m.start() - 60):m.end() + 60]
                 trazas[key] = {'pagina': block['pag_ini'], 'texto': ' '.join(snippet.split())[:220]}
                 found = True
                 break
             if found:
                 break
+    # Tabla 'ancho de rúa → plantas/altura' (ordenanzas de cuarteirón):
+    # la altura depende del ancho de la calle, no es un valor único.
+    rows = _tabla_ancho_rua(texto)
+    if rows:
+        params['altura_por_ancho_rua'] = _tabla_ancho_txt(rows)
+        idx = min(texto.find(str(int(r['altura_m']))
+                           if r['altura_m'] == int(r['altura_m'])
+                           else _fmt_num(r['altura_m']))
+                  for r in rows if r['altura_m'] is not None)
+        snippet = texto[max(0, idx - 80):idx + 200] if idx >= 0 else ''
+        trazas['altura_por_ancho_rua'] = {
+            'pagina': block['pag_ini'], 'tabla': rows,
+            'texto': ' '.join(snippet.split())[:220]}
+    usos = _extract_usos(texto)
+    if usos:
+        params['usos_permitidos'] = '; '.join(usos)
+        m = re.search(r'(?im)^[ \t]*\d{0,2}\s*\.?\s*usos\s*[.:]?\s*$', texto)
+        idx = m.end() if m else 0
+        trazas['usos_permitidos'] = {
+            'pagina': block['pag_ini'],
+            'texto': ' '.join(texto[idx:idx + 220].split())[:220]}
+    # Ocupación condicional: cuarteirón compacto sin indicación en
+    # planos → puede ocupar toda la parcela edificable (no es un % fijo).
+    if 'ocupacion_max_pct' not in params:
+        m = re.search(r'ocupaci[óo]n\s+da\s+totalidade\s+da\s+parcela\s+'
+                      r'edificable', texto, re.I)
+        if m:
+            params['ocupacion_condicional'] = (
+                'ata o 100% da parcela edificable (cuarteirón compacto '
+                'sen indicación en planos)')
+            snippet = texto[max(0, m.start() - 80):m.end() + 60]
+            trazas['ocupacion_condicional'] = {
+                'pagina': block['pag_ini'],
+                'texto': ' '.join(snippet.split())[:220]}
     return params, trazas
 
 
@@ -157,7 +332,8 @@ def extraer_ordenanzas_municipio(ine: str, *, forzar: bool = False) -> dict:
     if cache_file.exists() and not forzar:
         try:
             d = json.loads(cache_file.read_text(encoding='utf-8'))
-            if time.time() - d.get('_extracted_at', 0) < _CACHE_TTL_S:
+            if (d.get('_extractor_v') == _EXTRACTOR_V
+                    and time.time() - d.get('_extracted_at', 0) < _CACHE_TTL_S):
                 return d.get('ordenanzas') or {}
         except Exception:
             pass
@@ -202,7 +378,8 @@ def extraer_ordenanzas_municipio(ine: str, *, forzar: bool = False) -> dict:
         try:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             cache_file.write_text(json.dumps(
-                {'_extracted_at': time.time(), 'municipio_ine': str(ine), 'ordenanzas': out},
+                {'_extracted_at': time.time(), '_extractor_v': _EXTRACTOR_V,
+                 'municipio_ine': str(ine), 'ordenanzas': out},
                 ensure_ascii=False, indent=1), encoding='utf-8')
         except Exception:
             pass

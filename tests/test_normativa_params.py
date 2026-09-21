@@ -65,6 +65,100 @@ def test_segment_ordenanzas_corta_por_cabeceras():
     assert 'texto u1' in u1['texto'] and 'más u1' in u1['texto']
 
 
+_U2_TEXT = """ART . 77. ORDENANZA U2. CUARTEIRÓN PECHADO.
+1.  Delimitación e ámbito.
+Comprende esta ordenanza as áreas de solo urbano consolidadas en
+formación de cuarteirón pechado, tal e como se delimita en planos.
+3.  Parámetros e condicións da edificación.
+Cando en cuarteiróns compactos non se estableza indicación algunha en
+planos de ordenación autorízase a ocupación da totalidade da parcela
+edificable, sen prexuízo do cumprimento da lexislación aplicable.
+A altura máxima da edificación estará en función do ancho do espazo
+público ao que dea fronte, e quedará definida segundo o seguinte cadro:
+Ancho de Rúa Nº de plantas Altura en metros
+Menor de 6 m. 3 10,50 m.
+Desde 6 m. e menor de 12 m. 4 13,00 m.
+Desde 12 m. e menor de 18 m. 5 16,50 m.
+Desde 18 m. e menor de 24 m. 6 19,00 m.
+Desde 24 m. 7 22,50 m.
+Non se establece parcela mínima. A efectos de parcelación establécese
+unha fronte mínima de parcela de 8 metros.
+Autorízanse voos nas condicións establecidas no artigo 62.13 e 14 das
+presentes Normas e sen ocupar máis do 25% da superficie de fachada.
+Autorízase a construción de entreplantas, que en ningún caso poderán
+ocupar máis do cincuenta (50) por cento dos locais de planta baixa.
+5.  Usos.
+Permítense os seguintes usos:
+•  Residencial.
+•  Terciario: Hoteleiro.
+•  Terciario: Comercial. Categoría 1ª, 2ª.
+6.  Condicións especiais.
+Naquelas parcelas en contacto con outras destinadas a dotacións.
+"""
+
+
+def test_u2_tabla_altura_por_ancho_rua():
+    """U2 expresa la altura como tabla ancho de rúa → plantas/metros."""
+    params, trazas = np._extract_params(_block(_U2_TEXT, pag=168, ord_code='U2'))
+    tabla = params['altura_por_ancho_rua']
+    assert '<6 m' in tabla and '22,5' in tabla
+    assert 'altura_maxima_m' not in params  # no es un valor único
+    rows = trazas['altura_por_ancho_rua']['tabla']
+    assert len(rows) == 5
+    assert rows[0] == {'ancho_min_m': None, 'ancho_max_m': 6.0,
+                       'plantas': 3, 'altura_m': 10.5}
+    assert rows[-1] == {'ancho_min_m': 24.0, 'ancho_max_m': None,
+                        'plantas': 7, 'altura_m': 22.5}
+
+
+def test_u2_parametros_en_prosa():
+    """Frente mínima, voos %, entreplantas %, ocupación condicional."""
+    params, _ = np._extract_params(_block(_U2_TEXT, ord_code='U2'))
+    assert params['frente_minima_m'] == 8.0
+    assert params['voos_max_pct_fachada'] == 25.0
+    assert params['entreplantas_max_pct'] == 50.0
+    assert '100%' in params['ocupacion_condicional']
+    # 'Non se establece parcela mínima' → no debe extraer número
+    assert 'parcela_minima_m2' not in params
+
+
+def test_u2_usos_permitidos():
+    params, _ = np._extract_params(_block(_U2_TEXT, ord_code='U2'))
+    usos = params['usos_permitidos']
+    assert 'Residencial' in usos
+    assert 'Hoteleiro' in usos and 'Comercial' in usos
+    # se detiene en la siguiente sección numerada
+    assert 'Condicións especiais' not in usos
+
+
+def test_mencion_en_tabla_no_abre_bloque():
+    """'ORDENANZA U9 UNIDADES Edificio Non Exclusivo' (fila de tabla
+    resumen de instalacións industriais) no debe abrir un bloque."""
+    pages = [
+        "ART . 77. ORDENANZA U2. CUARTEIRÓN PECHADO.\ntexto " + "a" * 50,
+        "LÍMITES DAS INSTALACIÓNS INDUSTRIAIS.\nCATEGORÍA\n"
+        "ORDENANZA U9 UNIDADESEdificio Non Exclusivo\n"
+        "Edificio ExclusivoCalquera planta\nmás texto",
+    ]
+    blocks = np._segment_ordenanzas(pages)
+    codes = [b['ordenanza'] for b in blocks]
+    assert 'U2' in codes and 'U9' not in codes
+    # el texto de la tabla queda dentro del bloque U2, no abre otro
+    u2 = next(b for b in blocks if b['ordenanza'] == 'U2')
+    assert 'INSTALACIÓNS' in u2['texto']
+
+
+def test_boilerplate_boppo_no_rompe_extraccion():
+    """Cabeceras/pies del BOPPO intercalados no impiden extraer."""
+    texto = _U2_TEXT.replace(
+        'Menor de 6 m. 3 10,50 m.',
+        'Edita: Deputación de Pontevedra • Depósito legal: PO 1-1958\n'
+        'Núm.\nLuns, 4 de agosto de 2025\n146\nBOPPO\n'
+        'Menor de 6 m. 3 10,50 m.')
+    params, _ = np._extract_params(_block(texto, ord_code='U2'))
+    assert 'altura_por_ancho_rua' in params
+
+
 def test_buscar_ordenanza_normaliza_codigos():
     ords = {'U6': {'ordenanza': 'U6', 'params': {'x': 1}},
             'U10': {'ordenanza': 'U10', 'params': {}}}
