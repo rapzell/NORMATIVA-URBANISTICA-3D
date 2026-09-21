@@ -141,6 +141,15 @@
   #toggle-pord:hover { background: #21262d; }
   #toggle-pord.active { background: #bf8700; color: #fff; }
 
+  #toggle-ords {
+    position: absolute; top: 12px; right: 695px; z-index: 10;
+    padding: 8px 14px; background: #161b22; border: 1px solid #8b5cf6;
+    color: #8b5cf6; border-radius: 8px; cursor: pointer; font-size: 13px;
+    font-weight: 600;
+  }
+  #toggle-ords:hover { background: #21262d; }
+  #toggle-ords.active { background: #8b5cf6; color: #fff; }
+
   .q-badge {
     display: inline-block; padding: 1px 6px; border-radius: 6px;
     font-size: 10px; font-weight: 700; margin-left: 6px;
@@ -302,6 +311,7 @@
     <button id="toggle-projects" onclick="toggleProjects()">Proyectos</button>
     <button id="toggle-clasificacion" onclick="toggleClasificacion()">Clasificación: OFF</button>
     <button id="toggle-pord" onclick="togglePord()" title="Plano de ordenación oficial del plan vigente (SIOTUGA, raster)">Plano oficial: OFF</button>
+    <button id="toggle-ords" onclick="toggleOrds()" title="Ordenanzas dibujadas del GeoServer municipal (visor oficial del Concello)">Ordenanzas mapa: OFF</button>
     <div id="shadow-controls" style="display:none;position:absolute;top:50px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
       <div style="font-weight:600;margin-bottom:6px;color:#9b59b6">Hora del día (UTC)</div>
       <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
@@ -357,6 +367,11 @@ let showClasificacion = false;
 let clasificacionLoaded = false;
 let showPord = false;
 let siotugaWmsInfo = null;
+let showOrds = false;
+// Capas WMS municipales con ordenanzas dibujadas (visor oficial del
+// concello) por INE — solo donde el GeoServer municipal la publica.
+const MUNI_ORDS_LAYER = { '36057': 'vigo:ordenanzas_alineaciones' };
+const MUNI_INE = { 'Vigo': '36057' };
 let clasificacionLoading = false;
 let clasificacionMode = null;
 
@@ -575,7 +590,10 @@ async function goToMunicipio(municipio) {
   showPord = false;
   const pordBtn = document.getElementById('toggle-pord');
   if (pordBtn) { pordBtn.textContent = 'Plano oficial: OFF'; pordBtn.classList.remove('active'); }
-  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster', 'pord-layer'])
+  showOrds = false;
+  const ordsBtn = document.getElementById('toggle-ords');
+  if (ordsBtn) { ordsBtn.textContent = 'Ordenanzas mapa: OFF'; ordsBtn.classList.remove('active'); }
+  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster', 'pord-layer', 'ords-layer'])
     if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
 
   // Marcar boton activo
@@ -1019,6 +1037,46 @@ async function togglePord() {
     console.warn('Error cargando plano oficial:', e);
     btn.textContent = 'Plano oficial: error';
     showPord = false;
+  }
+}
+
+// Plano de ordenanzas del GeoServer municipal (visor oficial del
+// concello): dibuja el código de ordenanza sobre cada zona — sirve
+// para leer la ordenanza en los huecos de la capa vectorial.
+async function toggleOrds() {
+  showOrds = !showOrds;
+  const btn = document.getElementById('toggle-ords');
+  if (!showOrds) {
+    btn.textContent = 'Ordenanzas mapa: OFF';
+    btn.classList.remove('active');
+    if (map.getLayer('ords-layer')) map.setLayoutProperty('ords-layer', 'visibility', 'none');
+    return;
+  }
+  const ine = MUNI_INE[activeMunicipio];
+  const layer = ine && MUNI_ORDS_LAYER[ine];
+  if (!layer) {
+    btn.textContent = 'Ordenanzas mapa: sin capa';
+    showOrds = false;
+    return;
+  }
+  try {
+    await waitForMap();
+    const tiles = `${API}/official/muni-wms/tile/{z}/{x}/{y}?ine=${ine}&layer=${encodeURIComponent(layer)}`;
+    if (map.getSource('ords')) {
+      map.getSource('ords').setTiles([tiles]);
+      map.setLayoutProperty('ords-layer', 'visibility', 'visible');
+    } else {
+      map.addSource('ords', { type: 'raster', tiles: [tiles], tileSize: 512,
+        attribution: 'Concello de Vigo — ordenanzas y alineaciones' });
+      map.addLayer({ id: 'ords-layer', type: 'raster', source: 'ords',
+        paint: { 'raster-opacity': 0.75 } });
+    }
+    btn.textContent = 'Ordenanzas mapa: ON';
+    btn.classList.add('active');
+  } catch (e) {
+    console.warn('Error cargando ordenanzas municipales:', e);
+    btn.textContent = 'Ordenanzas mapa: error';
+    showOrds = false;
   }
 }
 

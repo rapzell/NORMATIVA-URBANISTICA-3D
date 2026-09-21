@@ -4027,6 +4027,47 @@ def official_siotuga_wms_tile(z: int, x: int, y: int, ine: str, layer: str):
     raise HTTPException(status_code=502, detail=f'Error proxy WMS SIOTUGA: {e}')
 
 
+# GeoServers municipales con capas WMS propias (visor oficial del
+# concello). Vigo publica 'vigo:ordenanzas_alineaciones' — el plano de
+# ordenanzas con los códigos dibujados, más reciente que la capa
+# vectorial 4ordsuc en algunos puntos.
+_MUNI_WMS = {
+    '36057': 'https://mapas-ogc.vigo.org/geoserver/ows',
+}
+
+
+@app.get('/official/muni-wms/tile/{z}/{x}/{y}')
+def official_muni_wms_tile(z: int, x: int, y: int, ine: str, layer: str):
+  """Proxy XYZ→WMS para los GeoServers municipales (p.ej. el plano de
+  ordenanzas de Vigo 'vigo:ordenanzas_alineaciones')."""
+  from fastapi.responses import Response
+  import math
+  wms_base = _MUNI_WMS.get(str(ine or ''))
+  if not wms_base:
+    raise HTTPException(status_code=404, detail='Sin WMS municipal para ese INE')
+  n = 2 ** z
+  lon_min = x / n * 360.0 - 180.0
+  lon_max = (x + 1) / n * 360.0 - 180.0
+  lat_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
+  lat_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))
+  bbox = f'{lon_min},{lat_min},{lon_max},{lat_max}'
+  url = (
+    f'{wms_base}?service=WMS&version=1.1.0&request=GetMap'
+    f'&layers={layer}&styles=&srs=EPSG:4326'
+    f'&bbox={bbox}&width=512&height=512'
+    f'&format=image/png&transparent=true'
+  )
+  try:
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+      img_data = resp.read()
+    return Response(content=img_data, media_type='image/png',
+                    headers={'Cache-Control': 'public, max-age=86400'})
+  except Exception as e:
+    raise HTTPException(status_code=502, detail=f'Error proxy WMS municipal: {e}')
+
+
 @app.get('/official/siotuga-clasificacion')
 def official_siotuga_clasificacion(municipio: Optional[str] = None,
                                  bbox: Optional[str] = None):
