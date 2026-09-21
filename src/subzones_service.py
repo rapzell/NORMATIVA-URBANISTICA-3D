@@ -29,9 +29,11 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v3: ámbito de planeamento API/SUB/SUNC; v4: altura_por_ancho_rua y
 # estado 'altura_tabla' para ordenanzas con altura en tabla;
 # v5: candidatas_proximas cuando el punto cae en hueco de la capa;
-# v6: plantas_estimadas + ancho_rua_estimado/altura_aplicable) — las
+# v6: plantas_estimadas + ancho_rua_estimado/altura_aplicable;
+# v7: estado sin_limite para ordenanzas de conservación;
+# v8: altura_medida_m/altura_osm_m — altura real MDSN por huella) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 7
+_PROPS_SCHEMA = 8
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -910,6 +912,95 @@ def find_subzone_by_name(municipio: str, subzona: str) -> dict[str, Any] | None:
     return None
 
 
+def _attach_mdsn_heights(features: list[dict[str, Any]],
+                         min_pixels: int = 4) -> int:
+    """Altura medida MDSN por huella para todos los edificios de golpe.
+
+    Descarga un único GeoTIFF ``mdsn_e025`` (nDSM edificación 2,5 m del
+    LiDAR PNOA, servido por WCS del IDEE) que cubra el bbox de todos los
+    features, enmascara los píxeles dentro de cada huella y toma el
+    percentil P90 — robusto frente a antenas y bordes. El GeoTIFF se
+    cachea en disco 30 días, así que el coste por carga de municipio es
+    una petición WCS la primera vez y cero después.
+
+    Cuando hay medición suficiente sustituye ``height`` por el valor
+    medido (extrusión 3D y panel muestran la real), guarda la OSM en
+    ``altura_osm_m``, pone ``height_source='mdsn_lidar'`` /
+    ``height_estimated=False`` y reclasifica el cumplimiento con la
+    altura real. Devuelve cuántas huellas obtuvieron medición.
+    """
+    import numpy as np
+    import rasterio
+    from pyproj import Transformer
+    from rasterio.features import geometry_mask
+    from shapely.geometry import Polygon, shape
+    from shapely.ops import transform as shp_transform
+
+    from src.building_data.mds_wcs import (
+        COVERAGE_MDSN_EDIF, MAX_HEIGHT_M, PCT, _fetch_tiff, _to_3042)
+
+    geoms: list[tuple[int, Any]] = []
+    minx = miny = float('inf')
+    maxx = maxy = float('-inf')
+    tx = Transformer.from_crs('EPSG:4326', 'EPSG:3042', always_xy=True)
+    for i, f in enumerate(features):
+        coords = ((f.get('geometry') or {}).get('coordinates') or [[]])[0]
+        if len(coords) < 4:
+            continue
+        g = shp_transform(lambda x, y, z=None: tx.transform(x, y),
+                          Polygon(coords))
+        bx = g.bounds
+        minx, miny = min(minx, bx[0]), min(miny, bx[1])
+        maxx, maxy = max(maxx, bx[2]), max(maxy, bx[3])
+        geoms.append((i, g))
+    if not geoms:
+        return 0
+
+    raw = _fetch_tiff(COVERAGE_MDSN_EDIF,
+                      minx - 10, miny - 10, maxx + 10, maxy + 10)
+    if not raw:
+        return 0
+
+    import io
+    measured = 0
+    with rasterio.open(io.BytesIO(raw)) as ds:
+        arr = ds.read(1).astype(float)
+        transform = ds.transform
+        nodata = ds.nodata
+        for i, g in geoms:
+            mask = geometry_mask([g.__geo_interface__], out_shape=arr.shape,
+                                 transform=transform, invert=True)
+            vals = arr[mask]
+            vals = vals[(vals > 0) & (vals < MAX_HEIGHT_M)]
+            if nodata is not None:
+                vals = vals[vals != nodata]
+            if len(vals) < min_pixels:
+                continue
+            h = float(np.percentile(vals, PCT))
+            p = features[i].get('properties') or {}
+            p['altura_osm_m'] = p.get('height')
+            p['altura_medida_m'] = round(h, 1)
+            p['height'] = round(h, 1)
+            p['_altura_visual'] = round(h, 1)
+            p['height_source'] = 'mdsn_lidar'
+            p['height_estimated'] = False
+            if not p.get('levels'):
+                p['plantas_estimadas'] = max(1, round(h / 3.2))
+            comp = _classify_building_compliance(h, {
+                'subzona': p.get('subzona') or p.get('subzona_piloto'),
+                'titulo': p.get('titulo_ordenanza'),
+                'normative_status': p.get('normative_status'),
+                'altura_maxima_m': p.get('altura_maxima_subzona_m'),
+                'altura_por_ancho_rua': p.get('altura_por_ancho_rua'),
+                'candidatas_proximas': p.get('candidatas_proximas'),
+            })
+            p['cumplimiento_altura'] = comp['status']
+            p['cumplimiento_detalle'] = comp['detail']
+            p['color_semantica'] = comp['color_semantics']
+            measured += 1
+    return measured
+
+
 def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800) -> dict[str, Any]:
     """Devuelve edificios OSM en GeoJSON listos para extrusión 3D.
 
@@ -1035,6 +1126,15 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
         })
         if len(features) >= max(1, int(limit)):
             break
+
+    # Alturas medidas MDSN (nDSM edificación 2,5 m, LiDAR PNOA del
+    # IDEE): una sola descarga WCS para toda la zona y percentil P90
+    # por huella — sustituye la altura estimada OSM por el dato
+    # medido real cuando hay cobertura.
+    try:
+        _attach_mdsn_heights(features)
+    except Exception:
+        pass
 
     # Ancho de rúa estimado desde OSM — solo cuando hay ordenanzas
     # con tabla de altura por ancho (U2 y similares). Permite resolver

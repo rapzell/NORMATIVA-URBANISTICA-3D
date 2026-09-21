@@ -496,7 +496,7 @@ function buildingTypeLabel(value) {
 }
 
 function heightSourceLabel(source) {
-  return ({ osm_height: 'altura declarada en OSM', osm_levels: 'estimada desde plantas OSM', building_type: 'estimada por tipo de edificio', default: 'estimación genérica' })[source] || 'procedencia desconocida';
+  return ({ mdsn_lidar: 'medida LiDAR PNOA (nDSM edificación 2,5 m, IDEE)', osm_height: 'altura declarada en OSM', osm_levels: 'estimada desde plantas OSM', building_type: 'estimada por tipo de edificio', default: 'estimación genérica' })[source] || 'procedencia desconocida';
 }
 
 function initMap() {
@@ -2036,7 +2036,11 @@ async function selectBuilding(feature) {
     || (props.plantas_estimadas ? `≈${props.plantas_estimadas} (estimado)` : 'No disponible');
   const subzona = props.subzona
     ? `${props.subzona}${props.titulo_ordenanza ? ' — ' + props.titulo_ordenanza : ''}`
-    : (props.subzona_piloto ? props.subzona_piloto + ' (piloto)' : 'No asociada');
+    : (props.subzona_piloto
+       ? props.subzona_piloto + ' (piloto)'
+       : (props.normative_status === 'unavailable'
+          ? 'Sin cobertura en capa oficial'
+          : 'No asociada'));
   const alturaSubzona = props.altura_maxima_subzona_m != null
     ? `${props.altura_maxima_subzona_m} m`
     : (props.altura_por_ancho_rua
@@ -2059,12 +2063,13 @@ async function selectBuilding(feature) {
   if (pilot) html += '<div class="hint" style="color:#d29922;margin-bottom:8px">Comparación piloto, no oficial. Verifica la parcela y la ordenanza en SIOTUGA/Catastro antes de tomar decisiones.</div>';
   html += '<div class="info-card">';
   html += `<div class="info-row"><span class="key">Tipo OSM</span><span class="val">${escapeHtml(buildingTypeLabel(props.building))}</span></div>`;
-  html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}${props.height != null ? qualityBadge('estimated') : ''}</span></div>`;
+  html += `<div class="info-row"><span class="key">Altura</span><span class="val">${escapeHtml(h)}${props.height != null ? qualityBadge(props.height_estimated === false ? 'measured' : 'estimated') : ''}</span></div>`;
+  if (props.altura_medida_m != null && props.altura_osm_m != null && Math.abs(props.altura_medida_m - props.altura_osm_m) > 2) html += `<div class="hint" style="margin:-4px 0 6px">Altura medida LiDAR (${props.altura_medida_m} m) — OSM estimaba ~${props.altura_osm_m} m.</div>`;
   html += `<div class="info-row"><span class="key">Procedencia altura</span><span class="val">${escapeHtml(heightSourceLabel(props.height_source))}</span></div>`;
   html += `<div class="info-row"><span class="key">Plantas</span><span class="val">${escapeHtml(levels)}${props.levels ? '' : (props.plantas_estimadas ? qualityBadge('estimated') : '')}</span></div>`;
   if (!props.levels) html += `<div class="hint" style="margin:-4px 0 6px">OSM no declara <code>building:levels</code> en este edificio${props.plantas_estimadas ? ' — las plantas se estiman desde la altura (~3,2 m/planta)' : '; la altura mostrada es una estimación por tipo'} — orientativo, no oficial.</div>`;
   if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
-  html += `<div class="info-row"><span class="key">${props.subzona ? 'Ordenanza oficial' : 'Subzona piloto'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
+  html += `<div class="info-row"><span class="key">${props.subzona || props.normative_status === 'unavailable' ? 'Ordenanza oficial' : 'Subzona piloto'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
   if (!props.subzona && Array.isArray(props.candidatas_proximas) && props.candidatas_proximas.length) {
     const prox = props.candidatas_proximas.map(c => {
       let extra = '';

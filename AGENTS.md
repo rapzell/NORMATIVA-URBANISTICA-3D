@@ -174,6 +174,17 @@ orientativo · `normative_status` = official|pilot|unavailable|ambiguous.
 La caché de Overpass en disco lleva `_PROPS_SCHEMA` en el nombre del
 fichero para invalidarse cuando cambia este contrato.
 
+Alturas: `_attach_mdsn_heights` descarga un único GeoTIFF `mdsn_e025`
+(nDSM edificación 2,5 m, WCS IDEE) cubriendo el bbox de todos los
+features y toma el P90 por huella — la altura pasa de estimada OSM a
+medida real (`height_source='mdsn_lidar'`, `altura_medida_m`,
+`altura_osm_m` conserva la estimación). Estados de cumplimiento:
+`compatible|supera_altura|orientativo_*|altura_tabla|sin_limite`
+(ordenanza oficial que no fija altura, p.ej. U1.x conservación) |
+`sin_dato` (hueco real de capa). `ancho_rua_estimado_m` se estima por
+sección perpendicular al vial OSM entre fachadas opuestas y resuelve
+la fila aplicable de las tablas de altura por ancho (U2).
+
 Los polígonos piloto (`datos/subzonas_piloto.geojson`) tienen parámetros
 orientativos y geometrías inventadas: se sirven con `subzona_piloto` +
 `normative_status='pilot'` (`_pilot_public_feature`) y **no se muestran
