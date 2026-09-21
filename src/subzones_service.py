@@ -26,9 +26,10 @@ _OVERPASS_DISK_CACHE_DIR = os.path.join(
 _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # Esquema de las props horneadas por edificio: sube la versión cuando
 # cambie (v2: subzona oficial + subzona_piloto + normative_status;
-# v3: ámbito de planeamento API/SUB/SUNC) — las cachés antiguas con
-# 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 3
+# v3: ámbito de planeamento API/SUB/SUNC; v4: altura_por_ancho_rua y
+# estado 'altura_tabla' para ordenanzas con altura en tabla) — las
+# cachés antiguas con 'subzona: R-1' quedan invalidadas.
+_PROPS_SCHEMA = 4
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -783,10 +784,16 @@ def _ordenanza_municipal_punto(lon: float, lat: float,
         'instrumento': r.get('instrumento'),
         'nota': r.get('nota'),
         'altura_maxima_m': params.get('altura_maxima_m'),
+        'altura_por_ancho_rua': params.get('altura_por_ancho_rua'),
         'ocupacion_max': params.get('ocupacion_max_pct'),
+        'ocupacion_condicional': params.get('ocupacion_condicional'),
         'edificabilidad_max_m2_m2': params.get('edificabilidad_max_m2_m2'),
         'retranqueo_min_m': params.get('retranqueo_frontal_m'),
         'parcela_minima_m2': params.get('parcela_minima_m2'),
+        'frente_minima_m': params.get('frente_minima_m'),
+        'voos_max_pct_fachada': params.get('voos_max_pct_fachada'),
+        'entreplantas_max_pct': params.get('entreplantas_max_pct'),
+        'usos_permitidos': params.get('usos_permitidos'),
     }
 
 
@@ -984,6 +991,7 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "ambito_nombre": (subzone_props or {}).get("ambito_nombre"),
                 "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
+                "altura_por_ancho_rua": (subzone_props or {}).get("altura_por_ancho_rua"),
                 "normative_status": (subzone_props or {}).get("normative_status"),
                 "normative_source": (subzone_props or {}).get("fuente"),
                 "cumplimiento_altura": compliance["status"],
@@ -1013,6 +1021,13 @@ def _find_subzone_for_ring(coords: list[list[float]], municipio: str | None) -> 
 
 def _classify_building_compliance(height: float, subzone_props: dict[str, Any] | None) -> dict[str, str]:
     limit = None if not subzone_props else subzone_props.get("altura_maxima_m")
+    if limit is None and (subzone_props or {}).get("altura_por_ancho_rua"):
+        return {
+            "status": "altura_tabla",
+            "detail": ("Altura regulada por tabla según ancho de rúa: "
+                       + str(subzone_props["altura_por_ancho_rua"])),
+            "color_semantics": "azul = altura según ancho de rúa (tabla)",
+        }
     if limit is None:
         return {
             "status": "sin_dato",

@@ -477,6 +477,7 @@ function statusLabel(status) {
     supera_altura: 'Supera altura',
     orientativo_dentro: 'Dentro del límite piloto',
     orientativo_supera: 'Supera el límite piloto',
+    altura_tabla: 'Altura por ancho de rúa',
     sin_dato: 'Sin dato normativo',
   })[status] || 'Sin dato normativo';
 }
@@ -1114,7 +1115,7 @@ function showBuildingTooltip(feature, point) {
     <div class="tt-row"><span class="tt-key">Altura</span><span>${escapeHtml(props.height || '—')} m</span></div>
     <div class="tt-row"><span class="tt-key">${pilot ? 'Subzona piloto' : 'Ordenanza'}</span><span>${escapeHtml(props.subzona || props.subzona_piloto || '—')}${props.titulo_ordenanza ? ' · ' + escapeHtml(props.titulo_ordenanza) : ''}</span></div>
     ${props.ambito ? `<div class="tt-row"><span class="tt-key">Ámbito</span><span>${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''}</span></div>` : ''}
-    <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${escapeHtml(props.altura_maxima_subzona_m || '—')} m</span></div>
+    <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${props.altura_maxima_subzona_m != null ? escapeHtml(props.altura_maxima_subzona_m) + ' m' : (props.altura_por_ancho_rua ? 'según ancho de rúa' : '—')}</span></div>
     <div class="tt-badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</div>
   `;
   tooltipEl.style.display = 'block';
@@ -2028,7 +2029,9 @@ async function selectBuilding(feature) {
   const subzona = props.subzona
     ? `${props.subzona}${props.titulo_ordenanza ? ' — ' + props.titulo_ordenanza : ''}`
     : (props.subzona_piloto ? props.subzona_piloto + ' (piloto)' : 'No asociada');
-  const alturaSubzona = props.altura_maxima_subzona_m != null ? `${props.altura_maxima_subzona_m} m` : 'No disponible';
+  const alturaSubzona = props.altura_maxima_subzona_m != null
+    ? `${props.altura_maxima_subzona_m} m`
+    : (props.altura_por_ancho_rua ? `según ancho de rúa: ${props.altura_por_ancho_rua}` : 'No disponible');
   const status = props.cumplimiento_altura || 'sin_dato';
   const pilot = props.normative_status === 'pilot';
   let footprint = null;
