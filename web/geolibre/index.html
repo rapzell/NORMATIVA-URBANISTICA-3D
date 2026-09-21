@@ -132,17 +132,8 @@
   #toggle-clasificacion:hover { background: #21262d; }
   #toggle-clasificacion.active { background: #2da44e; color: #fff; }
 
-  #toggle-pord {
-    position: absolute; top: 12px; right: 555px; z-index: 10;
-    padding: 8px 14px; background: #161b22; border: 1px solid #bf8700;
-    color: #bf8700; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
-  }
-  #toggle-pord:hover { background: #21262d; }
-  #toggle-pord.active { background: #bf8700; color: #fff; }
-
   #toggle-ords {
-    position: absolute; top: 12px; right: 695px; z-index: 10;
+    position: absolute; top: 12px; right: 555px; z-index: 10;
     padding: 8px 14px; background: #161b22; border: 1px solid #8b5cf6;
     color: #8b5cf6; border-radius: 8px; cursor: pointer; font-size: 13px;
     font-weight: 600;
@@ -310,8 +301,7 @@
     <button id="toggle-shadows" onclick="toggleShadows()">Sombras: OFF</button>
     <button id="toggle-projects" onclick="toggleProjects()">Proyectos</button>
     <button id="toggle-clasificacion" onclick="toggleClasificacion()">Clasificación: OFF</button>
-    <button id="toggle-pord" onclick="togglePord()" title="Plano de ordenación oficial del plan vigente (SIOTUGA, raster)">Plano oficial: OFF</button>
-    <button id="toggle-ords" onclick="toggleOrds()" title="Ordenanzas dibujadas del GeoServer municipal (visor oficial del Concello)">Ordenanzas mapa: OFF</button>
+    <button id="toggle-ords" onclick="toggleOrds()" title="Zonas de ordenanza oficial del Concello (vectorial)">Ordenanzas mapa: OFF</button>
     <div id="shadow-controls" style="display:none;position:absolute;top:50px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
       <div style="font-weight:600;margin-bottom:6px;color:#9b59b6">Hora del día (UTC)</div>
       <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
@@ -366,7 +356,6 @@ let siotugaWMSLayer = null;
 let showSubzonasPiloto = true;
 let showClasificacion = false;
 let clasificacionLoaded = false;
-let showPord = false;
 let siotugaWmsInfo = null;
 let showOrds = false;
 // Capas WMS municipales con ordenanzas dibujadas (visor oficial del
@@ -589,13 +578,10 @@ async function goToMunicipio(municipio) {
   showClasificacion = false;
   const clasBtn = document.getElementById('toggle-clasificacion');
   if (clasBtn) { clasBtn.textContent = 'Clasificación: OFF'; clasBtn.classList.remove('active'); }
-  showPord = false;
-  const pordBtn = document.getElementById('toggle-pord');
-  if (pordBtn) { pordBtn.textContent = 'Plano oficial: OFF'; pordBtn.classList.remove('active'); }
   showOrds = false;
   const ordsBtn = document.getElementById('toggle-ords');
   if (ordsBtn) { ordsBtn.textContent = 'Ordenanzas mapa: OFF'; ordsBtn.classList.remove('active'); }
-  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster', 'pord-layer', 'ords-layer', 'ords-fill', 'ords-line', 'ords-label'])
+  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster', 'ords-fill', 'ords-line', 'ords-label'])
     if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
 
   // Marcar boton activo
@@ -622,7 +608,6 @@ async function goToMunicipio(municipio) {
     // clasificación vectorial, plano de ordenación y ordenanzas del
     // concello — todas debajo de las extrusiones 3D.
     if (!showClasificacion) toggleClasificacion();
-    if (!showPord) togglePord();
     if (!showOrds) toggleOrds();
 
     // Cargar edificios reales de OpenStreetMap
@@ -920,8 +905,8 @@ async function loadClasificacion() {
     }
     const applyData = () => {
       // La clasificación es la capa de suelo MÁS BAJA: debe quedar debajo
-      // de pord/ords para no tapar las etiquetas de ordenanza.
-      const beforeId = ['pord-layer', 'ords-layer', 'buildings-3d']
+      // de las ordenanzas para no tapar contornos ni etiquetas.
+      const beforeId = ['ords-fill', 'ords-line', 'ords-label', 'buildings-3d']
         .find(id => map.getLayer(id));
       if (meta.raster_layer && meta.ine) {
         // Plano escaneado oficial: overlay raster como referencia visual
@@ -950,13 +935,12 @@ async function loadClasificacion() {
               'SUNC', '#e67e22', 'SUB', '#f39c12', 'SUN', '#f39c12',
               'SNR', '#27ae60',
               '#95a5a6'],  // rústico / resto — gris
-            // El tinte solo resalta donde la clase NO es el urbano
-            // consolidado habitual: en SUC casi invisible para no
-            // enrojecer todo el casco sin aportar información.
+            // Tinte translúcido visible: SUC suave (es el caso común),
+            // el resto de clases algo más fuerte para diferenciarlas.
             'fill-opacity': ['match', ['get', 'clase_ley'],
-              'SUC', 0.04, 'SU', 0.04,
-              'SUR', 0.04, 'SUT', 0.04, 'SUI', 0.04,
-              0.22]
+              'SUC', 0.14, 'SU', 0.14,
+              'SUR', 0.14, 'SUT', 0.14, 'SUI', 0.14,
+              0.28]
           }
         }, beforeId);
         map.addLayer({
@@ -1017,59 +1001,6 @@ async function loadClasificacion() {
     showClasificacion = false;
   }
   clasificacionLoading = false;
-}
-
-// Plano de ordenación oficial del plan vigente (raster SIOTUGA).
-// La capa *_PORD_02CL_* renderiza los planos oficiales georreferenciados
-// (parcelario, alineaciones, etiquetas de ordenanza) — referencia visual
-// oficial para los puntos donde la capa vectorial tiene huecos.
-async function togglePord() {
-  showPord = !showPord;
-  const btn = document.getElementById('toggle-pord');
-  if (!showPord) {
-    btn.textContent = 'Plano oficial: OFF';
-    btn.classList.remove('active');
-    if (map.getLayer('pord-layer')) map.setLayoutProperty('pord-layer', 'visibility', 'none');
-    updateMapLegend();
-    return;
-  }
-  btn.textContent = 'Plano oficial: cargando…';
-  try {
-    await waitForMap();
-    let info = siotugaWmsInfo;
-    if (!info || info._muni !== activeMunicipio) {
-      const resp = await fetch(`${API}/official/siotuga-wms?municipio=${encodeURIComponent(activeMunicipio)}`);
-      info = await resp.json();
-      info._muni = activeMunicipio;
-      siotugaWmsInfo = info;
-    }
-    if (!info.available || !info.layer_name || !info.layer_name.includes('_3CLAS_')) {
-      btn.textContent = 'Plano oficial: sin datos';
-      showPord = false;
-      return;
-    }
-    const pordLayer = info.layer_name.replace('_3CLAS_', '_PORD_02CL_');
-    const tiles = `${API}/official/siotuga-wms/tile/{z}/{x}/{y}?ine=${info.ine}&layer=${encodeURIComponent(pordLayer)}`;
-    if (map.getSource('pord')) {
-      map.getSource('pord').setTiles([tiles]);
-      map.setLayoutProperty('pord-layer', 'visibility', 'visible');
-    } else {
-      map.addSource('pord', { type: 'raster', tiles: [tiles], tileSize: 512,
-        attribution: 'SIOTUGA — plano de ordenación oficial' });
-      // Debajo de las extrusiones 3D: referencia oficial de parcelario
-      // y alineaciones sin tapar los edificios.
-      const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
-      map.addLayer({ id: 'pord-layer', type: 'raster', source: 'pord',
-        paint: { 'raster-opacity': 0.4 } }, beforeId);
-    }
-    btn.textContent = 'Plano oficial: ON';
-    btn.classList.add('active');
-  } catch (e) {
-    console.warn('Error cargando plano oficial:', e);
-    btn.textContent = 'Plano oficial: error';
-    showPord = false;
-  }
-  updateMapLegend();
 }
 
 // Ordenanzas de la capa vectorial oficial municipal (misma fuente que
@@ -1155,11 +1086,7 @@ function updateMapLegend() {
       + `${sw('#e74c3c')}Urbano (SUC) &nbsp;${sw('#e67e22')}No consolidado<br>`
       + `${sw('#f39c12')}Urbanizable &nbsp;${sw('#27ae60')}Núcleo rural<br>`
       + `${sw('#95a5a6')}Rústico/resto<br>`
-      + '<span style="color:#8b949e">SUC casi sin tinte; se resaltan otras clases. Clic en el suelo → ficha</span>';
-  }
-  if (showPord) {
-    h += (h ? '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:4px">' : '<div>')
-      + '<b>Plano oficial PXOM</b> — parcelario, alineaciones y cotas oficiales (SIOTUGA)</div>';
+      + '<span style="color:#8b949e">Clic en el suelo → ficha de la zona</span>';
   }
   if (showOrds) {
     h += (h ? '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:4px">' : '<div>')
