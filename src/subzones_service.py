@@ -31,7 +31,7 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v5: candidatas_proximas cuando el punto cae en hueco de la capa;
 # v6: plantas_estimadas + ancho_rua_estimado/altura_aplicable) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 6
+_PROPS_SCHEMA = 7
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -1257,6 +1257,22 @@ def _classify_building_compliance(height: float, subzone_props: dict[str, Any] |
             "detail": ("Altura regulada por tabla según ancho de rúa: "
                        + str(subzone_props["altura_por_ancho_rua"])),
             "color_semantics": "azul = altura según ancho de rúa (tabla)",
+        }
+    if limit is None and (subzone_props or {}).get("subzona"):
+        # Ordenanza oficial resuelta pero sin altura máxima numérica —
+        # p.ej. U1.x «mantemento da edificación existente»: regula por
+        # conservación de lo existente, no es un hueco de datos.
+        titulo = subzone_props.get("titulo") or ""
+        conserva = any(k in titulo.upper() for k in
+                       ("MANTEMENTO", "MANTENIMIENTO", "CONSERV"))
+        return {
+            "status": "sin_limite",
+            "detail": (f"La ordenanza {subzone_props['subzona']} "
+                       f"({titulo}) no fija altura máxima numérica"
+                       + (" — conserva la volumetría y altura "
+                          "existentes" if conserva else "")
+                       + "."),
+            "color_semantics": "amarillo = ordenanza sin límite de altura",
         }
     if limit is None:
         detail = "Sin subzona asociada o sin altura máxima conocida"

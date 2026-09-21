@@ -187,6 +187,8 @@
   #building-tooltip .tt-badge.orientativo_dentro { background: #9a6700; color: #fff; }
   #building-tooltip .tt-badge.orientativo_supera { background: #bc4c00; color: #fff; }
   #building-tooltip .tt-badge.sin_dato { background: #1f6feb; color: #fff; }
+  #building-tooltip .tt-badge.sin_limite { background: #9a6700; color: #fff; }
+  #building-tooltip .tt-badge.altura_tabla { background: #1f6feb; color: #fff; }
 
   #map-summary {
     position: absolute; left: 12px; bottom: 12px; z-index: 15;
@@ -478,6 +480,7 @@ function statusLabel(status) {
     orientativo_dentro: 'Dentro del límite piloto',
     orientativo_supera: 'Supera el límite piloto',
     altura_tabla: 'Altura por ancho de rúa',
+    sin_limite: 'Ordenanza sin altura máxima',
     sin_dato: 'Sin dato normativo',
   })[status] || 'Sin dato normativo';
 }
@@ -1146,7 +1149,7 @@ function showSubzoneTooltip(feature, point) {
 function updateMapSummary(features) {
   const el = document.getElementById('map-summary');
   if (!el || !activeMunicipio) return;
-  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_dato: 0 };
+  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
   for (const f of (features || [])) {
     const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
     stats[s] = (stats[s] || 0) + 1;
@@ -1157,6 +1160,7 @@ function updateMapSummary(features) {
     <div class="sum-row"><span class="sum-key">Edificios 3D</span><span>${(features || []).length}</span></div>
     <div class="sum-row"><span class="sum-key">Dentro límite piloto</span><span>${stats.orientativo_dentro}</span></div>
     <div class="sum-row"><span class="sum-key">Sobre límite piloto</span><span>${stats.orientativo_supera}</span></div>
+    <div class="sum-row"><span class="sum-key">Sin límite en ordenanza</span><span>${stats.sin_limite}</span></div>
     <div class="sum-row"><span class="sum-key">Sin dato</span><span>${stats.sin_dato}</span></div>
   `;
   el.style.display = 'block';
@@ -1331,7 +1335,7 @@ function renderOfficialContext(ctx) {
 }
 
 function renderMunicipioStats(features) {
-  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_dato: 0 };
+  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
   for (const f of (features || [])) {
     const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
     stats[s] = (stats[s] || 0) + 1;
@@ -1340,6 +1344,7 @@ function renderMunicipioStats(features) {
     <div class="info-card">
       <div class="info-row"><span class="key">Dentro límite piloto</span><span class="val">${stats.orientativo_dentro}</span></div>
       <div class="info-row"><span class="key">Sobre límite piloto</span><span class="val">${stats.orientativo_supera}</span></div>
+      <div class="info-row"><span class="key">Sin límite en ordenanza</span><span class="val">${stats.sin_limite}</span></div>
       <div class="info-row"><span class="key">Sin dato normativo</span><span class="val">${stats.sin_dato}</span></div>
       <div class="hint">Resultados orientativos: las subzonas piloto no representan la delimitación oficial.</div>
     </div>`;
@@ -1353,6 +1358,7 @@ function renderBuildingFilters() {
         <button class="filter-btn ${currentBuildingFilter === 'all' ? 'active' : ''}" onclick="setBuildingFilter('all')">Todos</button>
         <button class="filter-btn ${currentBuildingFilter === 'orientativo_dentro' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_dentro')">Dentro (piloto)</button>
         <button class="filter-btn ${currentBuildingFilter === 'orientativo_supera' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_supera')">Sobre (piloto)</button>
+        <button class="filter-btn ${currentBuildingFilter === 'sin_limite' ? 'active' : ''}" onclick="setBuildingFilter('sin_limite')">Sin límite</button>
         <button class="filter-btn ${currentBuildingFilter === 'sin_dato' ? 'active' : ''}" onclick="setBuildingFilter('sin_dato')">Sin dato</button>
       </div>
     </div>`;
@@ -1425,6 +1431,7 @@ async function loadBuildings(municipio) {
             'supera_altura', '#f85149',
             'orientativo_dentro', '#d29922',
             'orientativo_supera', '#bc4c00',
+            'sin_limite', '#e3b341',
             '#58a6ff'
           ],
           'fill-extrusion-height': ['get', '_altura_visual'],
@@ -2037,7 +2044,9 @@ async function selectBuilding(feature) {
          (props.altura_aplicable_m != null
           ? ` → aplicable ≈${props.altura_aplicable_m} m (ancho est. ~${props.ancho_rua_estimado_m} m)`
           : '')
-       : 'No disponible');
+       : (props.cumplimiento_altura === 'sin_limite'
+          ? 'no fijada — conserva la edificación existente'
+          : 'No disponible'));
   const status = props.cumplimiento_altura || 'sin_dato';
   const pilot = props.normative_status === 'pilot';
   let footprint = null;
