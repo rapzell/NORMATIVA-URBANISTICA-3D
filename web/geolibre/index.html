@@ -132,6 +132,15 @@
   #toggle-clasificacion:hover { background: #21262d; }
   #toggle-clasificacion.active { background: #2da44e; color: #fff; }
 
+  #toggle-pord {
+    position: absolute; top: 12px; right: 555px; z-index: 10;
+    padding: 8px 14px; background: #161b22; border: 1px solid #bf8700;
+    color: #bf8700; border-radius: 8px; cursor: pointer; font-size: 13px;
+    font-weight: 600;
+  }
+  #toggle-pord:hover { background: #21262d; }
+  #toggle-pord.active { background: #bf8700; color: #fff; }
+
   .q-badge {
     display: inline-block; padding: 1px 6px; border-radius: 6px;
     font-size: 10px; font-weight: 700; margin-left: 6px;
@@ -292,6 +301,7 @@
     <button id="toggle-shadows" onclick="toggleShadows()">Sombras: OFF</button>
     <button id="toggle-projects" onclick="toggleProjects()">Proyectos</button>
     <button id="toggle-clasificacion" onclick="toggleClasificacion()">Clasificación: OFF</button>
+    <button id="toggle-pord" onclick="togglePord()" title="Plano de ordenación oficial del plan vigente (SIOTUGA, raster)">Plano oficial: OFF</button>
     <div id="shadow-controls" style="display:none;position:absolute;top:50px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
       <div style="font-weight:600;margin-bottom:6px;color:#9b59b6">Hora del día (UTC)</div>
       <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
@@ -345,6 +355,8 @@ let siotugaWMSLayer = null;
 let showSubzonasPiloto = true;
 let showClasificacion = false;
 let clasificacionLoaded = false;
+let showPord = false;
+let siotugaWmsInfo = null;
 let clasificacionLoading = false;
 let clasificacionMode = null;
 
@@ -560,7 +572,10 @@ async function goToMunicipio(municipio) {
   showClasificacion = false;
   const clasBtn = document.getElementById('toggle-clasificacion');
   if (clasBtn) { clasBtn.textContent = 'Clasificación: OFF'; clasBtn.classList.remove('active'); }
-  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster'])
+  showPord = false;
+  const pordBtn = document.getElementById('toggle-pord');
+  if (pordBtn) { pordBtn.textContent = 'Plano oficial: OFF'; pordBtn.classList.remove('active'); }
+  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster', 'pord-layer'])
     if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
 
   // Marcar boton activo
@@ -957,6 +972,54 @@ async function loadClasificacion() {
     showClasificacion = false;
   }
   clasificacionLoading = false;
+}
+
+// Plano de ordenación oficial del plan vigente (raster SIOTUGA).
+// La capa *_PORD_02CL_* renderiza los planos oficiales georreferenciados
+// (parcelario, alineaciones, etiquetas de ordenanza) — referencia visual
+// oficial para los puntos donde la capa vectorial tiene huecos.
+async function togglePord() {
+  showPord = !showPord;
+  const btn = document.getElementById('toggle-pord');
+  if (!showPord) {
+    btn.textContent = 'Plano oficial: OFF';
+    btn.classList.remove('active');
+    if (map.getLayer('pord-layer')) map.setLayoutProperty('pord-layer', 'visibility', 'none');
+    return;
+  }
+  btn.textContent = 'Plano oficial: cargando…';
+  try {
+    await waitForMap();
+    let info = siotugaWmsInfo;
+    if (!info || info._muni !== activeMunicipio) {
+      const resp = await fetch(`${API}/official/siotuga-wms?municipio=${encodeURIComponent(activeMunicipio)}`);
+      info = await resp.json();
+      info._muni = activeMunicipio;
+      siotugaWmsInfo = info;
+    }
+    if (!info.available || !info.layer_name || !info.layer_name.includes('_3CLAS_')) {
+      btn.textContent = 'Plano oficial: sin datos';
+      showPord = false;
+      return;
+    }
+    const pordLayer = info.layer_name.replace('_3CLAS_', '_PORD_02CL_');
+    const tiles = `${API}/official/siotuga-wms/tile/{z}/{x}/{y}?ine=${info.ine}&layer=${encodeURIComponent(pordLayer)}`;
+    if (map.getSource('pord')) {
+      map.getSource('pord').setTiles([tiles]);
+      map.setLayoutProperty('pord-layer', 'visibility', 'visible');
+    } else {
+      map.addSource('pord', { type: 'raster', tiles: [tiles], tileSize: 512,
+        attribution: 'SIOTUGA — plano de ordenación oficial' });
+      map.addLayer({ id: 'pord-layer', type: 'raster', source: 'pord',
+        paint: { 'raster-opacity': 0.85 } });
+    }
+    btn.textContent = 'Plano oficial: ON';
+    btn.classList.add('active');
+  } catch (e) {
+    console.warn('Error cargando plano oficial:', e);
+    btn.textContent = 'Plano oficial: error';
+    showPord = false;
+  }
 }
 
 function toggleClasificacion() {
@@ -2082,8 +2145,10 @@ async function selectBuilding(feature) {
   }
   if (props.ambito) html += `<div class="info-row"><span class="key">Ámbito de planeamento</span><span class="val">${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''} ${qualityBadge('official')}</span></div>`;
   html += `<div class="info-row"><span class="key">${pilot ? 'Límite de altura piloto' : 'Altura máx. subzona'}</span><span class="val">${escapeHtml(alturaSubzona)}</span></div>`;
-  if (props.ancho_rua_estimado_m != null) html += `<div class="info-row"><span class="key">Ancho de rúa</span><span class="val">~${escapeHtml(String(props.ancho_rua_estimado_m))} m${qualityBadge('estimated')}</span></div>`;
+  if (props.ancho_rua_estimado_m != null) html += `<div class="info-row"><span class="key">Ancho de rúa</span><span class="val">~${escapeHtml(String(props.ancho_rua_estimado_m))} m${qualityBadge(props.ancho_rua_source === 'alineaciones oficiales PXOM' ? 'official' : 'estimated')}</span></div>`;
   if (props.normative_source) html += `<div class="info-row"><span class="key">Fuente del límite</span><span class="val">${escapeHtml(props.normative_source)}</span></div>`;
+  const limiteEf = props.altura_maxima_subzona_m != null ? props.altura_maxima_subzona_m : props.altura_aplicable_m;
+  if (props.altura_medida_m != null && limiteEf != null && props.altura_medida_m > limiteEf * 1.1) html += `<div class="hint" style="color:#f85149;margin-bottom:6px">⚠ La altura medida (${props.altura_medida_m} m) supera el límite normativo aplicable (${limiteEf} m) — posible sobreedificación, error de asignación u ordenanza modificada. Verificar en ficha urbanística.</div>`;
   const osmId = String(props.osm_id || '');
   html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—'}</span></div>`;
   html += '</div>';

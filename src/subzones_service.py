@@ -33,7 +33,7 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v7: estado sin_limite para ordenanzas de conservación;
 # v8: altura_medida_m/altura_osm_m — altura real MDSN por huella) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 8
+_PROPS_SCHEMA = 9
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -1142,14 +1142,22 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
     if any((f.get('properties') or {}).get('altura_por_ancho_rua_tabla')
            for f in features):
         try:
-            widths = _estimate_street_widths(features, lon, lat,
-                                             delta * 0.22)
+            # 1º alineaciones oficiales del PXOM (donde la capa cubre),
+            # 2º estimación OSM fachada-fachada para el resto.
+            widths_official = _official_street_widths(features, municipio)
+            widths_est = _estimate_street_widths(features, lon, lat,
+                                                 delta * 0.22)
             for f in features:
                 p = f.get('properties') or {}
-                w = widths.get(p.get('osm_id'))
+                w = widths_official.get(p.get('osm_id'))
+                src = 'alineaciones oficiales PXOM'
+                if not w:
+                    w = widths_est.get(p.get('osm_id'))
+                    src = 'estimado OSM'
                 if not w:
                     continue
                 p['ancho_rua_estimado_m'] = w
+                p['ancho_rua_source'] = src
                 fila = _resolve_fila_tabla(
                     p.get('altura_por_ancho_rua_tabla'), w)
                 if fila:
@@ -1158,11 +1166,15 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                     if (fila.get('altura_m')
                             and p.get('cumplimiento_altura')
                             == 'altura_tabla'):
+                        nota = (' (medido entre alineaciones '
+                                'oficiales)' if src.startswith(
+                                    'alineaciones')
+                                else ' (ancho estimado — verificar '
+                                     'alineaciones oficiales)')
                         p['cumplimiento_detalle'] += (
-                            f' — con ancho estimado ~{w} m aplicaría '
+                            f' — con ancho ~{w} m aplicaría '
                             f"{fila.get('plantas')} plantas / "
-                            f"{fila.get('altura_m')} m (verificar "
-                            'alineaciones oficiales)')
+                            f"{fila.get('altura_m')} m{nota}")
         except Exception:
             pass
     result = {"type": "FeatureCollection", "features": features}
@@ -1319,6 +1331,111 @@ def _estimate_street_widths(features: list[dict],
                 w = d_self + d_opp
                 if 3.0 <= w <= 45.0:
                     out[ids[i]] = round(w, 1)
+        except Exception:
+            continue
+    return out
+
+
+def _official_street_widths(features: list[dict],
+                            municipio: str | None) -> dict:
+    """Ancho de rúa medido entre alineaciones oficiales del PXOM.
+
+    Para cada edificio se busca la alineación oficial más próxima
+    (capa ``O_ALIN``, GeoServer municipal) dentro de 80 m, se proyecta
+    el centroide sobre ella y se mide la distancia perpendicular a la
+    alineación opuesta más cercana — el «ancho do espazo público» de
+    las tablas de altura. Donde la capa no cubre (parte del casco
+    consolidado de Vigo no tiene alineaciones grafiadas) no se
+    devuelve nada y queda el estimador OSM como fallback.
+    """
+    try:
+        from app.main import _get_ine_for_municipio
+        ine = _get_ine_for_municipio(municipio)
+    except Exception:
+        ine = None
+    if not ine:
+        return {}
+    try:
+        from src.muni_wfs import alineaciones_features
+        feats = alineaciones_features(ine)
+    except Exception:
+        feats = []
+    if not feats:
+        return {}
+    try:
+        from pyproj import Transformer
+        from shapely.geometry import LineString, Polygon, shape
+        from shapely.strtree import STRtree
+    except ImportError:
+        return {}
+    fwd = Transformer.from_crs('EPSG:4326', 'EPSG:25829', always_xy=True)
+
+    def proj(c):
+        return [fwd.transform(x, y) for x, y in c]
+
+    lines = []
+    for f in feats:
+        g = f.get('geometry')
+        if not g:
+            continue
+        try:
+            s = shape(g)
+            if s.geom_type == 'LineString':
+                parts = [s]
+            elif s.geom_type == 'MultiLineString':
+                parts = list(s.geoms)
+            else:
+                continue
+            for p_ in parts:
+                coords = list(p_.coords)
+                if len(coords) >= 2:
+                    lines.append(LineString(proj(coords)))
+        except Exception:
+            continue
+    if not lines:
+        return {}
+    tree = STRtree(lines)
+    out: dict = {}
+    for f in features:
+        try:
+            ring = (f.get('geometry') or {}).get('coordinates', [[]])[0]
+            if len(ring) < 4:
+                continue
+            c = Polygon(proj(ring)).centroid
+            idx = tree.nearest(c)
+            nearest = lines[idx]
+            if nearest.distance(c) > 80:
+                continue
+            d_along = nearest.project(c)
+            p = nearest.interpolate(d_along)
+            p1 = nearest.interpolate(max(0.0, d_along - 0.5))
+            p2 = nearest.interpolate(min(nearest.length, d_along + 0.5))
+            vx, vy = p2.x - p1.x, p2.y - p1.y
+            n = (vx * vx + vy * vy) ** 0.5
+            if n < 1e-6:
+                continue
+            ux, uy = -vy / n, vx / n
+            side_self = (c.x - p.x) * ux + (c.y - p.y) * uy
+            best = None
+            cand = tree.query(c.buffer(80))
+            for j in cand:
+                if j == idx:
+                    continue
+                other = lines[j]
+                # punto de la otra línea más próximo a p, proyectado
+                # sobre la perpendicular — debe estar al lado opuesto
+                q = other.interpolate(other.project(p))
+                if q.distance(p) > 60:
+                    continue
+                side = (q.x - p.x) * ux + (q.y - p.y) * uy
+                if side * side_self >= 0:
+                    continue
+                d = q.distance(p)
+                if best is None or d < best:
+                    best = d
+            if best and 3.0 <= best <= 50.0:
+                out[(f.get('properties') or {}).get('osm_id')] = \
+                    round(best, 1)
         except Exception:
             continue
     return out

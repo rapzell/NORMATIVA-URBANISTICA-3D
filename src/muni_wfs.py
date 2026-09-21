@@ -42,6 +42,81 @@ ORDSUC_LAYERS = {
 }
 
 
+# Capas oficiales de alineaciones del plan vigente (sirven para medir
+# el «ancho de rúa» de las tablas de altura, p.ej. ordenanza U2 de
+# Vigo). Vigo publica la del PXOM 2025 definitivo.
+ALIN_LAYERS = {
+    '36057': {
+        'url': 'https://mapas-ogc.vigo.org/geoserver/ows',
+        'layer': 'vigo:36057_PXOM_202502_AD01_O_ALIN',
+        'fuente': 'GeoServer municipal Concello de Vigo '
+                  '(mapas-ogc.vigo.org)',
+        'instrumento': 'Alineaciones oficiales PXOM 2025 '
+                       '(36057_PXOM_202502_AD01_O_ALIN)',
+    },
+}
+
+_ALIN_MEM: dict[str, list] = {}
+
+
+def alineaciones_features(ine: str | None,
+                          *, fetch=requests.get) -> list[dict]:
+    """Features de la capa oficial de alineaciones del municipio.
+
+    Mismo patrón que ``capa_features``: copia cacheada en disco 30 días
+    (``{ine}_alin.geojson``) y descarga paginada WFS si caduca. ``[]``
+    si el municipio no publica la capa.
+    """
+    cfg = ALIN_LAYERS.get(str(ine or ''))
+    if not cfg:
+        return []
+    key = str(ine)
+    if key in _ALIN_MEM:
+        return _ALIN_MEM[key]
+    path = _CACHE_DIR / f'{key}_alin.geojson'
+    if path.exists() and \
+            (time.time() - path.stat().st_mtime) < _CACHE_TTL_S:
+        try:
+            feats = (json.loads(path.read_text(encoding='utf-8'))
+                     .get('features') or [])
+            _ALIN_MEM[key] = feats
+            return feats
+        except Exception:
+            pass
+    features: list[dict] = []
+    start = 0
+    try:
+        while True:
+            r = fetch(cfg['url'], params={
+                'service': 'WFS', 'version': '2.0.0',
+                'request': 'GetFeature', 'typeNames': cfg['layer'],
+                'srsName': 'EPSG:4326',
+                'outputFormat': 'application/json',
+                'count': '2000', 'startIndex': str(start),
+            }, timeout=30)
+            page = (r.json() or {}).get('features') or []
+            features.extend(page)
+            if len(page) < 2000:
+                break
+            start += len(page)
+    except Exception:
+        return []
+    if features:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(
+                {'type': 'FeatureCollection', 'features': features}),
+                encoding='utf-8')
+        except Exception:
+            pass
+    _ALIN_MEM[key] = features
+    return features
+
+
+def alineaciones_cfg(ine: str | None) -> dict | None:
+    return ALIN_LAYERS.get(str(ine or ''))
+
+
 def _point_in_poly(lon: float, lat: float, geom: dict) -> bool:
     try:
         from shapely.geometry import Point, shape
