@@ -4077,6 +4077,28 @@ def official_muni_wms_tile(z: int, x: int, y: int, ine: str, layer: str):
     raise HTTPException(status_code=502, detail=f'Error proxy WMS municipal: {e}')
 
 
+@app.get('/official/ordenanzas-vector')
+def official_ordenanzas_vector(ine: str):
+  """GeoJSON adelgazado de la capa oficial de ordenanzas (la misma que
+  usa ``muni_wfs`` para las consultas por punto): código + geometría.
+
+  El visor la dibuja vectorial (contornos + etiquetas nativas) en vez
+  del raster WMS — nítido a cualquier zoom y sin velo sobre el mapa.
+  """
+  from src.muni_wfs import ORDSUC_LAYERS, capa_features
+  key = str(ine or '')
+  if key not in ORDSUC_LAYERS:
+    raise HTTPException(status_code=404,
+                        detail='Sin capa de ordenanzas para ese INE')
+  feats = capa_features(key)
+  slim = [{
+    'type': 'Feature',
+    'geometry': f.get('geometry'),
+    'properties': {'ord': (f.get('properties') or {}).get('ordenanza')},
+  } for f in feats if f.get('geometry')]
+  return {'type': 'FeatureCollection', 'features': slim}
+
+
 @app.get('/official/siotuga-clasificacion')
 def official_siotuga_clasificacion(municipio: Optional[str] = None,
                                  bbox: Optional[str] = None):

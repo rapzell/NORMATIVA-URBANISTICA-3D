@@ -533,6 +533,7 @@ function initMap() {
     container: 'map',
     style: {
       version: 8,
+      glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
       sources: {
         'osm': {
           type: 'raster',
@@ -594,7 +595,7 @@ async function goToMunicipio(municipio) {
   showOrds = false;
   const ordsBtn = document.getElementById('toggle-ords');
   if (ordsBtn) { ordsBtn.textContent = 'Ordenanzas mapa: OFF'; ordsBtn.classList.remove('active'); }
-  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster', 'pord-layer', 'ords-layer'])
+  for (const l of ['clasificacion-fill', 'clasificacion-line', 'clasificacion-raster', 'pord-layer', 'ords-layer', 'ords-fill', 'ords-line', 'ords-label'])
     if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
 
   // Marcar boton activo
@@ -1059,7 +1060,7 @@ async function togglePord() {
       // y alineaciones sin tapar los edificios.
       const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
       map.addLayer({ id: 'pord-layer', type: 'raster', source: 'pord',
-        paint: { 'raster-opacity': 0.55 } }, beforeId);
+        paint: { 'raster-opacity': 0.4 } }, beforeId);
     }
     btn.textContent = 'Plano oficial: ON';
     btn.classList.add('active');
@@ -1071,40 +1072,66 @@ async function togglePord() {
   updateMapLegend();
 }
 
-// Plano de ordenanzas del GeoServer municipal (visor oficial del
-// concello): dibuja el código de ordenanza sobre cada zona — sirve
-// para leer la ordenanza en los huecos de la capa vectorial.
+// Ordenanzas de la capa vectorial oficial municipal (misma fuente que
+// las consultas por punto): contornos + códigos U-n como etiquetas
+// nativas — nítidas a cualquier zoom y sin raster que enturbie.
+const ORDS_LAYERS = ['ords-fill', 'ords-line', 'ords-label'];
 async function toggleOrds() {
   showOrds = !showOrds;
   const btn = document.getElementById('toggle-ords');
   if (!showOrds) {
     btn.textContent = 'Ordenanzas mapa: OFF';
     btn.classList.remove('active');
-    if (map.getLayer('ords-layer')) map.setLayoutProperty('ords-layer', 'visibility', 'none');
+    for (const l of [...ORDS_LAYERS, 'ords-layer'])
+      if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
     updateMapLegend();
     return;
   }
   const ine = MUNI_INE[activeMunicipio];
-  const layer = ine && MUNI_ORDS_LAYER[ine];
-  if (!layer) {
+  if (!ine || !MUNI_ORDS_LAYER[ine]) {
     btn.textContent = 'Ordenanzas mapa: sin capa';
     showOrds = false;
     return;
   }
   try {
     await waitForMap();
-    const tiles = `${API}/official/muni-wms/tile/{z}/{x}/{y}?ine=${ine}&layer=${encodeURIComponent(layer)}`;
+    const resp = await fetch(`${API}/official/ordenanzas-vector?ine=${ine}`);
+    const gj = await resp.json();
+    if (!resp.ok || !(gj.features || []).length) {
+      btn.textContent = 'Ordenanzas mapa: sin capa';
+      showOrds = false;
+      return;
+    }
     if (map.getSource('ords')) {
-      map.getSource('ords').setTiles([tiles]);
-      map.setLayoutProperty('ords-layer', 'visibility', 'visible');
+      map.getSource('ords').setData(gj);
+      for (const l of ORDS_LAYERS)
+        if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'visible');
     } else {
-      map.addSource('ords', { type: 'raster', tiles: [tiles], tileSize: 512,
-        attribution: 'Concello de Vigo — ordenanzas y alineaciones' });
-      // En el suelo, debajo de las extrusiones 3D: las etiquetas de
-      // ordenanza quedan visibles en calles y parcelas sin edificar.
+      map.addSource('ords', { type: 'geojson', data: gj,
+        attribution: 'Concello de Vigo — ordenanzas SUC' });
+      // Contornos y tinte en el suelo, debajo de las extrusiones 3D
       const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
-      map.addLayer({ id: 'ords-layer', type: 'raster', source: 'ords',
-        paint: { 'raster-opacity': 0.8 } }, beforeId);
+      map.addLayer({ id: 'ords-fill', type: 'fill', source: 'ords',
+        paint: { 'fill-color': '#7d3c98', 'fill-opacity': 0.05 } }, beforeId);
+      map.addLayer({ id: 'ords-line', type: 'line', source: 'ords',
+        paint: { 'line-color': '#7d3c98', 'line-width': 1.1,
+                 'line-opacity': 0.85 } }, beforeId);
+      // Etiquetas con el código de ordenanza encima de todo: son texto
+      // pequeño, no tapan los edificios y se leen a cualquier zoom.
+      map.addLayer({ id: 'ords-label', type: 'symbol', source: 'ords',
+        minzoom: 13.5,
+        layout: {
+          'symbol-placement': 'point',
+          'text-field': ['get', 'ord'],
+          'text-font': ['Open Sans Semibold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'],
+            13.5, 10, 16, 13, 19, 16],
+        },
+        paint: {
+          'text-color': '#3b1d5a',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 1.6,
+        } });
     }
     btn.textContent = 'Ordenanzas mapa: ON';
     btn.classList.add('active');
@@ -1136,7 +1163,7 @@ function updateMapLegend() {
   }
   if (showOrds) {
     h += (h ? '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:4px">' : '<div>')
-      + '<b>Ordenanzas Concello</b> — códigos U-n dibujados sobre cada zona; leer el código en la parcela</div>';
+      + '<b>Ordenanzas Concello</b> — contornos morados + código U-n de cada zona (capa oficial)</div>';
   }
   el.innerHTML = h;
   el.style.display = h ? 'block' : 'none';
