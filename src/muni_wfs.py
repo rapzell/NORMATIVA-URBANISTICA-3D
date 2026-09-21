@@ -232,11 +232,13 @@ def _ordenanza_desde_features(lon: float, lat: float,
 
 def _ordenanzas_proximas(lon: float, lat: float, features: list[dict],
                          campo: str, ine: str | None,
-                         radio_m: float = 60.0) -> list[dict]:
+                         radio_m: float = 250.0) -> list[dict]:
     """Ordenanzas de los polígonos más cercanos al punto cuando éste
     cae en un hueco de la capa (parcela sin polígono de ordenanza).
     Son candidatas *por proximidad* — nunca se asignan: pueden ser de
-    la parcela colindante y no aplicar."""
+    la parcela colindante y no aplicar. Radio amplio (250 m) porque los
+    huecos de la capa suelen ser corredores viarios o manzanas enteras
+    — la distancia se muestra al usuario para juzgar la fiabilidad."""
     from shapely.geometry import Point
     pt = Point(lon, lat)
     radio_deg = radio_m / 111320.0
