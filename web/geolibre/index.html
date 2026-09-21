@@ -918,7 +918,10 @@ async function loadClasificacion() {
       return;
     }
     const applyData = () => {
-      const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
+      // La clasificación es la capa de suelo MÁS BAJA: debe quedar debajo
+      // de pord/ords para no tapar las etiquetas de ordenanza.
+      const beforeId = ['pord-layer', 'ords-layer', 'buildings-3d']
+        .find(id => map.getLayer(id));
       if (meta.raster_layer && meta.ine) {
         // Plano escaneado oficial: overlay raster como referencia visual
         // (debajo del vectorial si existe). No hay consulta por punto.
@@ -946,7 +949,13 @@ async function loadClasificacion() {
               'SUNC', '#e67e22', 'SUB', '#f39c12', 'SUN', '#f39c12',
               'SNR', '#27ae60',
               '#95a5a6'],  // rústico / resto — gris
-            'fill-opacity': 0.16
+            // El tinte solo resalta donde la clase NO es el urbano
+            // consolidado habitual: en SUC casi invisible para no
+            // enrojecer todo el casco sin aportar información.
+            'fill-opacity': ['match', ['get', 'clase_ley'],
+              'SUC', 0.04, 'SU', 0.04,
+              'SUR', 0.04, 'SUT', 0.04, 'SUI', 0.04,
+              0.22]
           }
         }, beforeId);
         map.addLayer({
@@ -1119,7 +1128,7 @@ function updateMapLegend() {
       + `${sw('#e74c3c')}Urbano (SUC) &nbsp;${sw('#e67e22')}No consolidado<br>`
       + `${sw('#f39c12')}Urbanizable &nbsp;${sw('#27ae60')}Núcleo rural<br>`
       + `${sw('#95a5a6')}Rústico/resto<br>`
-      + '<span style="color:#8b949e">Clic en el suelo → ficha de la zona</span>';
+      + '<span style="color:#8b949e">SUC casi sin tinte; se resaltan otras clases. Clic en el suelo → ficha</span>';
   }
   if (showPord) {
     h += (h ? '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:4px">' : '<div>')
@@ -2253,7 +2262,8 @@ async function selectBuilding(feature) {
       return `${escapeHtml(c.ordenanza)} (~${c.distancia_m} m${extra})`;
     }).join(', ');
     html += `<div class="info-row"><span class="key">Ordenanzas colindantes</span><span class="val">${prox}</span></div>`;
-    html += `<div class="hint" style="margin:-4px 0 6px">La capa municipal no cubre esta parcela; las ordenanzas colindantes son solo orientativas — verificar en ficha urbanística.</div>`;
+    const unicas = [...new Set(props.candidatas_proximas.map(c => c.ordenanza))];
+    html += `<div class="hint" style="margin:-4px 0 6px">La capa municipal no cubre esta parcela (frecuente en el corredor viario).${unicas.length === 1 ? ` Toda la zona colindante es ${escapeHtml(unicas[0])} — la parcela probablemente pertenece a la misma ordenanza, pero es orientativo:` : ' Las ordenanzas colindantes son solo orientativas —'} verificar en ficha urbanística.</div>`;
   }
   if (props.ambito) html += `<div class="info-row"><span class="key">Ámbito de planeamento</span><span class="val">${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''} ${qualityBadge('official')}</span></div>`;
   html += `<div class="info-row"><span class="key">${pilot ? 'Límite de altura piloto' : 'Altura máx. subzona'}</span><span class="val">${escapeHtml(alturaSubzona)}</span></div>`;
