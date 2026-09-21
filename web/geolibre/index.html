@@ -356,7 +356,6 @@ let siotugaWMSLayer = null;
 let showSubzonasPiloto = true;
 let showClasificacion = false;
 let clasificacionLoaded = false;
-let siotugaWmsInfo = null;
 let showOrds = false;
 // Capas WMS municipales con ordenanzas dibujadas (visor oficial del
 // concello) por INE — solo donde el GeoServer municipal la publica.
@@ -601,8 +600,8 @@ async function goToMunicipio(municipio) {
     // No mostramos las subzonas piloto en el mapa (cuadrados inventados)
     // renderSubzones3D(data) — desactivado
 
-    // Cargar zonificación oficial de SIOTUGA automáticamente
-    loadSiotugaWMS(municipio).catch(e => console.error('Error WMS:', e));
+    // La zonificación SIOTUGA se muestra vectorial via "Clasificación"
+    // (el raster WMS dejaba un velo lechoso sobre todo el mapa)
 
     // Capas de referencia oficial en el suelo activadas por defecto:
     // clasificación vectorial, plano de ordenación y ordenanzas del
@@ -672,41 +671,6 @@ async function loadOrdenanzas(municipio) {
   const existing = document.getElementById('ordenanzas-card');
   if (existing) existing.remove();
   panel.insertAdjacentHTML('beforeend', html);
-}
-
-async function loadSiotugaWMS(municipio) {
-  try {
-    await waitForMap();
-    const resp = await fetch(`${API}/official/siotuga-wms?municipio=${encodeURIComponent(municipio)}`);
-    const data = await resp.json();
-    if (activeMunicipio !== municipio) return;
-    if (!data.available) {
-      console.warn('WMS SIOTUGA no disponible:', data.error);
-      return;
-    }
-    const sourceId = 'siotuga-wms';
-    if (map.getSource(sourceId)) {
-      if (map.getLayer('siotuga-wms-layer')) map.removeLayer('siotuga-wms-layer');
-      map.removeSource(sourceId);
-    }
-    map.addSource(sourceId, {
-      type: 'raster',
-      tiles: [
-        `${API}/official/siotuga-wms/tile/{z}/{x}/{y}?ine=${data.ine}&layer=${encodeURIComponent(data.layer_name)}`
-      ],
-      tileSize: 512,
-      attribution: 'SIOTUGA - Xunta de Galicia'
-    });
-    map.addLayer({
-      id: 'siotuga-wms-layer',
-      type: 'raster',
-      source: sourceId,
-      paint: { 'raster-opacity': 0.75 }
-    });
-    console.log('WMS SIOTUGA cargado:', data.plan_title);
-  } catch (e) {
-    console.warn('Error cargando WMS SIOTUGA:', e);
-  }
 }
 
 function renderSubzones3D(data) {
@@ -1627,7 +1591,7 @@ async function loadBuildings(municipio) {
         <div class="info-card">
           <div class="info-row"><span class="key">Subzonas piloto</span><span class="val">${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
           <div class="info-row"><span class="key">Edificios OSM 3D</span><span class="val">${features.length}</span></div>
-          <div class="info-row"><span class="key">Zonificación oficial</span><span class="val">SIOTUGA (capa visual)</span></div>
+          <div class="info-row"><span class="key">Zonificación oficial</span><span class="val">SIOTUGA (vectorial)</span></div>
           <div class="info-row"><span class="key">Filtro activo</span><span class="val">${escapeHtml(currentBuildingFilter)}</span></div>
         </div>
         ${renderMunicipioStats(features)}
