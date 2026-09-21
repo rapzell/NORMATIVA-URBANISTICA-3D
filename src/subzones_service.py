@@ -748,13 +748,32 @@ def _ordenanza_municipal_punto(lon: float, lat: float,
     if r.get('data_quality') != 'official':
         # Hay capa oficial pero el punto cae fuera de su cobertura:
         # no se inventa ni se rellena con el piloto — se declara
-        # indisponible con la traza de la fuente consultada.
+        # indisponible con la traza de la fuente consultada. Las
+        # ordenanzas colindantes se enriquecen con sus parámetros
+        # reales del PDF como referencia orientativa.
+        proximas = list(r.get('candidatas_proximas') or [])
+        if proximas:
+            try:
+                from src.normativa_params import (buscar_ordenanza,
+                                                  extraer_ordenanzas_municipio)
+                ords = extraer_ordenanzas_municipio(ine)
+                for c in proximas:
+                    _k, found = buscar_ordenanza(
+                        ords, c.get('ordenanza') or '')
+                    if found:
+                        p = found.get('params') or {}
+                        c['titulo'] = found.get('titulo')
+                        c['altura_maxima_m'] = p.get('altura_maxima_m')
+                        c['altura_por_ancho_rua'] = p.get(
+                            'altura_por_ancho_rua')
+            except Exception:
+                pass
         return {'subzona': None, 'municipio': municipio,
                 'normative_status': 'unavailable',
                 'fuente': r.get('fuente'),
                 'instrumento': r.get('instrumento'),
                 'nota': r.get('error'),
-                'candidatas_proximas': r.get('candidatas_proximas')}
+                'candidatas_proximas': proximas}
     if r.get('ambigua'):
         return {'subzona': None, 'municipio': municipio,
                 'normative_status': 'ambiguous',
@@ -976,6 +995,12 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "height_source": height_info["source"],
                 "height_estimated": height_info["estimated"],
                 "levels": tags.get("building:levels") or None,
+                # Plantas estimadas desde la altura (~3,2 m/planta,
+                # misma constante que la conversión levels→height) —
+                # solo cuando OSM no declara building:levels.
+                "plantas_estimadas": (
+                    max(1, round(height / 3.2))
+                    if not tags.get("building:levels") and height else None),
                 "_altura_visual": round(float(height), 2),
                 "municipio": (subzone_props or {}).get("municipio") or municipio,
                 # 'subzona' solo lleva códigos de la capa oficial
@@ -1032,9 +1057,17 @@ def _classify_building_compliance(height: float, subzone_props: dict[str, Any] |
             "color_semantics": "azul = altura según ancho de rúa (tabla)",
         }
     if limit is None:
+        detail = "Sin subzona asociada o sin altura máxima conocida"
+        prox = [c.get('ordenanza') for c in
+                (subzone_props or {}).get('candidatas_proximas') or []
+                if c.get('ordenanza')]
+        if prox:
+            detail += (' — la capa municipal no cubre esta parcela; '
+                       'ordenanzas colindantes (orientativas): '
+                       + ', '.join(prox))
         return {
             "status": "sin_dato",
-            "detail": "Sin subzona asociada o sin altura máxima conocida",
+            "detail": detail,
             "color_semantics": "gris = sin dato normativo",
         }
     try:

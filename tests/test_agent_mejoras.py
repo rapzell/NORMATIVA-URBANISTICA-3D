@@ -469,6 +469,29 @@ def test_muni_wfs_hueco_lista_ordenanzas_proximas():
     assert r_lejos['candidatas_proximas'] == []
 
 
+def test_subzones_hueco_enriquece_colindantes():
+    """Las ordenanzas colindantes de un hueco de cobertura llevan los
+    parámetros reales extraídos del PDF (referencia orientativa)."""
+    from src import subzones_service
+    fake = {'data_quality': 'unavailable',
+            'error': 'Punto fuera de la capa de ordenanzas SUC',
+            'fuente': 'GeoServer municipal', 'instrumento': 'PXOM',
+            'candidatas_proximas': [{'ordenanza': 'U2',
+                                     'distancia_m': 18}]}
+    ords = {'U2': {'titulo': 'CUARTEIRÓN PECHADO',
+                   'params': {'altura_maxima_m': 22.5}}}
+    with patch('src.muni_wfs.consultar_ordenanza_punto',
+               return_value=fake), \
+         patch('src.normativa_params.extraer_ordenanzas_municipio',
+               return_value=ords):
+        r = subzones_service._ordenanza_municipal_punto(
+            -8.721, 42.233, 'Vigo')
+    assert r['normative_status'] == 'unavailable'
+    c = r['candidatas_proximas'][0]
+    assert c['titulo'] == 'CUARTEIRÓN PECHADO'
+    assert c['altura_maxima_m'] == 22.5
+
+
 def test_muni_wfs_sin_capa_municipio():
     from src import muni_wfs
     assert muni_wfs.consultar_ordenanza_punto(
