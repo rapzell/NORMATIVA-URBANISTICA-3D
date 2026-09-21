@@ -27,9 +27,10 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # Esquema de las props horneadas por edificio: sube la versión cuando
 # cambie (v2: subzona oficial + subzona_piloto + normative_status;
 # v3: ámbito de planeamento API/SUB/SUNC; v4: altura_por_ancho_rua y
-# estado 'altura_tabla' para ordenanzas con altura en tabla) — las
-# cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 4
+# estado 'altura_tabla' para ordenanzas con altura en tabla;
+# v5: candidatas_proximas cuando el punto cae en hueco de la capa) —
+# las cachés antiguas con 'subzona: R-1' quedan invalidadas.
+_PROPS_SCHEMA = 5
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -752,7 +753,8 @@ def _ordenanza_municipal_punto(lon: float, lat: float,
                 'normative_status': 'unavailable',
                 'fuente': r.get('fuente'),
                 'instrumento': r.get('instrumento'),
-                'nota': r.get('error')}
+                'nota': r.get('error'),
+                'candidatas_proximas': r.get('candidatas_proximas')}
     if r.get('ambigua'):
         return {'subzona': None, 'municipio': municipio,
                 'normative_status': 'ambiguous',
@@ -990,6 +992,7 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "ambito": (subzone_props or {}).get("ambito"),
                 "ambito_nombre": (subzone_props or {}).get("ambito_nombre"),
                 "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
+                "candidatas_proximas": (subzone_props or {}).get("candidatas_proximas"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
                 "altura_por_ancho_rua": (subzone_props or {}).get("altura_por_ancho_rua"),
                 "normative_status": (subzone_props or {}).get("normative_status"),

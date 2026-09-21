@@ -450,6 +450,25 @@ def test_muni_wfs_capa_local_cacheada():
     assert 'fuera de la capa' in (r_fuera.get('error') or '').lower()
 
 
+def test_muni_wfs_hueco_lista_ordenanzas_proximas():
+    """Un punto fuera de cobertura pero cerca de polígonos devuelve
+    candidatas por proximidad (orientativas, nunca asignadas)."""
+    from src import muni_wfs
+    feats = _wfs_geojson(['U2'])['features']  # polígono -8.72..-8.715
+    with patch('src.muni_wfs.capa_features', return_value=feats), \
+         patch('src.muni_wfs.requests.get',
+               side_effect=AssertionError('no debe llamar a la red')):
+        # ~33 m al este del borde del polígono → dentro del radio
+        r = muni_wfs.consultar_ordenanza_punto(-8.7146, 42.232, '36057')
+        # ~2 km al este → fuera del radio de proximidad
+        r_lejos = muni_wfs.consultar_ordenanza_punto(-8.69, 42.232, '36057')
+    assert r['data_quality'] == 'unavailable'
+    assert r['ordenanza'] is None if 'ordenanza' in r else True
+    prox = [c['ordenanza'] for c in r['candidatas_proximas']]
+    assert prox == ['U2']
+    assert r_lejos['candidatas_proximas'] == []
+
+
 def test_muni_wfs_sin_capa_municipio():
     from src import muni_wfs
     assert muni_wfs.consultar_ordenanza_punto(

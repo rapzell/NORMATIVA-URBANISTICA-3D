@@ -155,6 +155,45 @@ def _ordenanza_desde_features(lon: float, lat: float,
     } - {''})
 
 
+def _ordenanzas_proximas(lon: float, lat: float, features: list[dict],
+                         campo: str, ine: str | None,
+                         radio_m: float = 60.0) -> list[dict]:
+    """Ordenanzas de los polígonos más cercanos al punto cuando éste
+    cae en un hueco de la capa (parcela sin polígono de ordenanza).
+    Son candidatas *por proximidad* — nunca se asignan: pueden ser de
+    la parcela colindante y no aplicar."""
+    from shapely.geometry import Point
+    pt = Point(lon, lat)
+    radio_deg = radio_m / 111320.0
+    if ine:
+        tree, geoms, feats = _tree(str(ine), features)
+        idx = tree.query(pt.buffer(radio_deg))
+        cand = [(geoms[i].distance(pt) * 111320.0, feats[i])
+                for i in idx]
+    else:
+        from shapely.geometry import shape
+        cand = []
+        for f in features:
+            if not f.get('geometry'):
+                continue
+            try:
+                cand.append((shape(f['geometry']).distance(pt)
+                             * 111320.0, f))
+            except Exception:
+                continue
+    cand.sort(key=lambda x: x[0])
+    out: list[dict] = []
+    for d, f in cand:
+        if d > radio_m:
+            break
+        code = str((f.get('properties') or {}).get(campo) or '').strip()
+        if code and all(c['ordenanza'] != code for c in out):
+            out.append({'ordenanza': code, 'distancia_m': round(d)})
+        if len(out) >= 6:
+            break
+    return out
+
+
 def _fetch_bbox_features(lon: float, lat: float, cfg: dict) -> list[dict]:
     eps = 0.0006  # ~50 m — las features se filtran por contención real
     r = requests.get(cfg['url'], params={
@@ -194,7 +233,9 @@ def consultar_ordenanza_punto(lon: float, lat: float,
                 'error': 'Punto fuera de la capa de ordenanzas SUC',
                 'fuente': cfg['fuente'],
                 'instrumento': cfg['instrumento'],
-                'candidatas': []}
+                'candidatas': [],
+                'candidatas_proximas': _ordenanzas_proximas(
+                    lon, lat, feats, cfg['campo'], ine)}
     return {
         'ordenanza': candidatas[0] if len(candidatas) == 1 else None,
         'candidatas': candidatas,

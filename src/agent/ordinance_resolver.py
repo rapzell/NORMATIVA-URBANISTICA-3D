@@ -253,7 +253,9 @@ def resolver_ordenanza(ctx: dict) -> dict:
     if wfs and wfs.get('data_quality') != 'official' and wfs.get('error'):
         wfs_gap = {'error': wfs.get('error'),
                    'fuente': wfs.get('fuente'),
-                   'instrumento': wfs.get('instrumento')}
+                   'instrumento': wfs.get('instrumento'),
+                   'candidatas_proximas':
+                       wfs.get('candidatas_proximas') or []}
 
     # Nivel 2: código literal en atributos oficiales de la zona
     encontradas: dict[str, str] = {}  # codigo -> origen
@@ -306,11 +308,20 @@ def resolver_ordenanza(ctx: dict) -> dict:
            'origen': 'sin correspondencia automática',
            'ordenanzas_disponibles': sorted(ords)}
     if wfs_gap:
-        res['nota'] = (
+        nota = (
             f"La capa oficial consultada no cubre este punto "
             f"({wfs_gap['error']}). Puede tratarse de un ámbito de "
             f"planeamiento singular o de un hueco de la cartografía — "
             f"verificar en el visor municipal o el planeamiento "
             f"detallado aplicable.")
+        prox = [c['ordenanza']
+                for c in wfs_gap.get('candidatas_proximas') or []
+                if c.get('ordenanza')]
+        if prox:
+            nota += (f" Ordenanzas de polígonos colindantes "
+                     f"(orientativas, no aplicables sin verificación): "
+                     f"{', '.join(prox)}.")
+        res['nota'] = nota
         res['fuente_capa_oficial'] = wfs_gap.get('fuente')
+        res['candidatas_proximas'] = wfs_gap['candidatas_proximas']
     return res

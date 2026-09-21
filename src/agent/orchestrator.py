@@ -521,7 +521,8 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
 
 
 def _respuesta_heuristica(fragmentos: list[dict], calculo: dict | None,
-                          motivo: str, pregunta: str = '') -> str:
+                          motivo: str, pregunta: str = '',
+                          ctx: dict | None = None) -> str:
     # Filtrar fragmentos de baja relevancia: si el mejor BM25 es muy
     # flojo, los documentos probablemente no cubren la pregunta — mejor
     # decirlo que volcar texto irrelevante.
@@ -534,15 +535,22 @@ def _respuesta_heuristica(fragmentos: list[dict], calculo: dict | None,
         else:
             relevantes = [f for f in fragmentos
                           if f.get('score', 0) >= mejor * 0.4][:5]
+    partes = []
+    # Con edificio seleccionado, el contexto oficial (clasificación,
+    # ordenanza resuelta o hueco de cobertura con colindantes) es lo
+    # más útil — va antes del volcado de artículos.
+    if ctx and (ctx.get('clasificacion')
+                or ctx.get('ordenanza_resolucion')):
+        partes += [_respuesta_suelo(ctx), '']
     if not relevantes:
-        partes = ['No se pudo generar una respuesta elaborada '
-                  f'({motivo}) y los documentos normativos indexados '
-                  'no contienen fragmentos claramente relevantes para '
-                  'esta pregunta.']
+        partes.append('No se pudo generar una respuesta elaborada '
+                      f'({motivo}) y los documentos normativos '
+                      'indexados no contienen fragmentos claramente '
+                      'relevantes para esta pregunta.')
     else:
-        partes = ['No se pudo generar una respuesta elaborada '
-                  f'({motivo}), pero estos son los artículos aplicables '
-                  'recuperados de las fuentes oficiales:']
+        partes.append('No se pudo generar una respuesta elaborada '
+                      f'({motivo}), pero estos son los artículos '
+                      'aplicables recuperados de las fuentes oficiales:')
     if calculo and calculo.get('data_quality') != 'unavailable':
         partes.append('\n**Cálculo previo disponible**:')
         for k, v in calculo.items():
@@ -811,7 +819,8 @@ def finalizar_respuesta(prep: dict, respuesta: str | None,
         modo = 'llm'
     else:
         respuesta = _respuesta_heuristica(fragmentos, calculo, motivo,
-                                        pregunta=prep['pregunta'])
+                                        pregunta=prep['pregunta'],
+                                        ctx=ctx)
         modo = 'heuristico'
 
     if ctx.get('advertencias'):
