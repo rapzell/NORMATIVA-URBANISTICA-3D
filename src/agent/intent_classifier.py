@@ -55,6 +55,18 @@ _EDIFICIO_RE = re.compile(
 _VALIDAS = {'CONTEXTO': 'edificio', 'NORMATIVA': 'normativa',
             'CALCULO': 'calculo', 'SALUDO': 'saludo'}
 
+# Vocabulario normativo explícito: si la pregunta ya cayó en el bucket
+# 'normativa' por regex y además usa estos términos, no se consulta al
+# LLM — evita reclasificaciones erróneas tipo 'qué datos normativos
+# tiene este suelo' → CONTEXTO.
+_NORMATIVA_FUERTE_RE = re.compile(
+    r'normativ[ao]s?|ordenanzas?|par[áa]metros?|edificabilidad|'
+    r'ocupaci[óo]n\s+m[áa]x|retranqueos?|recuados?|usos?\s+permitidos?|'
+    r'altura\s+m[áa]xima|frente\s+m[íi]nima|parcela\s+m[íi]nima|'
+    r'fondo\s+edificable|vuelos?|voos?|entreplantas?|'
+    r'piscinas?|cambio\s+de\s+uso|puedo\s+(edificar|construir|hacer)|'
+    r'pueden?\s+edificar|est[áa]\s+permitido|se\s+puede|se\s+pode', re.I)
+
 
 def _detectar_intencion_regex(pregunta: str) -> str:
     q = pregunta or ''
@@ -93,4 +105,6 @@ def clasificar_intencion(pregunta: str, usar_llm: bool = True) -> str:
     base = _detectar_intencion_regex(pregunta)
     if base != 'normativa' or not usar_llm:
         return base
+    if _NORMATIVA_FUERTE_RE.search(pregunta):
+        return 'normativa'
     return clasificar_intencion_llm(pregunta) or 'normativa'

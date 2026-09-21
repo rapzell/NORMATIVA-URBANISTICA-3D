@@ -97,6 +97,32 @@ def _detectar_intencion(pregunta: str) -> str:
     return _detectar_intencion_regex(pregunta)
 
 
+_ORD_PARAM_LABELS = {
+    'ocupacion_max_pct': 'Ocupación máx (%)',
+    'ocupacion_condicional': 'Ocupación condicional',
+    'edificabilidad_max_m2_m2': 'Edificabilidad máx (m²/m²)',
+    'altura_maxima_m': 'Altura máx (m)',
+    'altura_por_ancho_rua': 'Altura según ancho de rúa',
+    'parcela_minima_m2': 'Parcela mínima (m²)',
+    'frente_minima_m': 'Frente mínima de parcela (m)',
+    'retranqueo_frontal_m': 'Retranqueo frontal (m)',
+    'retranqueo_lateral_m': 'Retranqueo lateral (m)',
+    'retranqueo_posterior_m': 'Retranqueo posterior (m)',
+    'voos_max_pct_fachada': 'Voos máx (% superficie fachada)',
+    'entreplantas_max_pct': 'Entreplantas máx (% locales planta baja)',
+    'usos_permitidos': 'Usos permitidos',
+}
+_ORD_META_KEYS = {'ordenanza', 'titulo', 'fuente', 'trazas', 'data_quality',
+                  'ordenanzas_disponibles', 'resolucion', 'origen_resolucion'}
+
+
+def _params_ordenanza_lineas(ord_p: dict) -> list[str]:
+    """Líneas legibles de los parámetros extraídos de la ordenanza."""
+    return [f"· {_ORD_PARAM_LABELS.get(k, k)}: {v}"
+            for k, v in ord_p.items()
+            if k not in _ORD_META_KEYS and v is not None]
+
+
 def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
     """Respuesta determinista sobre el edificio desde las herramientas."""
     cat = ctx.get('catastro') or {}
@@ -149,6 +175,10 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         partes.append(f"**Ordenanza**: {ord_p['ordenanza']}"
                       + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
                       + _origen_ordenanza(ord_p, ctx))
+        pl = _params_ordenanza_lineas(ord_p)
+        if pl:
+            partes.append('**Parámetros (PGOM oficial)**:')
+            partes += pl
     elif ctx.get('ambito'):
         partes.append('**Ámbito de planeamento**: '
                       + _linea_ambito(ctx['ambito']))
@@ -269,6 +299,10 @@ def _respuesta_suelo(ctx: dict) -> str:
         out.append(f"**Ordenanza aplicable**: {ord_p['ordenanza']}"
                    + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
                    + _origen_ordenanza(ord_p, ctx))
+        pl = _params_ordenanza_lineas(ord_p)
+        if pl:
+            out.append('**Parámetros (PGOM oficial)**:')
+            out += pl
         if ctx.get('ambito'):
             out.append('**Ámbito**: ' + _linea_ambito(ctx['ambito']))
     elif ctx.get('ambito'):
@@ -461,28 +495,7 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
             f"- Ordenanza aplicable: {ord_p['ordenanza']}"
             f" {ord_p.get('titulo') or ''} (oficial PGOM,"
             f" {ord_p.get('fuente')})")
-        _ORD_LABELS = {
-            'ocupacion_max_pct': 'Ocupación máx (%)',
-            'ocupacion_condicional': 'Ocupación condicional',
-            'edificabilidad_max_m2_m2': 'Edificabilidad máx (m²/m²)',
-            'altura_maxima_m': 'Altura máx (m)',
-            'altura_por_ancho_rua': 'Altura según ancho de rúa',
-            'parcela_minima_m2': 'Parcela mínima (m²)',
-            'frente_minima_m': 'Frente mínima de parcela (m)',
-            'retranqueo_frontal_m': 'Retranqueo frontal (m)',
-            'retranqueo_lateral_m': 'Retranqueo lateral (m)',
-            'retranqueo_posterior_m': 'Retranqueo posterior (m)',
-            'voos_max_pct_fachada': 'Voos máx (% superficie fachada)',
-            'entreplantas_max_pct': 'Entreplantas máx (% locales planta baja)',
-            'usos_permitidos': 'Usos permitidos',
-        }
-        _ORD_META = {'ordenanza', 'titulo', 'fuente', 'trazas', 'data_quality',
-                     'ordenanzas_disponibles', 'resolucion',
-                     'origen_resolucion'}
-        for k, v in ord_p.items():
-            if k in _ORD_META or v is None:
-                continue
-            lineas.append(f"  · {_ORD_LABELS.get(k, k)}: {v}")
+        lineas += _params_ordenanza_lineas(ord_p)
     elif ctx.get('subzona'):
         lineas.append(f"- Subzona declarada: {ctx['subzona']} "
                       '(sin parámetros oficiales extraídos — indicarlo)')
