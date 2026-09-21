@@ -33,7 +33,7 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v7: estado sin_limite para ordenanzas de conservación;
 # v8: altura_medida_m/altura_osm_m — altura real MDSN por huella) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 11
+_PROPS_SCHEMA = 13
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -888,7 +888,9 @@ def _attach_ambito(props: dict[str, Any], lon: float, lat: float,
         from app.main import _get_ine_for_municipio
         ine = _get_ine_for_municipio(municipio)
         from src.ambitos_service import (ambito_en_punto,
-                                         ambito_oficial_en_punto)
+                                         ambito_oficial_en_punto,
+                                         dotacion_en_punto,
+                                         afeccion_arqueoloxica_en_punto)
         amb = ambito_en_punto(lon, lat, ine)
         if not amb:
             # Fallback: capas oficiales de ámbitos del PXOM 2025 en el
@@ -897,14 +899,33 @@ def _attach_ambito(props: dict[str, Any], lon: float, lat: float,
             # propio: PEP, PERI, PP, API…).
             amb = ambito_oficial_en_punto(lon, lat, ine)
     except Exception:
-        return
-    if not amb:
-        return
-    props["ambito"] = amb.get("codigo")
-    if amb.get("instrumento"):
-        props["ambito_nombre"] = amb["instrumento"]
-    elif amb.get("denominacion"):
-        props["ambito_nombre"] = amb["denominacion"]
+        amb = None
+    if amb:
+        props["ambito"] = amb.get("codigo")
+        if amb.get("instrumento"):
+            props["ambito_nombre"] = amb["instrumento"]
+        elif amb.get("denominacion"):
+            props["ambito_nombre"] = amb["denominacion"]
+    # Dotación oficial (equipamentos, zonas verdes…) — explica los
+    # huecos sin ordenanza: la parcela se rige por la ficha de su
+    # sistema, no por ordenanzas residenciales.
+    try:
+        dot = dotacion_en_punto(lon, lat, ine)
+    except Exception:
+        dot = None
+    if dot:
+        partes = [p for p in (dot.get('sistema'), dot.get('tipo'),
+                              dot.get('titularidade'), dot.get('estado'))
+                  if p]
+        props["dotacion"] = ' — '.join(partes) if partes else 'Dotación'
+        props["dotacion_detalle"] = dot
+    # Contorno arqueolóxico del catálogo — afección oficial.
+    try:
+        arq = afeccion_arqueoloxica_en_punto(lon, lat, ine)
+    except Exception:
+        arq = None
+    if arq:
+        props["contorno_arqueoloxico"] = arq.get('codigos')
 
 
 def find_subzone_by_name(municipio: str, subzona: str) -> dict[str, Any] | None:
@@ -1000,6 +1021,9 @@ def _attach_mdsn_heights(features: list[dict[str, Any]],
                 'altura_maxima_m': p.get('altura_maxima_subzona_m'),
                 'altura_por_ancho_rua': p.get('altura_por_ancho_rua'),
                 'candidatas_proximas': p.get('candidatas_proximas'),
+                'ambito': p.get('ambito'),
+                'ambito_nombre': p.get('ambito_nombre'),
+                'dotacion': p.get('dotacion'),
             })
             p['cumplimiento_altura'] = comp['status']
             p['cumplimiento_detalle'] = comp['detail']
@@ -1118,6 +1142,9 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "titulo_ordenanza": (subzone_props or {}).get("titulo"),
                 "ambito": (subzone_props or {}).get("ambito"),
                 "ambito_nombre": (subzone_props or {}).get("ambito_nombre"),
+                "dotacion": (subzone_props or {}).get("dotacion"),
+                "dotacion_detalle": (subzone_props or {}).get("dotacion_detalle"),
+                "contorno_arqueoloxico": (subzone_props or {}).get("contorno_arqueoloxico"),
                 "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
                 "candidatas_proximas": (subzone_props or {}).get("candidatas_proximas"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
@@ -1500,13 +1527,25 @@ def _classify_building_compliance(height: float, subzone_props: dict[str, Any] |
         }
     if limit is None:
         detail = "Sin subzona asociada o sin altura máxima conocida"
-        prox = [c.get('ordenanza') for c in
-                (subzone_props or {}).get('candidatas_proximas') or []
-                if c.get('ordenanza')]
-        if prox:
-            detail += (' — la capa municipal no cubre esta parcela; '
-                       'ordenanzas colindantes (orientativas): '
-                       + ', '.join(prox))
+        amb = (subzone_props or {}).get('ambito')
+        dot = (subzone_props or {}).get('dotacion')
+        if amb:
+            detail = (f"Ámbito {amb} — rige por su propio instrumento "
+                      f"({(subzone_props or {}).get('ambito_nombre') or 'planeamento singular'}); "
+                      "los parámetros salen de su ficha, no de las "
+                      "ordenanzas generales")
+        elif dot:
+            detail = (f"Parcela dotacional oficial ({dot}) — se rige "
+                      "por la ficha de su sistema, no por ordenanzas "
+                      "residenciales")
+        else:
+            prox = [c.get('ordenanza') for c in
+                    (subzone_props or {}).get('candidatas_proximas') or []
+                    if c.get('ordenanza')]
+            if prox:
+                detail += (' — la capa municipal no cubre esta parcela; '
+                           'ordenanzas colindantes (orientativas): '
+                           + ', '.join(prox))
         return {
             "status": "sin_dato",
             "detail": detail,

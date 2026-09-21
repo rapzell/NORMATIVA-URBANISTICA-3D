@@ -265,8 +265,19 @@ _ARCGIS_AMBITOS = {
     '36057': {
         'base': ('https://services9.arcgis.com/ss3qikvq575kYKRJ'
                  '/arcgis/rest/services'),
-        'capas': ['36057_PXOM_202502_AD01_5APR',
-                  '36057_PXOM_202502_AD01_7API'],
+        'capas': {
+            'ambitos': ['36057_PXOM_202502_AD01_5APR',
+                        '36057_PXOM_202502_AD01_7API'],
+            # Ordenanzas SUC de la aprobación definitiva PXOM 2025 —
+            # más autoritativa y completa que la WFS municipal 2021.
+            'ord2025': ['36057_PXOM_202502_AD01_4ORDSUC_nome'],
+            # Dotaciones (equipamentos, zonas verdes…) — explican los
+            # huecos sin ordenanza: una parcela dotacional no lleva
+            # ordenanza residencial, se rige por su ficha de sistema.
+            'dotaciones': ['36057_PXOM_202502_AD01_2DOTPOL_descri'],
+            # Contornos arqueolóxicos del catálogo — afección.
+            'arqueoloxia': ['36057_PXOM_202502_AD01_CAT_CONTORNO_ARQLX'],
+        },
     },
 }
 _ARCGIS_TTL_S = 30 * 24 * 3600
@@ -279,20 +290,46 @@ def _arcgis_cache_path(ine: str, svc: str):
     return Path('datos/cache/arcgis_ambitos') / f'{ine}_{svc}.geojson'
 
 
-def _arcgis_features(ine: str | None) -> list[dict]:
-    """Features de las capas de ámbitos del PXOM (ArcGIS Concello),
-    cacheadas en disco 30 días. ``[]`` si el municipio no tiene capas
-    configuradas o el servicio falla."""
+def _arcgis_download(base: str, svc: str) -> dict | None:
+    """Descarga paginada de una capa FeatureServer como GeoJSON —
+    ``maxRecordCount`` (2000) exige ``resultOffset`` para capas
+    grandes como 4ORDSUC (~5.300 polígonos)."""
     import requests
+    feats: list[dict] = []
+    offset = 0
+    while True:
+        r = requests.get(
+            f"{base}/{svc}/FeatureServer/0/query",
+            params={'where': '1=1', 'outFields': '*', 'f': 'geojson',
+                    'outSR': '4326', 'resultRecordCount': '2000',
+                    'resultOffset': str(offset)},
+            timeout=90)
+        page = (r.json() or {}).get('features') or []
+        feats.extend(page)
+        if len(page) < 2000:
+            break
+        offset += len(page)
+        if offset > 100000:
+            break
+    return {'type': 'FeatureCollection', 'features': feats} if feats \
+        else None
+
+
+def _arcgis_features(ine: str | None,
+                     grupo: str = 'ambitos') -> list[dict]:
+    """Features de un grupo de capas del PXOM (ArcGIS Concello),
+    cacheadas en disco 30 días. ``[]`` si el municipio no tiene el
+    grupo configurado o el servicio falla."""
     cfg = _ARCGIS_AMBITOS.get(str(ine or ''))
     if not cfg:
         return []
-    key = str(ine)
+    capas = (cfg.get('capas') or {}).get(grupo) or []
+    key = f'{ine}:{grupo}'
     if key in _ARCGIS_FEATS:
         return _ARCGIS_FEATS[key]
     feats: list[dict] = []
-    for svc in cfg['capas']:
-        path = _arcgis_cache_path(key, svc)
+    for svc in capas:
+        path = _arcgis_cache_path(str(ine), svc)
         data = None
         if path.exists() and \
                 (time.time() - path.stat().st_mtime) < _ARCGIS_TTL_S:
@@ -302,18 +339,13 @@ def _arcgis_features(ine: str | None) -> list[dict]:
                 data = None
         if data is None:
             try:
-                r = requests.get(
-                    f"{cfg['base']}/{svc}/FeatureServer/0/query",
-                    params={'where': '1=1', 'outFields': '*',
-                            'f': 'geojson', 'outSR': '4326'},
-                    timeout=60)
-                data = r.json()
-                if data.get('features'):
+                data = _arcgis_download(cfg['base'], svc)
+                if data and data.get('features'):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(json.dumps(data), encoding='utf-8')
             except Exception:
                 continue
-        for f in data.get('features') or []:
+        for f in (data or {}).get('features') or []:
             if f.get('geometry'):
                 (f.setdefault('properties', {}))['_svc'] = svc
                 feats.append(f)
@@ -321,8 +353,9 @@ def _arcgis_features(ine: str | None) -> list[dict]:
     return feats
 
 
-def _arcgis_tree(ine: str, feats: list[dict]):
-    key = str(ine)
+def _arcgis_tree(ine: str, feats: list[dict],
+                 grupo: str = 'ambitos'):
+    key = f'{ine}:{grupo}'
     hit = _ARCGIS_TREE.get(key)
     if hit and hit[0] is feats:
         return hit[1], hit[2], hit[3]
@@ -340,47 +373,161 @@ def _arcgis_tree(ine: str, feats: list[dict]):
     return tree, geoms, kept
 
 
+def _arcgis_poligonos_en_punto(lon: float, lat: float, ine: str | None,
+                             grupo: str) -> list[dict]:
+    """Properties de los polígonos del grupo que contienen el punto."""
+    feats = _arcgis_features(ine, grupo)
+    if not feats:
+        return []
+    tree, geoms, kept = _arcgis_tree(str(ine), feats, grupo)
+    if tree is None:
+        return []
+    try:
+        from shapely.geometry import Point
+        pt = Point(lon, lat)
+        return [kept[int(i)].get('properties') or {}
+                for i in tree.query(pt) if geoms[int(i)].contains(pt)]
+    except Exception:
+        return []
+
+
 def ambito_oficial_en_punto(lon: float, lat: float,
                             ine: str | None) -> dict | None:
     """Ámbito oficial del PXOM (ArcGIS FeatureServer del Concello) que
     contiene el punto — cubre los huecos de la capa de ordenanzas
     generales donde la zona se rige por instrumento propio (PEP, PERI,
     PP, API…). ``None`` si no hay capa o el punto cae fuera."""
-    feats = _arcgis_features(ine)
+    for p in _arcgis_poligonos_en_punto(lon, lat, ine, 'ambitos'):
+        figura = str(p.get('figura') or '').strip().upper()
+        cod = str(p.get('cod') or '').strip()
+        if not cod:
+            continue
+        codigo = f'{figura}-{cod}' if figura else f'API-{cod}'
+        return {
+            'codigo': codigo,
+            'tipo': 'ambito',
+            'tipo_instrumento': figura or 'API',
+            'instrumento': str(p.get('nome') or '').strip(),
+            'figura': figura or 'API',
+            'cat': p.get('cat'),
+            'edificabilidad': p.get('edif'),
+            'sup_m2': p.get('sup'),
+            'enl_ficha': p.get('enl_ficha'),
+            'observ': p.get('observ'),
+            'data_quality': 'official',
+            'fuente': ('ArcGIS Concello de Vigo — PXOM 2025 '
+                       'aprobación definitiva'),
+            'capa': p.get('_svc'),
+        }
+    return None
+
+
+def ordenanza_2025_en_punto(lon: float, lat: float,
+                            ine: str | None) -> dict | None:
+    """Ordenanza SUC del PXOM 2025 definitivo (capa ArcGIS
+    ``4ORDSUC_nome``) que contiene el punto. Devuelve el código,
+    nombre y parámetros declarados en la capa — ``None`` si el punto
+    cae fuera de su cobertura (ámbito propio, dotación o viario)."""
+    hits = [p for p in _arcgis_poligonos_en_punto(lon, lat, ine,
+                                                'ord2025')
+            if str(p.get('ordenanza') or '').strip()]
+    if not hits:
+        return None
+    p = hits[0]
+    return {
+        'ordenanza': str(p.get('ordenanza')).strip(),
+        'candidatas': sorted({str(h.get('ordenanza')).strip()
+                              for h in hits}),
+        'ambigua': len({str(h.get('ordenanza')).strip()
+                        for h in hits}) > 1,
+        'nome': str(p.get('nome') or '').strip(),
+        'altura': str(p.get('altura') or '').strip(),
+        'observ': str(p.get('observ') or '').strip(),
+        'fondo': str(p.get('fondo') or '').strip(),
+        'sup_m2': p.get('sup'),
+        'data_quality': 'official',
+        'fuente': ('ArcGIS Concello de Vigo — PXOM 2025 '
+                   'aprobación definitiva'),
+        'capa': p.get('_svc'),
+    }
+
+
+def ordenanzas_2025_proximas(lon: float, lat: float, ine: str | None,
+                             radio_m: float = 250.0) -> list[dict]:
+    """Códigos de ordenanza de la capa definitiva 2025 más cercanos al
+    punto (para huecos: dotaciones, viario, ámbitos). Orientativos."""
+    feats = _arcgis_features(ine, 'ord2025')
     if not feats:
-        return None
-    tree, geoms, kept = _arcgis_tree(str(ine), feats)
+        return []
+    tree, geoms, kept = _arcgis_tree(str(ine), feats, 'ord2025')
     if tree is None:
-        return None
+        return []
     try:
         from shapely.geometry import Point
         pt = Point(lon, lat)
-        for i in tree.query(pt):
-            g = geoms[int(i)]
-            if not g.contains(pt):
-                continue
-            p = kept[int(i)].get('properties') or {}
-            figura = str(p.get('figura') or '').strip().upper()
-            cod = str(p.get('cod') or '').strip()
-            if not cod:
-                continue
-            codigo = f'{figura}-{cod}' if figura else f'API-{cod}'
-            return {
-                'codigo': codigo,
-                'tipo': 'ambito',
-                'tipo_instrumento': figura or 'API',
-                'instrumento': str(p.get('nome') or '').strip(),
-                'figura': figura or 'API',
-                'cat': p.get('cat'),
-                'edificabilidad': p.get('edif'),
-                'sup_m2': p.get('sup'),
-                'enl_ficha': p.get('enl_ficha'),
-                'observ': p.get('observ'),
-                'data_quality': 'official',
-                'fuente': ('ArcGIS Concello de Vigo — PXOM 2025 '
-                           'aprobación definitiva'),
-                'capa': p.get('_svc'),
-            }
+        idx = tree.query(pt.buffer(radio_m / 111320.0))
+        cand = sorted((geoms[int(i)].distance(pt) * 111320.0,
+                       str((kept[int(i)].get('properties') or {})
+                           .get('ordenanza') or '').strip())
+                      for i in idx)
+        out: list[dict] = []
+        for d, code in cand:
+            if d > radio_m:
+                break
+            if code and all(c['ordenanza'] != code for c in out):
+                out.append({'ordenanza': code, 'distancia_m': round(d)})
+            if len(out) >= 6:
+                break
+        return out
     except Exception:
+        return []
+
+
+def dotacion_en_punto(lon: float, lat: float,
+                      ine: str | None) -> dict | None:
+    """Dotación oficial del PXOM 2025 (capa ``2DOTPOL``) que contiene
+    el punto — sistemas de equipamentos, zonas verdes, etc. Una
+    parcela dotacional explica por qué no lleva ordenanza residencial:
+    se rige por la ficha de su sistema."""
+    hits = _arcgis_poligonos_en_punto(lon, lat, ine, 'dotaciones')
+    if not hits:
         return None
-    return None
+    # Preferir la feature más específica (tipo distinto de 'na')
+    hits.sort(key=lambda p: str(p.get('tipo') or '') in ('', 'na'))
+    p = hits[0]
+    tipo = str(p.get('tipo_desc') or '').strip()
+    sistema = str(p.get('sistema_de') or '').strip()
+    pb_pv = str(p.get('pb_pv_desc') or '').strip()
+    ex_ob = {'Ex': 'existente', 'Ob': 'en ordenación',
+             'Pr': 'programado'}.get(str(p.get('ex_ob') or '').strip(),
+                                     str(p.get('ex_ob') or '').strip())
+    return {
+        'sistema': sistema or None,
+        'tipo': tipo if tipo.lower() != 'na' else None,
+        'titularidade': pb_pv if pb_pv.lower() != 'na' else None,
+        'estado': ex_ob or None,
+        'sup_m2': p.get('sup'),
+        'data_quality': 'official',
+        'fuente': ('ArcGIS Concello de Vigo — PXOM 2025 '
+                   'aprobación definitiva'),
+        'capa': p.get('_svc'),
+    }
+
+
+def afeccion_arqueoloxica_en_punto(lon: float, lat: float,
+                                   ine: str | None) -> dict | None:
+    """Contorno arqueolóxico del catálogo PXOM 2025 que contiene el
+    punto — devuelve los códigos OPSA afectados o ``None``."""
+    codigos = sorted({
+        str(p.get('cod_opsa') or '').strip()
+        for p in _arcgis_poligonos_en_punto(lon, lat, ine, 'arqueoloxia')
+    } - {''})
+    if not codigos:
+        return None
+    return {
+        'codigos': codigos,
+        'data_quality': 'official',
+        'fuente': ('ArcGIS Concello de Vigo — PXOM 2025 '
+                   'aprobación definitiva'),
+        'capa': '36057_PXOM_202502_AD01_CAT_CONTORNO_ARQLX',
+    }

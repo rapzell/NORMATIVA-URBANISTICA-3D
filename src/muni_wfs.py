@@ -285,16 +285,40 @@ def _fetch_bbox_features(lon: float, lat: float, cfg: dict) -> list[dict]:
 
 def consultar_ordenanza_punto(lon: float, lat: float,
                               ine: str | None) -> dict | None:
-    """Ordenanza SUC oficial del punto vía WFS municipal.
+    """Ordenanza SUC oficial del punto.
 
-    Primero la copia local cacheada de la capa; si no hay, consulta
-    WFS puntual. Devuelve ``{ordenanza, candidatas, data_quality,
-    fuente, instrumento}`` o ``None`` si el municipio no tiene capa —
-    nunca inventa.
+    Primero la capa definitiva del PXOM 2025 (ArcGIS Concello, cuando
+    existe — Vigo); si no cubre el punto, la capa WFS municipal de la
+    aprobación inicial 2021. Devuelve ``{ordenanza, candidatas,
+    data_quality, fuente, instrumento}`` o ``None`` si el municipio no
+    tiene capa — nunca inventa.
     """
     cfg = ORDSUC_LAYERS.get(str(ine or ''))
     if not cfg or lon is None or lat is None:
         return None
+    # Capa definitiva 4ORDSUC del PXOM 2025 (ArcGIS Concello) —
+    # prevalece sobre la de aprobación inicial 2021.
+    try:
+        from src.ambitos_service import (ordenanza_2025_en_punto,
+                                         ordenanzas_2025_proximas)
+        hit = ordenanza_2025_en_punto(lon, lat, ine)
+    except Exception:
+        hit = None
+    if hit:
+        return {
+            'ordenanza': None if hit.get('ambigua') else
+                         hit.get('ordenanza'),
+            'candidatas': hit.get('candidatas') or [],
+            'ambigua': bool(hit.get('ambigua')),
+            'data_quality': 'official',
+            'fuente': hit.get('fuente'),
+            'instrumento': ('Ordenanzas SUC — PXOM 2025 aprobación '
+                            'definitiva (36057_PXOM_202502_AD01_'
+                            '4ORDSUC)'),
+            'campo': 'ordenanza',
+            'nota': ('Cartografía oficial de la aprobación definitiva '
+                     'del PXOM 2025 publicada por el Concello.'),
+        }
     feats = capa_features(ine)
     if not feats:
         try:
@@ -306,13 +330,22 @@ def consultar_ordenanza_punto(lon: float, lat: float,
     candidatas = _ordenanza_desde_features(
         lon, lat, feats, cfg['campo'], ine=ine)
     if not candidatas:
+        # Colindantes desde la capa definitiva 2025 (más autoritativa);
+        # si no está disponible, desde la capa 2021.
+        proximas: list[dict] = []
+        try:
+            proximas = ordenanzas_2025_proximas(lon, lat, ine)
+        except Exception:
+            proximas = []
+        if not proximas:
+            proximas = _ordenanzas_proximas(
+                lon, lat, feats, cfg['campo'], ine)
         return {'data_quality': 'unavailable',
                 'error': 'Punto fuera de la capa de ordenanzas SUC',
                 'fuente': cfg['fuente'],
                 'instrumento': cfg['instrumento'],
                 'candidatas': [],
-                'candidatas_proximas': _ordenanzas_proximas(
-                    lon, lat, feats, cfg['campo'], ine)}
+                'candidatas_proximas': proximas}
     return {
         'ordenanza': candidatas[0] if len(candidatas) == 1 else None,
         'candidatas': candidatas,

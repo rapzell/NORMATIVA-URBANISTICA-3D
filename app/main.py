@@ -3468,6 +3468,17 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
           ctx['ambito'] = amb
         elif amb and amb.get('codigo'):
           ctx['ambito_detectado'] = amb['codigo']
+      # Dotación oficial PXOM 2025 (equipamentos, verde…) — explica los
+      # huecos de ordenanza: la parcela se rige por la ficha del sistema.
+      if lon is not None and lat is not None and ine_amb:
+        from src.ambitos_service import (dotacion_en_punto,
+                                         afeccion_arqueoloxica_en_punto)
+        dot = dotacion_en_punto(lon, lat, ine_amb)
+        if dot:
+          ctx['dotacion'] = dot
+        arq = afeccion_arqueoloxica_en_punto(lon, lat, ine_amb)
+        if arq:
+          ctx['contorno_arqueoloxico'] = arq
     except Exception:
       pass
     # Datos del edificio (altura medida MDSN/LiDAR, Catastro BU)
