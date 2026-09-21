@@ -92,6 +92,8 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
 | Documentos oficiales SIOTUGA (PDFs normativa, sesión+token) | `src/siotuga/document_client.py` |
 | Ordenanza SUC por punto vía capa municipal oficial (Vigo GeoServer, caché local + STRtree) | `src/muni_wfs.py` |
+| PXOM 2025 aprobación definitiva (NU + fichas de ámbitos; descarga selectiva del ZIP de 12,8 GB por HTTP Range) | `datos/normativa/36057/pxom2025/`, `scripts/download_pxom2025_nu.py` |
+| Ancho de rúa estimado desde OSM (fachadas opuestas ⊥ al vial más próximo; resuelve la tabla de altura U2 → `ancho_rua_estimado_m`/`altura_aplicable_m`, siempre `estimated`) | `src/subzones_service.py` → `_estimate_street_widths` |
 | RAG normativo sobre PDFs oficiales (índice BM25 + citas) | `src/normativa_rag.py` |
 | Cliente Catastro (OVC/INSPIRE/BU/ATOM) | `src/catastro/client.py` |
 | Alturas LiDAR + huellas Overture | `src/building_data/height_extractor.py` |

@@ -28,9 +28,10 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # cambie (v2: subzona oficial + subzona_piloto + normative_status;
 # v3: ámbito de planeamento API/SUB/SUNC; v4: altura_por_ancho_rua y
 # estado 'altura_tabla' para ordenanzas con altura en tabla;
-# v5: candidatas_proximas cuando el punto cae en hueco de la capa) —
-# las cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 5
+# v5: candidatas_proximas cuando el punto cae en hueco de la capa;
+# v6: plantas_estimadas + ancho_rua_estimado/altura_aplicable) — las
+# cachés antiguas con 'subzona: R-1' quedan invalidadas.
+_PROPS_SCHEMA = 6
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -806,6 +807,9 @@ def _ordenanza_municipal_punto(lon: float, lat: float,
         'nota': r.get('nota'),
         'altura_maxima_m': params.get('altura_maxima_m'),
         'altura_por_ancho_rua': params.get('altura_por_ancho_rua'),
+        'altura_por_ancho_rua_tabla': (((found or {}).get('trazas') or {})
+                                      .get('altura_por_ancho_rua') or {})
+                                     .get('tabla'),
         'ocupacion_max': params.get('ocupacion_max_pct'),
         'ocupacion_condicional': params.get('ocupacion_condicional'),
         'edificabilidad_max_m2_m2': params.get('edificabilidad_max_m2_m2'),
@@ -1020,6 +1024,7 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "candidatas_proximas": (subzone_props or {}).get("candidatas_proximas"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
                 "altura_por_ancho_rua": (subzone_props or {}).get("altura_por_ancho_rua"),
+                "altura_por_ancho_rua_tabla": (subzone_props or {}).get("altura_por_ancho_rua_tabla"),
                 "normative_status": (subzone_props or {}).get("normative_status"),
                 "normative_source": (subzone_props or {}).get("fuente"),
                 "cumplimiento_altura": compliance["status"],
@@ -1030,10 +1035,207 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
         })
         if len(features) >= max(1, int(limit)):
             break
+
+    # Ancho de rúa estimado desde OSM — solo cuando hay ordenanzas
+    # con tabla de altura por ancho (U2 y similares). Permite resolver
+    # la fila aplicable; siempre marcado como estimado.
+    if any((f.get('properties') or {}).get('altura_por_ancho_rua_tabla')
+           for f in features):
+        try:
+            widths = _estimate_street_widths(features, lon, lat,
+                                             delta * 0.22)
+            for f in features:
+                p = f.get('properties') or {}
+                w = widths.get(p.get('osm_id'))
+                if not w:
+                    continue
+                p['ancho_rua_estimado_m'] = w
+                fila = _resolve_fila_tabla(
+                    p.get('altura_por_ancho_rua_tabla'), w)
+                if fila:
+                    p['altura_aplicable_m'] = fila.get('altura_m')
+                    p['plantas_aplicables'] = fila.get('plantas')
+                    if (fila.get('altura_m')
+                            and p.get('cumplimiento_altura')
+                            == 'altura_tabla'):
+                        p['cumplimiento_detalle'] += (
+                            f' — con ancho estimado ~{w} m aplicaría '
+                            f"{fila.get('plantas')} plantas / "
+                            f"{fila.get('altura_m')} m (verificar "
+                            'alineaciones oficiales)')
+        except Exception:
+            pass
     result = {"type": "FeatureCollection", "features": features}
     _OVERPASS_CACHE[cache_key] = result
     _overpass_disk_write(muni_key, int(limit), result)
     return result
+
+
+def _fetch_overpass_json(query: str) -> dict | None:
+    """Consulta Overpass con mirrors en paralelo; None si todos fallan."""
+    def _fetch(overpass_url: str):
+        req = Request(
+            overpass_url,
+            data=urlencode({"data": query}).encode("utf-8"),
+            headers={"User-Agent": "NormativaGalicia/1.0",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    pool = ThreadPoolExecutor(max_workers=len(_OVERPASS_URLS))
+    futures = [pool.submit(_fetch, u) for u in _OVERPASS_URLS]
+    try:
+        for future in as_completed(futures):
+            try:
+                return future.result()
+            except Exception:
+                continue
+    finally:
+        for future in futures:
+            future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+    return None
+
+
+_HIGHWAYS_CACHE: dict = {}
+
+
+def _highways_for_bbox(lon: float, lat: float, qd: float) -> list:
+    """Polilíneas de viales OSM en el bbox (cache en memoria)."""
+    key = (round(lon, 4), round(lat, 4), round(qd, 5))
+    if key in _HIGHWAYS_CACHE:
+        return _HIGHWAYS_CACHE[key]
+    south, west, north, east = lat - qd, lon - qd, lat + qd, lon + qd
+    query = (
+        "[out:json][timeout:25];"
+        "way['highway'~'^(primary|secondary|tertiary|residential|"
+        "unclassified|living_street|pedestrian|service|trunk)$']"
+        f"({south},{west},{north},{east});"
+        "out geom;"
+    )
+    raw = _fetch_overpass_json(query)
+    lines = []
+    for el in (raw or {}).get('elements', []):
+        geom = el.get('geometry')
+        if geom and len(geom) >= 2:
+            lines.append([[n['lon'], n['lat']] for n in geom])
+    _HIGHWAYS_CACHE[key] = lines
+    return lines
+
+
+def _estimate_street_widths(features: list[dict],
+                            lon: float, lat: float, qd: float) -> dict:
+    """Ancho estimado del espazo público frontal a cada edificio.
+
+    Método: se proyecta el centroide sobre el vial OSM más próximo, se
+    traza una perpendicular de ±60 m a la calle en ese punto y se mide
+    la distancia a la fachada más próxima a cada lado. La suma aproxima
+    el «ancho do espazo público» de la tabla de alturas U2 — dato
+    ``estimated``, nunca oficial (el oficial sale de las alineaciones
+    del PXOM, que no cubren todo el casco consolidado).
+    """
+    try:
+        from pyproj import Transformer
+        from shapely.geometry import LineString, Polygon
+        from shapely.strtree import STRtree
+    except ImportError:
+        return {}
+    fwd = Transformer.from_crs('EPSG:4326', 'EPSG:25829', always_xy=True)
+
+    def proj(coords):
+        return [fwd.transform(x, y) for x, y in coords]
+
+    geoms, ids = [], []
+    for f in features:
+        try:
+            ring = (f.get('geometry') or {}).get('coordinates', [[]])[0]
+            if len(ring) >= 4:
+                geoms.append(Polygon(proj(ring)))
+                ids.append((f.get('properties') or {}).get('osm_id'))
+        except Exception:
+            continue
+    roads = []
+    for line in _highways_for_bbox(lon, lat, qd):
+        try:
+            roads.append(LineString(proj(line)))
+        except Exception:
+            continue
+    if not geoms or not roads:
+        return {}
+    tree = STRtree(geoms)
+    road_tree = STRtree(roads)
+    out: dict = {}
+    for i, poly in enumerate(geoms):
+        try:
+            c = poly.centroid
+            li = road_tree.nearest(c)
+            road = roads[li]
+            d_along = road.project(c)
+            p = road.interpolate(d_along)
+            p1 = road.interpolate(max(0.0, d_along - 0.5))
+            p2 = road.interpolate(min(road.length, d_along + 0.5))
+            vx, vy = p2.x - p1.x, p2.y - p1.y
+            n = (vx * vx + vy * vy) ** 0.5
+            if n < 1e-6:
+                continue
+            ux, uy = -vy / n, vx / n   # perpendicular unitaria
+            half = 60.0
+            cross = LineString([(p.x - ux * half, p.y - uy * half),
+                                (p.x + ux * half, p.y + uy * half)])
+            # Ancho = distancia de la fachada propia a la fachada
+            # enfrente (lado opuesto de la calle).
+            side_self = (c.x - p.x) * ux + (c.y - p.y) * uy
+            d_self = d_opp = None
+            for j in tree.query(cross):
+                inter = geoms[j].boundary.intersection(cross)
+                if inter.is_empty:
+                    continue
+                pts = []
+                if inter.geom_type == 'Point':
+                    pts = [inter]
+                elif inter.geom_type == 'MultiPoint':
+                    pts = list(inter.geoms)
+                elif inter.geom_type in ('LineString',
+                                         'MultiLineString'):
+                    seq = (inter.geoms if inter.geom_type
+                           == 'MultiLineString' else [inter])
+                    for seg in seq:
+                        pts += [seg.interpolate(0),
+                                seg.interpolate(1.0, normalized=True)]
+                for pt in pts:
+                    dd = pt.distance(p)
+                    if dd < 1.0:
+                        continue
+                    side = (pt.x - p.x) * ux + (pt.y - p.y) * uy
+                    if j == i:
+                        if side * side_self > 0:
+                            d_self = dd if d_self is None \
+                                else min(d_self, dd)
+                    elif side * side_self < 0:
+                        d_opp = dd if d_opp is None else min(d_opp, dd)
+            if d_self and d_opp:
+                w = d_self + d_opp
+                if 3.0 <= w <= 45.0:
+                    out[ids[i]] = round(w, 1)
+        except Exception:
+            continue
+    return out
+
+
+def _resolve_fila_tabla(tabla: list[dict] | None,
+                        ancho: float) -> dict | None:
+    """Fila de la tabla «ancho de rúa → plantas/altura» aplicable al
+    ancho dado."""
+    if not tabla or ancho is None:
+        return None
+    for r in sorted(tabla, key=lambda x: (x.get('ancho_min_m') or 0)):
+        lo = r.get('ancho_min_m') or 0.0
+        hi = r.get('ancho_max_m')
+        if ancho >= lo and (hi is None or ancho < hi):
+            return r
+    return None
 
 
 def _find_subzone_for_ring(coords: list[list[float]], municipio: str | None) -> dict[str, Any] | None:

@@ -2032,7 +2032,12 @@ async function selectBuilding(feature) {
     : (props.subzona_piloto ? props.subzona_piloto + ' (piloto)' : 'No asociada');
   const alturaSubzona = props.altura_maxima_subzona_m != null
     ? `${props.altura_maxima_subzona_m} m`
-    : (props.altura_por_ancho_rua ? `según ancho de rúa: ${props.altura_por_ancho_rua}` : 'No disponible');
+    : (props.altura_por_ancho_rua
+       ? `según ancho de rúa: ${props.altura_por_ancho_rua}` +
+         (props.altura_aplicable_m != null
+          ? ` → aplicable ≈${props.altura_aplicable_m} m (ancho est. ~${props.ancho_rua_estimado_m} m)`
+          : '')
+       : 'No disponible');
   const status = props.cumplimiento_altura || 'sin_dato';
   const pilot = props.normative_status === 'pilot';
   let footprint = null;
@@ -2063,6 +2068,7 @@ async function selectBuilding(feature) {
   }
   if (props.ambito) html += `<div class="info-row"><span class="key">Ámbito de planeamento</span><span class="val">${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''} ${qualityBadge('official')}</span></div>`;
   html += `<div class="info-row"><span class="key">${pilot ? 'Límite de altura piloto' : 'Altura máx. subzona'}</span><span class="val">${escapeHtml(alturaSubzona)}</span></div>`;
+  if (props.ancho_rua_estimado_m != null) html += `<div class="info-row"><span class="key">Ancho de rúa</span><span class="val">~${escapeHtml(String(props.ancho_rua_estimado_m))} m${qualityBadge('estimated')}</span></div>`;
   if (props.normative_source) html += `<div class="info-row"><span class="key">Fuente del límite</span><span class="val">${escapeHtml(props.normative_source)}</span></div>`;
   const osmId = String(props.osm_id || '');
   html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—'}</span></div>`;
