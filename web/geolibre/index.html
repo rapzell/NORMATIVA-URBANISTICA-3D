@@ -2343,7 +2343,14 @@ async function selectBuilding(feature) {
     const causaTxt = exceso <= 1.5
       ? 'exceso marginal — remate de cubierta no computable, tolerancia del raster nDSM o medición en pendiente (el límite se cuenta desde la rasante)'
       : 'exceso considerable — habitualmente el inmueble es anterior al planeamiento vigente (fuera de ordenación consolidada, situación legal) o la huella incluye un elemento alto; si la obra es posterior al plan, verificar licencia';
-    html += `<div class="hint" style="color:#f85149;margin-bottom:6px">⚠ La altura medida (${props.altura_medida_m} m) supera el ${limiteLbl} (${limiteEf} m) — ${causaTxt}. Verificar en ficha urbanística.</div>`;
+    html += `<div class="hint" id="altura-warning" style="color:#f85149;margin-bottom:6px">⚠ La altura medida (${props.altura_medida_m} m) supera el ${limiteLbl} (${limiteEf} m) — ${causaTxt}.</div>`;
+  }
+  // Uso no residencial (school, iglesia, hospital…) en ordenanza de
+  // vivenda: su volumen no responde a la ordenanza residencial —
+  // suele ser equipamiento anterior al plan o con condiciones propias.
+  const usoNoResi = ['school','kindergarten','university','college','hospital','clinic','church','civic','public','sports_hall'];
+  if (props.subzona && /^U/i.test(String(props.subzona)) && usoNoResi.includes(String(props.building || '').toLowerCase())) {
+    html += `<div class="hint" style="margin:-4px 0 6px">Uso no residencial (<b>${escapeHtml(buildingTypeLabel(props.building))}</b>) en ordenanza ${escapeHtml(props.subzona)} de vivienda — su volumen suele ser anterior al plan o regirse por condiciones propias de equipamiento; la comparación de altura es orientativa.</div>`;
   }
   const osmId = String(props.osm_id || '');
   html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—'}</span></div>`;
@@ -2429,6 +2436,18 @@ async function selectBuilding(feature) {
         const nota = `El nDSM mide ${props.altura_medida_m} m pero Catastro declara ${nPlantas} plantas (~${Math.round(nPlantas * 3.2)} m) — la diferencia suele ser un elemento alto dentro de la huella (torre, remate) o una huella OSM solapada con un edificio contiguo.`;
         if (ph) ph.textContent += ' ' + nota;
         else if (pv) pv.closest('.info-row').insertAdjacentHTML('afterend', `<div class="hint" style="margin:-4px 0 6px">${escapeHtml(nota)}</div>`);
+      }
+    }
+    // Año de construcción Catastro: si el edificio es anterior a la
+    // aprobación inicial del PXOM (2021), la explicación del exceso de
+    // altura la tenemos nosotros — fuera de ordenación consolidada.
+    const warnEl = document.getElementById('altura-warning');
+    const anioCat = parseInt(catCtx.anio_construccion, 10);
+    if (warnEl && Number.isFinite(anioCat) && anioCat > 1700) {
+      if (anioCat < 2021) {
+        warnEl.innerHTML += ` Catastro fecha la construcción en <b>${anioCat}</b>, anterior a la aprobación inicial del PXOM (2021) — la explicación más probable es <b>fuera de ordenación consolidada</b>: el plan regula obra nueva, no lo ya construido.`;
+      } else {
+        warnEl.innerHTML += ` Catastro fecha la construcción en <b>${anioCat}</b>, ya bajo el PXOM — si supera el tope realmente, conviene revisar la licencia o un posible error de capa/medida.`;
       }
     }
   } catch (e) {
