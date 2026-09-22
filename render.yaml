@@ -1,0 +1,16 @@
+# Render Blueprint — beta pública gratuita de NORMATIVA GALICIA 3D.
+# Render: New → Blueprint → conectar este repo → Apply.
+# Las env vars sync:false se piden una vez en el dashboard.
+services:
+  - type: web
+    name: normativa-galicia-beta
+    runtime: docker
+    plan: free
+    healthCheckPath: /beta-login
+    envVars:
+      - key: BETA_PASSWORD
+        sync: false          # contraseña única — se rellena en el dashboard
+      - key: OPENROUTER_API_KEY
+        sync: false          # plan :free de OpenRouter (opcional pero recomendado)
+      - key: MODEL_PROVIDER
+        value: openrouter

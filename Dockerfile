@@ -1,13 +1,15 @@
-# NORMATIVA GALICIA 3D — beta en Hugging Face Spaces (SDK docker)
+# NORMATIVA GALICIA 3D — beta pública (Render free / HF Spaces docker)
 #
-# Todo gratuito: el backend FastAPI sirve API + visor GeoLibre en el
-# puerto 7860. El microservicio de embeddings (:8003) NO se incluye —
-# el RAG degrada automáticamente a BM25 + sinónimos (diseñado así).
+# Backend FastAPI sirviendo API + visor GeoLibre. Los datos (~170 MB)
+# no van en la imagen: `fetch_beta_data.py` los descarga del dataset
+# público HF al arrancar. El microservicio de embeddings (:8003) NO se
+# incluye — el RAG degrada a BM25 + sinónimos automáticamente.
 #
-# Secrets del Space (Settings → Secrets):
-#   BETA_PASSWORD       contraseña única de acceso
+# Variables de entorno:
+#   BETA_PASSWORD       contraseña única de acceso (gate en app/main.py)
 #   OPENROUTER_API_KEY  clave LLM (plan :free)
 #   MODEL_PROVIDER      openrouter
+#   PORT                el puerto lo fija la plataforma (Render lo inyecta)
 
 FROM python:3.11-slim
 
@@ -28,10 +30,12 @@ COPY web ./web
 COPY scripts ./scripts
 COPY datos ./datos
 
-ENV PORT=7860 \
-    PYTHONUNBUFFERED=1 \
+ENV PYTHONUNBUFFERED=1 \
     MODEL_PROVIDER=openrouter
 
 EXPOSE 7860
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Descarga los datos del dataset HF (idempotente) y arranca en $PORT
+# (Render lo inyecta; en local/HF cae a 7860).
+CMD python scripts/fetch_beta_data.py && \
+    uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-7860}

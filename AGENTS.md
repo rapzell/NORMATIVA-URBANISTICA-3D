@@ -23,21 +23,24 @@ y WFS municipal al primer uso) y `_index.json` (BM25, automático).
 Las API keys (`api.txt`, `docs/apikey*`) NO están en el repo —
 copiarlas a mano o crear el fichero en la máquina nueva.
 
-## Despliegue beta (Hugging Face Spaces)
+## Despliegue beta (Render free + dataset HF)
 
-- `Dockerfile` (raíz): python:3.11-slim + `requirements.txt`, uvicorn en
-  :7860. El microservicio de embeddings NO va — el RAG degrada a
-  BM25+sinónimos automáticamente.
-- `deploy/hf/upload_space.py <user>/<space>`: crea el Space privado y
-  sube código + datos mínimos (`datos/corpus`, `datos/normativa/36057`,
-  `datos/ordenanzas`, `inventario_planeamento.csv`,
-  `subzonas_piloto.geojson`). Requiere `HF_TOKEN`.
+HF Spaces ya no admite docker gratis (exige PRO). Ruta actual:
+
+- `Dockerfile` (raíz): python:3.11-slim + `requirements.txt`; el CMD
+  ejecuta `scripts/fetch_beta_data.py` (descarga `datos/` del dataset
+  público `DavidVRM/normativa-galicia-data`, idempotente) y luego
+  uvicorn en `$PORT` (Render lo inyecta; 7860 por defecto).
+- `render.yaml`: Blueprint — Render → New → Blueprint → conectar repo.
+  Env vars: `BETA_PASSWORD` (gate), `OPENROUTER_API_KEY`,
+  `MODEL_PROVIDER=openrouter`.
 - Contraseña única: middleware en `app/main.py` activado por el secret
   `BETA_PASSWORD` (cookie `beta_auth`, login en `/beta-login`). Sin la
   env var el gate no existe — el desarrollo local queda intacto.
-- Secrets del Space: `BETA_PASSWORD`, `OPENROUTER_API_KEY`;
-  variable `MODEL_PROVIDER=openrouter` (el script los configura si se
-  exportan antes de ejecutarlo).
+- El microservicio de embeddings (:8003) NO se despliega — el RAG
+  degrada a BM25+sinónimos automáticamente.
+- Resubir datos tras cambios: `upload_folder` al dataset HF
+  (ver `deploy/hf/upload_space.py`, que queda como referencia).
 
 ## Comandos esenciales
 
