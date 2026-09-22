@@ -39,6 +39,15 @@ HF Spaces ya no admite docker gratis (exige PRO). Ruta actual:
   env var el gate no existe — el desarrollo local queda intacto.
 - El microservicio de embeddings (:8003) NO se despliega — el RAG
   degrada a BM25+sinónimos automáticamente.
+- **`RAG_RERANKER=0` es obligatorio en Render free**: con `sentence_transformers`
+  instalado, `_reranker()` intentaría cargar el cross-encoder ALIA →
+  importa torch → OOM en 512 MB (mata el worker, 502 en `/qa/health`
+  y cualquier endpoint que lo invoque).
+- Cambios de env vars por API **no reinician el contenedor**: hay que
+  lanzar un deploy (`POST /v1/services/{id}/deploys`). El servicio
+  beta vive en `srv-dapc50tbedkc738bdv80` (team "Visor Arquitectos"),
+  construye desde el repo público `NORMATIVA-URBANISTICA-3D`,
+  rama `feat/demo-silencioso`, región Frankfurt.
 - Resubir datos tras cambios: `upload_folder` al dataset HF
   (ver `deploy/hf/upload_space.py`, que queda como referencia).
 
