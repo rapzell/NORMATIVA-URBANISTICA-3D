@@ -56,12 +56,21 @@ def detectar_contradicciones(ctx: dict) -> list[str]:
         return adv
 
     altura_max = ord_p.get('altura_maxima_m')
-    if alt_v is not None and altura_max and alt_v > altura_max * 1.1:
+    # Si la ordenanza fija un tope absoluto («medido desde cualquier
+    # punto del terreno»), la altura LiDAR —que mide la cumbrera— se
+    # compara contra él; superar solo la cornisa suele ser la cubierta.
+    abs_cap = ord_p.get('altura_absoluta_m')
+    limite_alt = abs_cap if (abs_cap and altura_max) else altura_max
+    if alt_v is not None and limite_alt and alt_v > limite_alt * 1.1:
         adv.append(
             f"Posible ordenanza mal asignada: la altura medida "
-            f"({alt_v:g} m) supera la altura máxima de {ordenanza} "
-            f"({altura_max:g} m). Verificar que la ordenanza "
-            f"corresponde realmente a esta parcela.")
+            f"({alt_v:g} m) supera "
+            + (f"el tope absoluto de {ordenanza} ({abs_cap:g} m; "
+               f"la altura a cornisa es {altura_max:g} m). "
+               if abs_cap and altura_max else
+               f"la altura máxima de {ordenanza} ({altura_max:g} m). ")
+            + "Verificar que la ordenanza corresponde realmente a "
+              "esta parcela.")
 
     sup_parcela = res.get('superficie_parcela_m2')
     parcela_min = ord_p.get('parcela_minima_m2')

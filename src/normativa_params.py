@@ -15,7 +15,7 @@ from pathlib import Path
 
 _DATOS = Path(__file__).resolve().parent.parent / 'datos' / 'normativa'
 _CACHE_TTL_S = 30 * 24 * 3600  # 30 días
-_EXTRACTOR_V = 2  # bump al añadir patrones: invalida el caché en disco
+_EXTRACTOR_V = 3  # bump al añadir patrones: invalida el caché en disco
 
 # Cabeceras de ordenanza: "ART. 76. ORDENANZA U1. MANTEMENTO...", "ORDENANZA U.4 ...",
 # "ORDENANZA RZ-2 ...", "ORDENANZA DE RESIDENCIAL ..." (fallback genérico).
@@ -57,6 +57,16 @@ _PATTERNS = {
         re.compile(r'altura\s+m[áa]xima[^.]{0,90}?equivalente\s+a\s+' + _NUM + r'\s*metros', re.I),
         re.compile(r'altura\s+m[áa]xima\s+(?:de|f[íi]xase\s+en|establece\s+en)\s+' + _NUM + r'\s*metros', re.I),
         re.compile(r'altura\s+m[áa]xima[^.]{0,60}?' + _NUM + r'\s*metros', re.I),
+    ],
+    'altura_absoluta_m': [
+        # 'sen superar os 8,50 metros medidos desde calquera punto do terreo'
+        # (tope absoluto tras la altura a cornisa del art. 62.5; la cubierta
+        # y el baixocuberta del art. 62.6 pueden ocupar el margen)
+        re.compile(r'(?:sen|sin)\s+superar\s+(?:os|las|los)?\s*' + _NUM
+                   + r'\s*metros?\s+medidos?\s+desde\s+'
+                   r'(?:calquera|cualquier)\s+(?:punto|parte)', re.I),
+        re.compile(r'(?:altura|cota)\s+m[áa]xima\s+absoluta[^.]{0,40}?'
+                   + _NUM + r'\s*metros?', re.I),
     ],
     'parcela_minima_m2': [
         re.compile(r'parcela\s+m[íi]nima\s+de\s+' + _NUM + r'\s*m2', re.I),

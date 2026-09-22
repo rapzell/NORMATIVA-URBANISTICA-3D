@@ -33,7 +33,7 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v7: estado sin_limite para ordenanzas de conservación;
 # v8: altura_medida_m/altura_osm_m — altura real MDSN por huella) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 13
+_PROPS_SCHEMA = 14
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -767,6 +767,7 @@ def _ordenanza_municipal_punto(lon: float, lat: float,
                         p = found.get('params') or {}
                         c['titulo'] = found.get('titulo')
                         c['altura_maxima_m'] = p.get('altura_maxima_m')
+                        c['altura_absoluta_m'] = p.get('altura_absoluta_m')
                         c['altura_por_ancho_rua'] = p.get(
                             'altura_por_ancho_rua')
             except Exception:
@@ -808,6 +809,7 @@ def _ordenanza_municipal_punto(lon: float, lat: float,
         'instrumento': r.get('instrumento'),
         'nota': r.get('nota'),
         'altura_maxima_m': params.get('altura_maxima_m'),
+        'altura_absoluta_m': params.get('altura_absoluta_m'),
         'altura_por_ancho_rua': params.get('altura_por_ancho_rua'),
         'altura_por_ancho_rua_tabla': (((found or {}).get('trazas') or {})
                                       .get('altura_por_ancho_rua') or {})
@@ -1019,6 +1021,7 @@ def _attach_mdsn_heights(features: list[dict[str, Any]],
                 'titulo': p.get('titulo_ordenanza'),
                 'normative_status': p.get('normative_status'),
                 'altura_maxima_m': p.get('altura_maxima_subzona_m'),
+                'altura_absoluta_m': p.get('altura_absoluta_subzona_m'),
                 'altura_por_ancho_rua': p.get('altura_por_ancho_rua'),
                 'candidatas_proximas': p.get('candidatas_proximas'),
                 'ambito': p.get('ambito'),
@@ -1148,6 +1151,7 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
                 "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
                 "candidatas_proximas": (subzone_props or {}).get("candidatas_proximas"),
                 "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
+                "altura_absoluta_subzona_m": (subzone_props or {}).get("altura_absoluta_m"),
                 "altura_por_ancho_rua": (subzone_props or {}).get("altura_por_ancho_rua"),
                 "altura_por_ancho_rua_tabla": (subzone_props or {}).get("altura_por_ancho_rua_tabla"),
                 "normative_status": (subzone_props or {}).get("normative_status"),
@@ -1580,6 +1584,37 @@ def _classify_building_compliance(height: float, subzone_props: dict[str, Any] |
             "status": "orientativo_supera",
             "detail": f"Comparación orientativa: {h} m > {limit_f} m (exceso {excess} m). La subzona y su límite son piloto, no acreditan incumplimiento urbanístico.",
             "color_semantics": "naranja = posible exceso según datos piloto",
+        }
+    # La altura LiDAR mide el punto más alto del edificio (cumbrera).
+    # Muchas ordenanzas fijan la altura a cornisa (art. 62.5) y un tope
+    # absoluto mayor «medido desde cualquier punto del terreno» que la
+    # cubierta/baixocuberta (art. 62.6) puede ocupar: entre ambos valores
+    # el exceso suele ser el remate inclinado, no sobreedificación.
+    abs_cap = (subzone_props or {}).get("altura_absoluta_m")
+    try:
+        abs_f = float(abs_cap) if abs_cap is not None else None
+    except Exception:
+        abs_f = None
+    if abs_f is not None and abs_f > limit_f:
+        if h <= abs_f:
+            return {
+                "status": "supera_cornisa",
+                "detail": (f"La altura medida ({h} m) supera la altura a cornisa "
+                           f"({limit_f} m) pero no el tope absoluto ({abs_f} m "
+                           "medidos desde cualquier punto del terreno) — el "
+                           "exceso suele corresponder a la cubierta o al "
+                           "aprovechamiento bajo cubierta (art. 62.6). "
+                           "Orientativo: verificar en ficha urbanística."),
+                "color_semantics": "ámbar = supera cornisa pero dentro del tope absoluto",
+            }
+        excess_abs = round(h - abs_f, 2)
+        return {
+            "status": "supera_altura",
+            "detail": (f"Altura por encima del máximo de subzona ({h} m > "
+                       f"{limit_f} m de cornisa) y también del tope absoluto "
+                       f"({abs_f} m desde cualquier punto del terreno, exceso "
+                       f"{excess_abs} m)"),
+            "color_semantics": "rojo = supera la altura máxima",
         }
     return {
         "status": "supera_altura",

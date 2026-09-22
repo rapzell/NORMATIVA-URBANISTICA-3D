@@ -182,9 +182,14 @@ Alturas: `_attach_mdsn_heights` descarga un único GeoTIFF `mdsn_e025`
 features y toma el P90 por huella — la altura pasa de estimada OSM a
 medida real (`height_source='mdsn_lidar'`, `altura_medida_m`,
 `altura_osm_m` conserva la estimación). Estados de cumplimiento:
-`compatible|supera_altura|orientativo_*|altura_tabla|sin_limite`
+`compatible|supera_altura|supera_cornisa|orientativo_*|altura_tabla|sin_limite`
 (ordenanza oficial que no fija altura, p.ej. U1.x conservación) |
-`sin_dato` (hueco real de capa). `ancho_rua_estimado_m` se estima por
+`sin_dato` (hueco real de capa). `supera_cornisa` = la altura medida
+(cumbrera LiDAR) supera la altura a cornisa de la ordenanza (art. 62.5)
+pero no el tope absoluto `altura_absoluta_m` («medido desde cualquier
+punto del terreno» — p.ej. U6: 7 m cornisa / 8,5 m tope); el margen lo
+ocupan cubierta y baixocuberta (art. 62.6). El patrón está en
+`normativa_params.py` (`_EXTRACTOR_V` 3). `ancho_rua_estimado_m` se estima por
 sección perpendicular al vial OSM entre fachadas opuestas y resuelve
 la fila aplicable de las tablas de altura por ancho (U2).
 

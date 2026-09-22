@@ -21,6 +21,15 @@ autorizándose o peto cego perimetral de protección e altura máxima
 1,10 metros. O aproveitamento así definido poderá destinarse a uso de vivenda.
 """
 
+_U6_ABS_TEXT = """ART. 80. ORDENANZA U6. VIVENDA UNIFAMILIAR
+• A altura máxima fíxase en baixo e unha planta, equivalente a 7,00
+metros medidos conforme ao establecido no artigo 62.5 desta Normativa,
+sen superar os 8,50 metros medidos desde calquera punto do terreo.
+• Non se autorizan voos sobre as aliñacións oficiais. Autorízase o
+aproveitamento baixocuberta por riba da altura máxima segundo o
+establecido no art. 62.6 da presente Normativa.
+"""
+
 
 def _block(texto, pag=1, ord_code='U6'):
     return {'ordenanza': ord_code, 'titulo': 'X', 'pag_ini': pag, 'texto': texto}
@@ -43,6 +52,15 @@ def test_trazas_incluyen_pagina_y_texto():
     tr = trazas['edificabilidad_max_m2_m2']
     assert tr['pagina'] == 179
     assert '0,70' in tr['texto']
+
+
+def test_u6_tope_absoluto_desde_calquera_punto():
+    """U6 fija 7 m a cornisa (art. 62.5) + tope absoluto de 8,5 m desde
+    cualquier punto del terreno: ambos valores deben extraerse."""
+    params, trazas = np._extract_params(_block(_U6_ABS_TEXT, pag=180))
+    assert params['altura_maxima_m'] == 7.0
+    assert params['altura_absoluta_m'] == 8.5
+    assert 'calquera punto' in trazas['altura_absoluta_m']['texto']
 
 
 def test_altura_de_peto_no_es_altura_de_edificio():

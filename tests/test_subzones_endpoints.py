@@ -220,3 +220,34 @@ def test_proxy_osm_buildings_hueco_cobertura(monkeypatch):
     assert props["subzona"] is None
     assert props["subzona_piloto"] is None
     assert props["normative_status"] == "unavailable"
+
+
+def test_classify_supera_cornisa_dentro_tope_absoluto():
+    """Altura medida entre la cornisa y el tope absoluto → supera_cornisa
+    (la cubierta/baixocuberta puede ocupar el margen, art. 62.6)."""
+    from src.subzones_service import _classify_building_compliance
+    props = {"subzona": "U6.6", "normative_status": "official",
+             "altura_maxima_m": 7.0, "altura_absoluta_m": 8.5}
+    comp = _classify_building_compliance(8.0, props)
+    assert comp["status"] == "supera_cornisa"
+    assert "8.5" in comp["detail"] or "8,5" in comp["detail"]
+
+
+def test_classify_supera_tope_absoluto_sigue_siendo_supera_altura():
+    """Superar también el tope absoluto sigue siendo supera_altura,
+    con el detalle citando ambos límites."""
+    from src.subzones_service import _classify_building_compliance
+    props = {"subzona": "U6.6", "normative_status": "official",
+             "altura_maxima_m": 7.0, "altura_absoluta_m": 8.5}
+    comp = _classify_building_compliance(9.0, props)
+    assert comp["status"] == "supera_altura"
+    assert "tope absoluto" in comp["detail"]
+
+
+def test_classify_sin_tope_absoluto_mantiene_supera_altura():
+    """Ordenanza sin tope absoluto → comportamiento original."""
+    from src.subzones_service import _classify_building_compliance
+    props = {"subzona": "U5", "normative_status": "official",
+             "altura_maxima_m": 10.5}
+    comp = _classify_building_compliance(12.0, props)
+    assert comp["status"] == "supera_altura"

@@ -220,6 +220,7 @@
   #building-tooltip .tt-badge { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 12px; font-weight: 700; }
   #building-tooltip .tt-badge.compatible { background: #238636; color: #fff; }
   #building-tooltip .tt-badge.supera_altura { background: #da3633; color: #fff; }
+  #building-tooltip .tt-badge.supera_cornisa { background: #b8860b; color: #fff; }
   #building-tooltip .tt-badge.orientativo_dentro { background: #9a6700; color: #fff; }
   #building-tooltip .tt-badge.orientativo_supera { background: #bc4c00; color: #fff; }
   #building-tooltip .tt-badge.sin_dato { background: #1f6feb; color: #fff; }
@@ -306,10 +307,13 @@
       <div class="info-card collapsible collapsed">
         <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda edificios 3D <span class="chev">▸</span></div>
         <div class="collapse-body">
+        <div class="info-row"><span class="key" style="background:#2da44e;color:#fff">Verde</span><span class="val">dentro del máximo oficial</span></div>
+        <div class="info-row"><span class="key" style="background:#e8a13a;color:#fff">Ámbar</span><span class="val">sobre cornisa, ≤ tope absoluto (cubierta)</span></div>
+        <div class="info-row"><span class="key" style="background:#f85149;color:#fff">Rojo</span><span class="val">supera el tope absoluto</span></div>
         <div class="info-row"><span class="key" style="background:#9a6700;color:#fff">Amarillo</span><span class="val">dentro del límite piloto</span></div>
         <div class="info-row"><span class="key" style="background:#bc4c00;color:#fff">Naranja</span><span class="val">supera el límite piloto</span></div>
         <div class="info-row"><span class="key" style="background:#1976d2;color:#fff">Azul</span><span class="val">sin dato normativo</span></div>
-        <div class="hint">Las comparaciones piloto no acreditan cumplimiento urbanístico.</div>
+        <div class="hint">Las comparaciones piloto no acreditan cumplimiento urbanístico. «Ámbar»: la altura medida supera la altura a cornisa pero no el tope absoluto — normalmente es la cubierta.</div>
         </div>
       </div>
       <div class="info-card collapsible collapsed">
@@ -562,6 +566,7 @@ function statusLabel(status, props) {
   return ({
     compatible: 'Compatible',
     supera_altura: 'Supera altura',
+    supera_cornisa: 'Sobre cornisa — dentro del tope',
     orientativo_dentro: 'Dentro del límite piloto',
     orientativo_supera: 'Supera el límite piloto',
     altura_tabla: 'Altura por ancho de rúa',
@@ -1356,7 +1361,7 @@ function showSubzoneTooltip(feature, point) {
 function updateMapSummary(features) {
   const el = document.getElementById('map-summary');
   if (!el || !activeMunicipio) return;
-  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
+  const stats = { compatible: 0, supera_altura: 0, supera_cornisa: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
   let sinDatoExplicado = 0;
   for (const f of (features || [])) {
     const p = f.properties || {};
@@ -1370,6 +1375,7 @@ function updateMapSummary(features) {
     <div class="sum-body">
     <div class="sum-row"><span class="sum-key">Subzonas piloto</span><span>${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
     <div class="sum-row"><span class="sum-key">Edificios 3D</span><span>${(features || []).length}</span></div>
+    <div class="sum-row"><span class="sum-key">Sobre cornisa (≤ tope)</span><span>${stats.supera_cornisa}</span></div>
     <div class="sum-row"><span class="sum-key">Dentro límite piloto</span><span>${stats.orientativo_dentro}</span></div>
     <div class="sum-row"><span class="sum-key">Sobre límite piloto</span><span>${stats.orientativo_supera}</span></div>
     <div class="sum-row"><span class="sum-key">Sin límite en ordenanza</span><span>${stats.sin_limite}</span></div>
@@ -1549,7 +1555,7 @@ function renderOfficialContext(ctx) {
 }
 
 function renderMunicipioStats(features) {
-  const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
+  const stats = { compatible: 0, supera_altura: 0, supera_cornisa: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
   let sinDatoExplicado = 0;
   for (const f of (features || [])) {
     const p = f.properties || {};
@@ -1559,6 +1565,7 @@ function renderMunicipioStats(features) {
   }
   return `
     <div class="info-card">
+      <div class="info-row"><span class="key">Sobre cornisa (≤ tope)</span><span class="val">${stats.supera_cornisa}</span></div>
       <div class="info-row"><span class="key">Dentro límite piloto</span><span class="val">${stats.orientativo_dentro}</span></div>
       <div class="info-row"><span class="key">Sobre límite piloto</span><span class="val">${stats.orientativo_supera}</span></div>
       <div class="info-row"><span class="key">Sin límite en ordenanza</span><span class="val">${stats.sin_limite}</span></div>
@@ -1576,6 +1583,7 @@ function renderBuildingFilters() {
         <button class="filter-btn ${currentBuildingFilter === 'all' ? 'active' : ''}" onclick="setBuildingFilter('all')">Todos</button>
         <button class="filter-btn ${currentBuildingFilter === 'orientativo_dentro' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_dentro')">Dentro (piloto)</button>
         <button class="filter-btn ${currentBuildingFilter === 'orientativo_supera' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_supera')">Sobre (piloto)</button>
+        <button class="filter-btn ${currentBuildingFilter === 'supera_cornisa' ? 'active' : ''}" onclick="setBuildingFilter('supera_cornisa')">Sobre cornisa</button>
         <button class="filter-btn ${currentBuildingFilter === 'sin_limite' ? 'active' : ''}" onclick="setBuildingFilter('sin_limite')">Sin límite</button>
         <button class="filter-btn ${currentBuildingFilter === 'sin_dato' ? 'active' : ''}" onclick="setBuildingFilter('sin_dato')">Sin dato</button>
       </div>
@@ -1650,6 +1658,7 @@ async function loadBuildings(municipio) {
             'match', ['get', 'cumplimiento_altura'],
             'compatible', '#2da44e',
             'supera_altura', '#f85149',
+            'supera_cornisa', '#e8a13a',
             'orientativo_dentro', '#d29922',
             'orientativo_supera', '#bc4c00',
             'sin_limite', '#e3b341',
@@ -2324,9 +2333,10 @@ async function selectBuilding(feature) {
     html += `<div class="hint" style="margin:-4px 0 6px">${props.ambito ? `La parcela rige por <b>${escapeHtml(props.ambito)}</b> — sus parámetros salen de la ficha del instrumento, no de las ordenanzas generales.` : `Parcela dotacional oficial — se rige por la ficha de su sistema, no por ordenanzas residenciales.`}</div>`;
   }
   html += `<div class="info-row"><span class="key">${pilot ? 'Límite de altura piloto' : 'Altura máx. subzona'}</span><span class="val">${escapeHtml(alturaSubzona)}</span></div>`;
+  if (props.altura_absoluta_subzona_m != null) html += `<div class="info-row"><span class="key">Tope absoluto (cornisa + cubierta)</span><span class="val">${props.altura_absoluta_subzona_m} m ${qualityBadge('official')}</span></div>`;
   if (props.ancho_rua_estimado_m != null) html += `<div class="info-row"><span class="key">Ancho de rúa</span><span class="val">~${escapeHtml(String(props.ancho_rua_estimado_m))} m${qualityBadge(props.ancho_rua_source === 'alineaciones oficiales PXOM' ? 'official' : 'estimated')}</span></div>`;
   if (props.normative_source) html += `<div class="info-row"><span class="key">Fuente del límite</span><span class="val">${escapeHtml(props.normative_source)}</span></div>`;
-  const limiteEf = props.altura_maxima_subzona_m != null ? props.altura_maxima_subzona_m : props.altura_aplicable_m;
+  const limiteEf = props.altura_absoluta_subzona_m != null ? props.altura_absoluta_subzona_m : (props.altura_maxima_subzona_m != null ? props.altura_maxima_subzona_m : props.altura_aplicable_m);
   if (props.altura_medida_m != null && limiteEf != null && props.altura_medida_m > limiteEf * 1.1) html += `<div class="hint" style="color:#f85149;margin-bottom:6px">⚠ La altura medida (${props.altura_medida_m} m) supera el límite normativo aplicable (${limiteEf} m) — posible sobreedificación, error de asignación u ordenanza modificada. Verificar en ficha urbanística.</div>`;
   const osmId = String(props.osm_id || '');
   html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—'}</span></div>`;
