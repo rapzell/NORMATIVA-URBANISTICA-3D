@@ -1,6 +1,6 @@
 {
- "_extracted_at": 1789984239.4034803,
- "_extractor_v": 2,
+ "_extracted_at": 1790082965.1379538,
+ "_extractor_v": 3,
  "municipio_ine": "36057",
  "ordenanzas": {
   "U1": {
@@ -170,6 +170,7 @@
     "retranqueo_posterior_m": 3.0,
     "retranqueo_frontal_m": 3.0,
     "altura_maxima_m": 7.0,
+    "altura_absoluta_m": 8.5,
     "parcela_minima_m2": 250.0,
     "usos_permitidos": "Terciario: Hoteleiro. Hoteleiro Categoría 1ª. Apartamentos e Vivendas Turísticas Vivendas de uso turístico; Terciario: Comercial. Categoría 1ª; Terciario: Oficinas. Categoría 1ª; Terciario: Recreativo. Categoría 1ª, Tipo I; Industrial: Produtiva. Categoría 1ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª; Dotacional-Equipamentos:; Educativo. Categoría 1ª, 2ª; Socio-Cultural. Categoría 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, 5ª; Administración institucional; Dotacional múltiple; Relixioso. Categoría 1ª Ordenanza U6.2. Extensións lineais das agrupacións de carácter tradicional"
    },
@@ -197,6 +198,10 @@
     "altura_maxima_m": {
      "pagina": 179,
      "texto": "e a viario de sección igual ou menor de catro metros. • A altura máxima fíxase en baixo e unha planta, equivalente a 7,00 metros medidos conforme ao establecido no artigo 62.5 desta Norma"
+    },
+    "altura_absoluta_m": {
+     "pagina": 179,
+     "texto": "os conforme ao establecido no artigo 62.5 desta Normativa, sen superar os 8,50 metros medidos desde calquera punto do terreo. • Non se autorizan voos sobre as aliñacións of"
     },
     "parcela_minima_m2": {
      "pagina": 179,
