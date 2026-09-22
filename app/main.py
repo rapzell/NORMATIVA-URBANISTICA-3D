@@ -54,8 +54,8 @@ from typing import Optional
 import mimetypes
 import logging
 from logging.handlers import RotatingFileHandler
-from fastapi import FastAPI, HTTPException, Response, Body
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Response, Body, Request
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -117,6 +117,68 @@ app = FastAPI(title="Asistente Normativa Galicia API", version=API_VERSION, life
 
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=4096)
+
+# ── Acceso beta con contraseña única ────────────────────────────────
+# Si BETA_PASSWORD está definida (despliegue), toda la app exige una
+# cookie de sesión; sin la variable no cambia nada (desarrollo local).
+_BETA_PASSWORD = os.getenv('BETA_PASSWORD', '').strip()
+_BETA_COOKIE = 'beta_auth'
+
+_BETA_LOGIN_HTML = """<!doctype html><html lang="es"><head><meta charset="utf-8">
+<title>NORMATIVA GALICIA 3D — acceso beta</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:#0d1117;color:#c9d1d9;font-family:system-ui,sans-serif}
+ form{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;
+  width:300px;text-align:center}
+ h1{font-size:18px;margin:0 0 6px}
+ p{font-size:12px;color:#8b949e;margin:0 0 18px}
+ input{width:100%;box-sizing:border-box;padding:9px;border-radius:6px;
+  border:1px solid #30363d;background:#0d1117;color:#c9d1d9;font-size:14px}
+ button{margin-top:12px;width:100%;padding:9px;border:0;border-radius:6px;
+  background:#238636;color:#fff;font-weight:600;cursor:pointer;font-size:14px}
+ .err{color:#f85149;font-size:12px;margin-top:10px;display:none}
+</style></head><body><form method="post" action="/beta-login">
+<h1>NORMATIVA GALICIA 3D</h1><p>Acceso beta restringido</p>
+<input type="password" name="password" placeholder="Contraseña" autofocus required>
+<button type="submit">Entrar</button>
+<div class="err" id="err">Contraseña incorrecta</div>
+</form><script>if(location.search.includes('e=1'))document.getElementById('err').style.display='block'</script>
+</body></html>"""
+
+if _BETA_PASSWORD:
+    import hashlib
+
+    _BETA_TOKEN = hashlib.sha256(
+        ('beta-gate:' + _BETA_PASSWORD).encode()).hexdigest()
+
+    @app.middleware('http')
+    async def beta_password_gate(request, call_next):
+        if request.url.path == '/beta-login':
+            return await call_next(request)
+        if request.cookies.get(_BETA_COOKIE) == _BETA_TOKEN:
+            return await call_next(request)
+        if request.method == 'GET':
+            return HTMLResponse(_BETA_LOGIN_HTML, status_code=401)
+        return JSONResponse({'detail': 'beta password required'},
+                            status_code=401)
+
+    @app.api_route('/beta-login', methods=['GET', 'POST'],
+                   include_in_schema=False)
+    async def beta_login(request: Request):
+        if request.method == 'GET':
+            return HTMLResponse(_BETA_LOGIN_HTML)
+        form = await request.form()
+        if str(form.get('password', '')) == _BETA_PASSWORD:
+            resp = RedirectResponse('/geolibre/', status_code=303)
+            resp.set_cookie(
+                _BETA_COOKIE, _BETA_TOKEN, httponly=True,
+                samesite='lax', max_age=30 * 86400,
+                secure=(request.headers.get('x-forwarded-proto')
+                        == 'https'))
+            return resp
+        return RedirectResponse('/beta-login?e=1', status_code=303)
 
 # Servir visor Three.js como estático para evitar CORS (same-origin)
 try:
