@@ -1,0 +1,405 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "NORMATIVA GALICIA 3D — funcionamento actual",
+    "output": "normativa_galicia_arquitectura_2025.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/rapzell/NORMATIVA-GALICIA-3D",
+      "provider": "github",
+      "revision": "bc6ee6f3ff7593b18f5b14423887834838522eee"
+    },
+    "viewBox": [
+      1180,
+      620
+    ],
+    "views": [
+      {
+        "id": "fluxo-edificio",
+        "label": "Fluxo dun edificio",
+        "focus": [
+          "visor",
+          "api",
+          "resolvers",
+          "osm",
+          "concello"
+        ],
+        "note": "Do clic no mapa ao panel: OSM + LiDAR + ordenanza oficial PXOM 2025."
+      },
+      {
+        "id": "fontes-oficiais",
+        "label": "Fontes oficiais",
+        "focus": [
+          "resolvers",
+          "catastro",
+          "siotuga",
+          "concello",
+          "idee",
+          "osm"
+        ],
+        "note": "Seis servizos públicos gratuitos con procedencia declarada."
+      },
+      {
+        "id": "asistente",
+        "label": "Asistente RAG",
+        "focus": [
+          "api",
+          "agente",
+          "emb",
+          "llm",
+          "docs"
+        ],
+        "note": "Pregunta normativa → ferramentas oficiais → corpus citado → LLM."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "catastro",
+      "type": "external",
+      "label": "Catastro INSPIRE",
+      "sublabel": "refcat · plantas · parcela",
+      "pos": [
+        40,
+        60
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "siotuga",
+      "type": "external",
+      "label": "SIOTUGA (Xunta)",
+      "sublabel": "WFS/WMS 3CLAS · PDFs",
+      "pos": [
+        40,
+        155
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "concello",
+      "type": "external",
+      "label": "Concello de Vigo",
+      "sublabel": "GeoServer + ArcGIS PXOM 2025",
+      "pos": [
+        40,
+        250
+      ],
+      "size": [
+        170,
+        60
+      ],
+      "tag": "ordenanzas · ámbitos"
+    },
+    {
+      "id": "idee",
+      "type": "external",
+      "label": "IDEE / SIOSE",
+      "sublabel": "LiDAR nDSM · ocupación solo",
+      "pos": [
+        40,
+        345
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "osm",
+      "type": "external",
+      "label": "OpenStreetMap",
+      "sublabel": "Overpass — huellas 3D",
+      "pos": [
+        40,
+        440
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "resolvers",
+      "type": "backend",
+      "label": "Resolución normativa",
+      "sublabel": "subzones · muni_wfs · ambitos",
+      "pos": [
+        400,
+        235
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/subzones_service.py"
+        },
+        {
+          "path": "src/ambitos_service.py"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI :8002",
+      "sublabel": "endpoints oficiais",
+      "pos": [
+        700,
+        240
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/main.py"
+        }
+      ]
+    },
+    {
+      "id": "visor",
+      "type": "frontend",
+      "label": "Visor GeoLibre",
+      "sublabel": "MapLibre 3D · capas vectoriais",
+      "pos": [
+        960,
+        240
+      ],
+      "size": [
+        180,
+        60
+      ],
+      "sources": [
+        {
+          "path": "web/geolibre/index.html"
+        }
+      ]
+    },
+    {
+      "id": "docs",
+      "type": "database",
+      "label": "Corpus local",
+      "sublabel": "PDFs NU + índice ámbitos",
+      "pos": [
+        400,
+        480
+      ],
+      "size": [
+        180,
+        60
+      ]
+    },
+    {
+      "id": "agente",
+      "type": "backend",
+      "label": "Asistente axéntico",
+      "sublabel": "orchestrator · tools · RAG",
+      "pos": [
+        700,
+        400
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/agent/orchestrator.py"
+        }
+      ]
+    },
+    {
+      "id": "emb",
+      "type": "backend",
+      "label": "Embeddings :8003",
+      "sublabel": "ALIA legal · rerank",
+      "pos": [
+        960,
+        405
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM gateway",
+      "sublabel": "OpenRouter / Groq gratis",
+      "pos": [
+        700,
+        525
+      ],
+      "size": [
+        180,
+        55
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Fontes oficiais públicas",
+      "wraps": [
+        "catastro",
+        "siotuga",
+        "concello",
+        "idee",
+        "osm"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Sistema local — todo gratuito",
+      "wraps": [
+        "resolvers",
+        "api",
+        "visor",
+        "docs",
+        "agente",
+        "emb"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "visor-api",
+      "from": "visor",
+      "to": "api",
+      "label": "HTTP",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-resolvers",
+      "from": "api",
+      "to": "resolvers",
+      "label": "contexto oficial"
+    },
+    {
+      "id": "resolvers-osm",
+      "from": "resolvers",
+      "to": "osm",
+      "label": "edificios 3D",
+      "labelAt": [
+        255,
+        465
+      ]
+    },
+    {
+      "id": "resolvers-catastro",
+      "from": "resolvers",
+      "to": "catastro",
+      "label": "parcela",
+      "labelAt": [
+        255,
+        85
+      ]
+    },
+    {
+      "id": "resolvers-siotuga",
+      "from": "resolvers",
+      "to": "siotuga",
+      "label": "clasificación",
+      "labelAt": [
+        255,
+        180
+      ]
+    },
+    {
+      "id": "resolvers-concello",
+      "from": "resolvers",
+      "to": "concello",
+      "label": "ordenanzas",
+      "variant": "emphasis",
+      "labelAt": [
+        255,
+        275
+      ]
+    },
+    {
+      "id": "resolvers-idee",
+      "from": "resolvers",
+      "to": "idee",
+      "label": "LiDAR + SIOSE",
+      "labelAt": [
+        255,
+        370
+      ]
+    },
+    {
+      "id": "api-agente",
+      "from": "api",
+      "to": "agente",
+      "label": "/qa/edificio",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "agente-docs",
+      "from": "agente",
+      "to": "docs",
+      "label": "BM25 + citas"
+    },
+    {
+      "id": "agente-emb",
+      "from": "agente",
+      "to": "emb",
+      "label": "embeddings",
+      "labelAt": [
+        920,
+        390
+      ]
+    },
+    {
+      "id": "agente-llm",
+      "from": "agente",
+      "to": "llm",
+      "label": "prompt anclado",
+      "labelAt": [
+        760,
+        500
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Cobertura oficial Vigo",
+      "items": [
+        "4ORDSUC PXOM 2025 definitivo — capa primaria",
+        "Ámbitos 5APR/7API: PEP-101, API-106…",
+        "Dotacións 2DOTPOL + contornos arqueolóxicos"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Visor 3D",
+      "items": [
+        "Edificios opacos por cumprimento",
+        "Ordenanzas vectoriais con etiquetas U-n",
+        "Clasificación de solo translúcida"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Regras de calidade",
+      "items": [
+        "Nunca se inventa ordenanza nin límite",
+        "Candidatas colindantes marcadas orientativas",
+        "U8/conservación: «non fixada pola ordenanza»"
+      ]
+    }
+  ]
+}
