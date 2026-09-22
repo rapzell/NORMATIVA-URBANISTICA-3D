@@ -2337,7 +2337,14 @@ async function selectBuilding(feature) {
   if (props.ancho_rua_estimado_m != null) html += `<div class="info-row"><span class="key">Ancho de rúa</span><span class="val">~${escapeHtml(String(props.ancho_rua_estimado_m))} m${qualityBadge(props.ancho_rua_source === 'alineaciones oficiales PXOM' ? 'official' : 'estimated')}</span></div>`;
   if (props.normative_source) html += `<div class="info-row"><span class="key">Fuente del límite</span><span class="val">${escapeHtml(props.normative_source)}</span></div>`;
   const limiteEf = props.altura_absoluta_subzona_m != null ? props.altura_absoluta_subzona_m : (props.altura_maxima_subzona_m != null ? props.altura_maxima_subzona_m : props.altura_aplicable_m);
-  if (props.altura_medida_m != null && limiteEf != null && props.altura_medida_m > limiteEf * 1.1) html += `<div class="hint" style="color:#f85149;margin-bottom:6px">⚠ La altura medida (${props.altura_medida_m} m) supera el límite normativo aplicable (${limiteEf} m) — posible sobreedificación, error de asignación u ordenanza modificada. Verificar en ficha urbanística.</div>`;
+  if (props.altura_medida_m != null && limiteEf != null && props.altura_medida_m > limiteEf * 1.1) {
+    const exceso = Math.round((props.altura_medida_m - limiteEf) * 10) / 10;
+    const limiteLbl = props.altura_absoluta_subzona_m != null ? 'tope absoluto' : 'límite normativo aplicable';
+    const causaTxt = exceso <= 1.5
+      ? 'exceso marginal — remate de cubierta no computable, tolerancia del raster nDSM o medición en pendiente (el límite se cuenta desde la rasante)'
+      : 'exceso considerable — habitualmente el inmueble es anterior al planeamiento vigente (fuera de ordenación consolidada, situación legal) o la huella incluye un elemento alto; si la obra es posterior al plan, verificar licencia';
+    html += `<div class="hint" style="color:#f85149;margin-bottom:6px">⚠ La altura medida (${props.altura_medida_m} m) supera el ${limiteLbl} (${limiteEf} m) — ${causaTxt}. Verificar en ficha urbanística.</div>`;
+  }
   const osmId = String(props.osm_id || '');
   html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—'}</span></div>`;
   html += '</div>';
