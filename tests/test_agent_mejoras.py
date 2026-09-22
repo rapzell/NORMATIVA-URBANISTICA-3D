@@ -382,6 +382,8 @@ def test_muni_wfs_punto_en_poligono():
             return _wfs_geojson(['U8'])
 
     with patch('src.muni_wfs.capa_features', return_value=[]), \
+         patch('src.ambitos_service.ordenanza_2025_en_punto',
+               return_value=None), \
          patch('src.muni_wfs.requests.get', return_value=R()):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
     assert r['data_quality'] == 'official'
@@ -397,6 +399,10 @@ def test_muni_wfs_punto_fuera_de_capa():
             return _wfs_geojson([])
 
     with patch('src.muni_wfs.capa_features', return_value=[]), \
+         patch('src.ambitos_service.ordenanza_2025_en_punto',
+               return_value=None), \
+         patch('src.ambitos_service.ordenanzas_2025_proximas',
+               return_value=[]), \
          patch('src.muni_wfs.requests.get', return_value=R()):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
     assert r['data_quality'] == 'unavailable'
@@ -405,6 +411,8 @@ def test_muni_wfs_punto_fuera_de_capa():
 def test_muni_wfs_error_red_degrada():
     from src import muni_wfs
     with patch('src.muni_wfs.capa_features', return_value=[]), \
+         patch('src.ambitos_service.ordenanza_2025_en_punto',
+               return_value=None), \
          patch('src.muni_wfs.requests.get',
                side_effect=RuntimeError('timeout')):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
@@ -427,7 +435,9 @@ def test_muni_wfs_ambigua_dos_poligonos():
             return g
 
     with patch('src.muni_wfs.capa_features', return_value=[]), \
-         patch('src.muni_wfs.requests.get', return_value=R()):
+         patch('src.muni_wfs.requests.get', return_value=R()), \
+         patch('src.ambitos_service.ordenanza_2025_en_punto',
+               return_value=None):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
     assert r['ambigua'] is True
     assert set(r['candidatas']) == {'U6', 'U8'}
@@ -439,6 +449,10 @@ def test_muni_wfs_capa_local_cacheada():
     from src import muni_wfs
     feats = _wfs_geojson(['U6'])['features']
     with patch('src.muni_wfs.capa_features', return_value=feats), \
+         patch('src.ambitos_service.ordenanza_2025_en_punto',
+               return_value=None), \
+         patch('src.ambitos_service.ordenanzas_2025_proximas',
+               return_value=[]), \
          patch('src.muni_wfs.requests.get',
                side_effect=AssertionError('no debe llamar a la red')):
         r = muni_wfs.consultar_ordenanza_punto(-8.718, 42.232, '36057')
@@ -456,6 +470,10 @@ def test_muni_wfs_hueco_lista_ordenanzas_proximas():
     from src import muni_wfs
     feats = _wfs_geojson(['U2'])['features']  # polígono -8.72..-8.715
     with patch('src.muni_wfs.capa_features', return_value=feats), \
+         patch('src.ambitos_service.ordenanza_2025_en_punto',
+               return_value=None), \
+         patch('src.ambitos_service.ordenanzas_2025_proximas',
+               return_value=[]), \
          patch('src.muni_wfs.requests.get',
                side_effect=AssertionError('no debe llamar a la red')):
         # ~33 m al este del borde del polígono → dentro del radio

@@ -58,6 +58,19 @@
   .badge.no_apto { background: #da3633; color: #fff; }
   .hint { font-size: 12px; color: #8b949e; padding: 8px 0; }
   .loading { color: #58a6ff; font-size: 13px; padding: 8px 0; }
+  #map-loading {
+    display: none; position: absolute; top: 96px; left: 50%; transform: translateX(-50%);
+    z-index: 15; align-items: center; gap: 10px; pointer-events: none;
+    background: rgba(13,17,23,0.88); border: 1px solid #30363d; border-radius: 999px;
+    padding: 8px 18px; color: #e6edf3; font-size: 13px; white-space: nowrap;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+  }
+  #map-loading .spinner {
+    width: 16px; height: 16px; flex: 0 0 auto;
+    border: 2.5px solid #30363d; border-top-color: #58a6ff; border-radius: 50%;
+    animation: ml-spin 0.8s linear infinite;
+  }
+  @keyframes ml-spin { to { transform: rotate(360deg); } }
   .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .filter-btn {
     padding: 8px 10px; background: #21262d; border: 1px solid #30363d; color: #e6edf3;
@@ -307,6 +320,7 @@
       <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
       <div id="shadow-slider-info" style="margin-top:6px;color:#8b949e">Hora: 12:00 UTC</div>
     </div>
+    <div id="map-loading"><div class="spinner"></div><span id="map-loading-text">Cargando…</span></div>
     <div id="building-tooltip"></div>
     <div id="map-summary" style="display:none"></div>
     <div id="map-legend" style="display:none;position:absolute;top:52px;left:12px;z-index:10;background:rgba(22,27,34,0.92);border:1px solid #30363d;border-radius:8px;padding:8px 12px;color:#c9d1d9;font-size:11px;max-width:250px;line-height:1.7"></div>
@@ -488,6 +502,26 @@ function goToProject(id) {
 }
 
 // ===== Fin panel multi-proyecto =====
+
+let _mapLoadingCount = 0;
+function showMapLoading(msg) {
+  _mapLoadingCount++;
+  const el = document.getElementById('map-loading');
+  if (el) el.style.display = 'flex';
+  const t = document.getElementById('map-loading-text');
+  if (t && msg) t.textContent = msg;
+}
+function updateMapLoadingText(msg) {
+  const t = document.getElementById('map-loading-text');
+  if (t && msg) t.textContent = msg;
+}
+function hideMapLoading() {
+  _mapLoadingCount = Math.max(0, _mapLoadingCount - 1);
+  if (_mapLoadingCount === 0) {
+    const el = document.getElementById('map-loading');
+    if (el) el.style.display = 'none';
+  }
+}
 
 function statusLabel(status, props) {
   if (status === 'sin_dato' && props) {
@@ -1506,12 +1540,14 @@ async function loadBuildings(municipio) {
   loadingMsg.id = 'buildings-loading';
   loadingMsg.textContent = 'Cargando edificios 3D de OpenStreetMap…';
   if (panel) panel.appendChild(loadingMsg);
+  showMapLoading('Cargando edificios 3D…');
   const startTime = Date.now();
   const timer = setInterval(() => {
     const el = document.getElementById('buildings-loading');
     if (!el) { clearInterval(timer); return; }
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     el.textContent = `Cargando edificios 3D de OpenStreetMap… (${elapsed}s)`;
+    updateMapLoadingText(`Cargando edificios 3D… ${elapsed}s`);
   }, 1000);
   try {
     // Lanzar el fetch sin esperar al mapa: la red es lo lento, el mapa carga en paralelo
@@ -1520,6 +1556,7 @@ async function loadBuildings(municipio) {
     await waitForMap();
     const geojson = await fetchPromise;
     clearInterval(timer);
+    hideMapLoading();
     if (activeMunicipio !== municipio) return;
     const features = geojson.features || [];
     const loadingEl = document.getElementById('buildings-loading');
@@ -1618,6 +1655,7 @@ async function loadBuildings(municipio) {
     console.log(`Cargados ${features.length} edificios`);
   } catch (e) {
     clearInterval(timer);
+    hideMapLoading();
     const loadingEl = document.getElementById('buildings-loading');
     if (loadingEl) loadingEl.remove();
     console.error('Error cargando edificios:', e);
@@ -2239,11 +2277,13 @@ async function selectBuilding(feature) {
     const center = turf.centerOfMass(feature);
     const coords = center.geometry.coordinates;
     // Cargar diagnóstico comparativo y contexto oficial en paralelo
+    showMapLoading('Consultando fuentes oficiales…');
     const [diagResp, ctx, bdata] = await Promise.all([
       fetch(`${API}/zoning/building-diagnostic?height_m=${props.height || ''}&levels=${props.levels || ''}&footprint_m2=${footprint || ''}&subzona=${encodeURIComponent(props.subzona || '')}&municipio=${encodeURIComponent(props.municipio || activeMunicipio || '')}&lon=${coords[0]}&lat=${coords[1]}`).then(r => r.json()).catch(() => null),
       fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
       fetch(`${API}/official/building-data?lon=${coords[0]}&lat=${coords[1]}&osm_height=${props.height || ''}&osm_levels=${props.levels || ''}`).then(r => r.json()).catch(() => null),
     ]);
+    hideMapLoading();
     if (ctx) ctx.building_data = bdata || ctx.edificio_datos || {};
     window._officialContext = ctx || {};
     // Dibujar lindero de la parcela catastral si está disponible
@@ -2295,6 +2335,7 @@ async function selectBuilding(feature) {
       if (ph) ph.textContent = `Plantas oficiales Catastro INSPIRE (BuildingPart)${catCtx.sotanos_oficiales ? ' · ' + catCtx.sotanos_oficiales + ' sótano(s)' : ''}${props.plantas_estimadas ? ' — la estimación por altura daba ≈' + props.plantas_estimadas : ''}.`;
     }
   } catch (e) {
+    hideMapLoading();
     panel.innerHTML = html + '<div class="hint">No se pudo cargar el contexto oficial.</div>';
   }
 }
@@ -2343,9 +2384,12 @@ async function selectSubzone(feature) {
   try {
     const center = turf.centerOfMass(feature);
     const coords = center.geometry.coordinates;
+    showMapLoading('Consultando fuentes oficiales…');
     const ctx = await fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] });
+    hideMapLoading();
     panel.innerHTML = html + renderOfficialContext(ctx);
   } catch (e) {
+    hideMapLoading();
     panel.innerHTML = html + '<div class="hint">No se pudo cargar el contexto oficial.</div>';
   }
 }
