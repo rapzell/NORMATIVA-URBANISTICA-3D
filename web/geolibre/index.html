@@ -489,7 +489,11 @@ function goToProject(id) {
 
 // ===== Fin panel multi-proyecto =====
 
-function statusLabel(status) {
+function statusLabel(status, props) {
+  if (status === 'sin_dato' && props) {
+    if (props.ambito) return `Ámbito ${props.ambito} — instrumento propio`;
+    if (props.dotacion) return 'Parcela dotacional';
+  }
   return ({
     compatible: 'Compatible',
     supera_altura: 'Supera altura',
@@ -1221,7 +1225,7 @@ function showBuildingTooltip(feature, point) {
     <div class="tt-row"><span class="tt-key">${pilot ? 'Subzona piloto' : 'Ordenanza'}</span><span>${escapeHtml(props.subzona || props.subzona_piloto || '—')}${props.titulo_ordenanza ? ' · ' + escapeHtml(props.titulo_ordenanza) : ''}</span></div>
     ${props.ambito ? `<div class="tt-row"><span class="tt-key">Ámbito</span><span>${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''}</span></div>` : ''}
     <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${props.altura_maxima_subzona_m != null ? escapeHtml(props.altura_maxima_subzona_m) + ' m' : (props.altura_por_ancho_rua ? 'según ancho de rúa' : '—')}</span></div>
-    <div class="tt-badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</div>
+    <div class="tt-badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status, props))}</div>
   `;
   tooltipEl.style.display = 'block';
   tooltipEl.style.left = `${point.x + 14}px`;
@@ -1252,9 +1256,12 @@ function updateMapSummary(features) {
   const el = document.getElementById('map-summary');
   if (!el || !activeMunicipio) return;
   const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
+  let sinDatoExplicado = 0;
   for (const f of (features || [])) {
-    const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
+    const p = f.properties || {};
+    const s = p.cumplimiento_altura || 'sin_dato';
     stats[s] = (stats[s] || 0) + 1;
+    if (s === 'sin_dato' && (p.ambito || p.dotacion)) sinDatoExplicado++;
   }
   el.innerHTML = `
     <div class="sum-title">${escapeHtml(activeMunicipio)}</div>
@@ -1263,7 +1270,8 @@ function updateMapSummary(features) {
     <div class="sum-row"><span class="sum-key">Dentro límite piloto</span><span>${stats.orientativo_dentro}</span></div>
     <div class="sum-row"><span class="sum-key">Sobre límite piloto</span><span>${stats.orientativo_supera}</span></div>
     <div class="sum-row"><span class="sum-key">Sin límite en ordenanza</span><span>${stats.sin_limite}</span></div>
-    <div class="sum-row"><span class="sum-key">Sin dato</span><span>${stats.sin_dato}</span></div>
+    <div class="sum-row"><span class="sum-key">Sin dato</span><span>${stats.sin_dato - sinDatoExplicado}</span></div>
+    <div class="sum-row"><span class="sum-key">Ámbito / dotación</span><span>${sinDatoExplicado}</span></div>
   `;
   el.style.display = 'block';
 }
@@ -1438,17 +1446,21 @@ function renderOfficialContext(ctx) {
 
 function renderMunicipioStats(features) {
   const stats = { compatible: 0, supera_altura: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
+  let sinDatoExplicado = 0;
   for (const f of (features || [])) {
-    const s = (f.properties || {}).cumplimiento_altura || 'sin_dato';
+    const p = f.properties || {};
+    const s = p.cumplimiento_altura || 'sin_dato';
     stats[s] = (stats[s] || 0) + 1;
+    if (s === 'sin_dato' && (p.ambito || p.dotacion)) sinDatoExplicado++;
   }
   return `
     <div class="info-card">
       <div class="info-row"><span class="key">Dentro límite piloto</span><span class="val">${stats.orientativo_dentro}</span></div>
       <div class="info-row"><span class="key">Sobre límite piloto</span><span class="val">${stats.orientativo_supera}</span></div>
       <div class="info-row"><span class="key">Sin límite en ordenanza</span><span class="val">${stats.sin_limite}</span></div>
-      <div class="info-row"><span class="key">Sin dato normativo</span><span class="val">${stats.sin_dato}</span></div>
-      <div class="hint">Resultados orientativos: las subzonas piloto no representan la delimitación oficial.</div>
+      <div class="info-row"><span class="key">Sin dato normativo</span><span class="val">${stats.sin_dato - sinDatoExplicado}</span></div>
+      <div class="info-row"><span class="key">Ámbito propio / dotación</span><span class="val">${sinDatoExplicado}</span></div>
+      <div class="hint">«Ámbito propio / dotación»: parcelas que rigen por instrumento propio (PEP/PERI/PP/API) o son dotaciones — no llevan ordenanza general. Resultados orientativos: las subzonas piloto no representan la delimitación oficial.</div>
     </div>`;
 }
 
@@ -2169,7 +2181,7 @@ async function selectBuilding(feature) {
   if (!props.municipio && activeMunicipio) props.municipio = activeMunicipio;
 
   let html = `<h2>${escapeHtml(props.name || 'Edificio #' + (props.osm_id || 'OSM'))}</h2>`;
-  html += `<div style="margin-bottom:8px"><span class="badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span></div>`;
+  html += `<div style="margin-bottom:8px"><span class="badge ${statusClass(status)}">${escapeHtml(statusLabel(status, props))}</span></div>`;
   if (pilot) html += '<div class="hint" style="color:#d29922;margin-bottom:8px">Comparación piloto, no oficial. Verifica la parcela y la ordenanza en SIOTUGA/Catastro antes de tomar decisiones.</div>';
   html += '<div class="info-card">';
   html += `<div class="info-row"><span class="key">Tipo OSM</span><span class="val">${escapeHtml(buildingTypeLabel(props.building))}</span></div>`;
