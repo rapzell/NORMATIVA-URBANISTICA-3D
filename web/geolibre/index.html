@@ -99,9 +99,28 @@
   /* Mapa */
   #map { flex: 1; height: 100%; }
 
+  /* Barra de controles del mapa — fila flex plegable con chevron */
+  #map-toolbar {
+    position: absolute; top: 12px; right: 12px; z-index: 10;
+    display: flex; gap: 6px; align-items: flex-start;
+  }
+  #map-toolbar.collapsed button:not(#toolbar-collapse) { display: none; }
+  #toolbar-collapse {
+    padding: 8px 10px; background: #161b22; border: 1px solid #30363d;
+    color: #8b949e; border-radius: 8px; cursor: pointer; font-size: 13px;
+    font-weight: 600;
+  }
+  #toolbar-collapse:hover { background: #21262d; color: #e6edf3; }
+
+  /* Secciones plegables genéricas (leyendas del panel lateral) */
+  .collapse-head { cursor: pointer; font-size: 12px; color: #8b949e; margin-bottom: 8px; user-select: none; }
+  .collapse-head:hover { color: #e6edf3; }
+  .collapse-head .chev { float: right; color: #58a6ff; }
+  .collapsible.collapsed > .collapse-body { display: none; }
+  .collapsible.collapsed > .collapse-head { margin-bottom: 0; }
+
   /* Toggle 3D */
   #toggle-3d {
-    position: absolute; top: 12px; right: 12px; z-index: 10;
     padding: 8px 14px; background: #161b22; border: 1px solid #58a6ff;
     color: #58a6ff; border-radius: 8px; cursor: pointer; font-size: 13px;
     font-weight: 600;
@@ -110,7 +129,6 @@
   #toggle-3d.active { background: #1f6feb; color: #fff; }
 
   #toggle-afecciones {
-    position: absolute; top: 12px; right: 100px; z-index: 10;
     padding: 8px 14px; background: #161b22; border: 1px solid #f39c12;
     color: #f39c12; border-radius: 8px; cursor: pointer; font-size: 13px;
     font-weight: 600;
@@ -119,7 +137,6 @@
   #toggle-afecciones.active { background: #d68910; color: #fff; }
 
   #toggle-shadows {
-    position: absolute; top: 12px; right: 200px; z-index: 10;
     padding: 8px 14px; background: #161b22; border: 1px solid #9b59b6;
     color: #9b59b6; border-radius: 8px; cursor: pointer; font-size: 13px;
     font-weight: 600;
@@ -128,7 +145,6 @@
   #toggle-shadows.active { background: #8e44ad; color: #fff; }
 
   #toggle-projects {
-    position: absolute; top: 12px; right: 310px; z-index: 10;
     padding: 8px 14px; background: #161b22; border: 1px solid #58a6ff;
     color: #58a6ff; border-radius: 8px; cursor: pointer; font-size: 13px;
     font-weight: 600;
@@ -137,7 +153,6 @@
   #toggle-projects.active { background: #1f6feb; color: #fff; }
 
   #toggle-clasificacion {
-    position: absolute; top: 12px; right: 415px; z-index: 10;
     padding: 8px 14px; background: #161b22; border: 1px solid #2da44e;
     color: #2da44e; border-radius: 8px; cursor: pointer; font-size: 13px;
     font-weight: 600;
@@ -146,7 +161,6 @@
   #toggle-clasificacion.active { background: #2da44e; color: #fff; }
 
   #toggle-ords {
-    position: absolute; top: 12px; right: 555px; z-index: 10;
     padding: 8px 14px; background: #161b22; border: 1px solid #8b5cf6;
     color: #8b5cf6; border-radius: 8px; cursor: pointer; font-size: 13px;
     font-weight: 600;
@@ -219,9 +233,15 @@
     border: 1px solid #30363d; border-radius: 10px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.3); font-size: 12px;
   }
-  #map-summary .sum-title { color: #58a6ff; font-weight: 700; margin-bottom: 6px; }
+  #map-summary .sum-title { color: #58a6ff; font-weight: 700; margin-bottom: 6px; cursor: pointer; user-select: none; }
+  #map-summary .sum-title .chev { float: right; margin-left: 10px; }
+  #map-summary.collapsed .sum-title { margin-bottom: 0; }
+  #map-summary.collapsed .sum-body { display: none; }
   #map-summary .sum-row { display: flex; justify-content: space-between; margin: 2px 0; gap: 10px; }
   #map-summary .sum-key { color: #8b949e; }
+  #map-legend .leg-head { cursor: pointer; font-weight: 700; color: #58a6ff; user-select: none; }
+  #map-legend .leg-head .chev { float: right; margin-left: 10px; }
+  #map-legend.collapsed .leg-body { display: none; }
 
   /* Asistente IA de normativa */
   #toggle-chat {
@@ -283,38 +303,49 @@
         Pulsa un municipio para volar hasta alli, cargar edificios 3D y ver las subzonas.
         Haz clic en una subzona o en un edificio para ver su informacion.
       </div>
-      <div class="info-card">
-        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda edificios 3D</div>
+      <div class="info-card collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda edificios 3D <span class="chev">▸</span></div>
+        <div class="collapse-body">
         <div class="info-row"><span class="key" style="background:#9a6700;color:#fff">Amarillo</span><span class="val">dentro del límite piloto</span></div>
         <div class="info-row"><span class="key" style="background:#bc4c00;color:#fff">Naranja</span><span class="val">supera el límite piloto</span></div>
         <div class="info-row"><span class="key" style="background:#1976d2;color:#fff">Azul</span><span class="val">sin dato normativo</span></div>
         <div class="hint">Las comparaciones piloto no acreditan cumplimiento urbanístico.</div>
+        </div>
       </div>
-      <div class="info-card">
-        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda afecciones (SIOSE)</div>
+      <div class="info-card collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda afecciones (SIOSE) <span class="chev">▸</span></div>
+        <div class="collapse-body">
         <div class="info-row"><span class="key" style="background:#1a5276;color:#fff">Azul oscuro</span><span class="val">sensible por agua</span></div>
         <div class="info-row"><span class="key" style="background:#1e8449;color:#fff">Verde</span><span class="val">sensible natural</span></div>
         <div class="info-row"><span class="key" style="background:#7f8c8d;color:#fff">Gris</span><span class="val">artificial</span></div>
+        </div>
       </div>
-      <div class="info-card">
-        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Leyenda sombras</div>
+      <div class="info-card collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda sombras <span class="chev">▸</span></div>
+        <div class="collapse-body">
         <div class="info-row"><span class="key" style="background:#2c2c3e;color:#fff">Morado oscuro</span><span class="val">sombra proyectada</span></div>
         <div class="hint" style="margin-top:4px">Solsticio de invierno (21 dic)</div>
+        </div>
       </div>
-      <div class="info-card">
-        <div style="font-size:12px;color:#8b949e;margin-bottom:8px">Zonificación oficial</div>
+      <div class="info-card collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Zonificación oficial <span class="chev">▸</span></div>
+        <div class="collapse-body">
         <div class="hint" style="margin-top:4px">La zonificación del planeamiento vigente se carga automáticamente desde SIOTUGA (Xunta de Galicia) al seleccionar un municipio.</div>
+        </div>
       </div>
     </div>
   </div>
 
   <div style="position: relative; flex: 1;">
-    <button id="toggle-3d" class="active" onclick="toggle3D()">3D: ON</button>
-    <button id="toggle-afecciones" onclick="toggleAfecciones()">Afecciones: OFF</button>
-    <button id="toggle-shadows" onclick="toggleShadows()">Sombras: OFF</button>
-    <button id="toggle-projects" onclick="toggleProjects()">Proyectos</button>
-    <button id="toggle-clasificacion" onclick="toggleClasificacion()">Clasificación: OFF</button>
-    <button id="toggle-ords" onclick="toggleOrds()" title="Zonas de ordenanza oficial del Concello (vectorial)">Ordenanzas mapa: OFF</button>
+    <div id="map-toolbar">
+      <button id="toggle-3d" class="active" onclick="toggle3D()">3D: ON</button>
+      <button id="toggle-afecciones" onclick="toggleAfecciones()">Afecciones: OFF</button>
+      <button id="toggle-shadows" onclick="toggleShadows()">Sombras: OFF</button>
+      <button id="toggle-projects" onclick="toggleProjects()">Proyectos</button>
+      <button id="toggle-clasificacion" onclick="toggleClasificacion()">Clasificación: OFF</button>
+      <button id="toggle-ords" onclick="toggleOrds()" title="Zonas de ordenanza oficial del Concello (vectorial)">Ordenanzas mapa: OFF</button>
+      <button id="toolbar-collapse" onclick="toggleToolbar()" title="Plegar controles">«</button>
+    </div>
     <div id="shadow-controls" style="display:none;position:absolute;top:50px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
       <div style="font-weight:600;margin-bottom:6px;color:#9b59b6">Hora del día (UTC)</div>
       <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
@@ -1076,6 +1107,39 @@ async function toggleOrds() {
   updateMapLegend();
 }
 
+function toggleToolbar() {
+  const tb = document.getElementById('map-toolbar');
+  const btn = document.getElementById('toolbar-collapse');
+  if (!tb || !btn) return;
+  const collapsed = tb.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '»' : '«';
+  btn.title = collapsed ? 'Desplegar controles' : 'Plegar controles';
+}
+
+function toggleCollapse(head) {
+  const card = head.parentElement;
+  if (!card) return;
+  const collapsed = card.classList.toggle('collapsed');
+  const chev = head.querySelector('.chev');
+  if (chev) chev.textContent = collapsed ? '▸' : '▾';
+}
+
+function toggleLegend() {
+  const el = document.getElementById('map-legend');
+  if (!el) return;
+  el.classList.toggle('collapsed');
+  const chev = el.querySelector('.leg-head .chev');
+  if (chev) chev.textContent = el.classList.contains('collapsed') ? '▸' : '▾';
+}
+
+function toggleSummary() {
+  const el = document.getElementById('map-summary');
+  if (!el) return;
+  el.classList.toggle('collapsed');
+  const chev = el.querySelector('.sum-title .chev');
+  if (chev) chev.textContent = el.classList.contains('collapsed') ? '▸' : '▾';
+}
+
 // Leyenda de las capas de referencia activas (se actualiza al tocar
 // cualquier toggle): explica qué significa cada color/capa.
 function updateMapLegend() {
@@ -1094,7 +1158,10 @@ function updateMapLegend() {
     h += (h ? '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:4px">' : '<div>')
       + '<b>Ordenanzas Concello</b> — contornos morados + código U-n de cada zona (capa oficial)</div>';
   }
-  el.innerHTML = h;
+  const chev = el.classList.contains('collapsed') ? '▸' : '▾';
+  el.innerHTML = h
+    ? `<div class="leg-head" onclick="toggleLegend()">Capas <span class="chev">${chev}</span></div><div class="leg-body">${h}</div>`
+    : '';
   el.style.display = h ? 'block' : 'none';
 }
 
@@ -1297,8 +1364,10 @@ function updateMapSummary(features) {
     stats[s] = (stats[s] || 0) + 1;
     if (s === 'sin_dato' && (p.ambito || p.dotacion)) sinDatoExplicado++;
   }
+  const chev = el.classList.contains('collapsed') ? '▸' : '▾';
   el.innerHTML = `
-    <div class="sum-title">${escapeHtml(activeMunicipio)}</div>
+    <div class="sum-title" onclick="toggleSummary()">${escapeHtml(activeMunicipio)} <span class="chev">${chev}</span></div>
+    <div class="sum-body">
     <div class="sum-row"><span class="sum-key">Subzonas piloto</span><span>${(allSubzones && allSubzones.features ? allSubzones.features.length : 0)}</span></div>
     <div class="sum-row"><span class="sum-key">Edificios 3D</span><span>${(features || []).length}</span></div>
     <div class="sum-row"><span class="sum-key">Dentro límite piloto</span><span>${stats.orientativo_dentro}</span></div>
@@ -1306,6 +1375,7 @@ function updateMapSummary(features) {
     <div class="sum-row"><span class="sum-key">Sin límite en ordenanza</span><span>${stats.sin_limite}</span></div>
     <div class="sum-row"><span class="sum-key">Sin dato</span><span>${stats.sin_dato - sinDatoExplicado}</span></div>
     <div class="sum-row"><span class="sum-key">Ámbito / dotación</span><span>${sinDatoExplicado}</span></div>
+    </div>
   `;
   el.style.display = 'block';
 }
