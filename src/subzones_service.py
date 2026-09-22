@@ -33,7 +33,7 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v7: estado sin_limite para ordenanzas de conservación;
 # v8: altura_medida_m/altura_osm_m — altura real MDSN por huella) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 14
+_PROPS_SCHEMA = 15
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -1613,14 +1613,33 @@ def _classify_building_compliance(height: float, subzone_props: dict[str, Any] |
             "detail": (f"Altura por encima del máximo de subzona ({h} m > "
                        f"{limit_f} m de cornisa) y también del tope absoluto "
                        f"({abs_f} m desde cualquier punto del terreno, exceso "
-                       f"{excess_abs} m)"),
+                       f"{excess_abs} m)." + _causas_supera(excess_abs)),
             "color_semantics": "rojo = supera la altura máxima",
         }
     return {
         "status": "supera_altura",
-        "detail": f"Altura por encima del máximo de subzona ({h} m > {limit_f} m, exceso {excess} m)",
+        "detail": (f"Altura por encima del máximo de subzona "
+                   f"({h} m > {limit_f} m, exceso {excess} m)."
+                   + _causas_supera(excess)),
         "color_semantics": "rojo = supera la altura máxima",
     }
+
+
+def _causas_supera(exceso_m: float) -> str:
+    """Causas habituales de que un edificio existente supere el límite:
+    las ordenanzas regulan obra nueva, no lo ya construido."""
+    if exceso_m <= 1.5:
+        return (" Exceso marginal — suele ser un remate no computable "
+                "(ascensor, chimenea, instalaciones de cubierta), la "
+                "tolerancia del raster nDSM (2,5 m) o la medición en "
+                "pendiente: el límite normativo se cuenta desde la "
+                "rasante de la calle.")
+    return (" Exceso considerable — lo más habitual es que el edificio "
+            "sea anterior al planeamiento vigente (fuera de ordenación "
+            "consolidada, situación legal) o que la huella incluya un "
+            "elemento alto (torre, remate, edificio contiguo solapado "
+            "en OSM). Si la obra es posterior al plan, verificar "
+            "licencia.")
 
 
 def _building_height_details(tags: dict[str, Any]) -> dict[str, Any]:

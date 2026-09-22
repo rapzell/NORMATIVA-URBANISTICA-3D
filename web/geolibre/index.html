@@ -2413,6 +2413,16 @@ async function selectBuilding(feature) {
       if (pv) pv.innerHTML = `${escapeHtml(String(catCtx.plantas_oficiales))} (Catastro)${qualityBadge('official')}`;
       const ph = document.getElementById('plantas-hint');
       if (ph) ph.textContent = `Plantas oficiales Catastro INSPIRE (BuildingPart)${catCtx.sotanos_oficiales ? ' · ' + catCtx.sotanos_oficiales + ' sótano(s)' : ''}${props.plantas_estimadas ? ' — la estimación por altura daba ≈' + props.plantas_estimadas : ''}.`;
+      // Coherencia plantas Catastro vs altura nDSM: si el raster mide
+      // bastante más que las plantas declaradas (+2 m de cubierta/
+      // remate), probablemente captó un elemento alto de la huella.
+      const nPlantas = parseInt(catCtx.plantas_oficiales, 10);
+      if (Number.isFinite(nPlantas) && props.altura_medida_m != null
+          && props.altura_medida_m > nPlantas * 3.2 + 2.5) {
+        const nota = `El nDSM mide ${props.altura_medida_m} m pero Catastro declara ${nPlantas} plantas (~${Math.round(nPlantas * 3.2)} m) — la diferencia suele ser un elemento alto dentro de la huella (torre, remate) o una huella OSM solapada con un edificio contiguo.`;
+        if (ph) ph.textContent += ' ' + nota;
+        else if (pv) pv.closest('.info-row').insertAdjacentHTML('afterend', `<div class="hint" style="margin:-4px 0 6px">${escapeHtml(nota)}</div>`);
+      }
     }
   } catch (e) {
     hideMapLoading();
