@@ -164,13 +164,17 @@ if _BETA_PASSWORD:
         return JSONResponse({'detail': 'beta password required'},
                             status_code=401)
 
+    from starlette.requests import Request as _StarletteRequest
+
     @app.api_route('/beta-login', methods=['GET', 'POST'],
                    include_in_schema=False)
-    async def beta_login(request: Request):
+    async def beta_login(request: _StarletteRequest):
         if request.method == 'GET':
             return HTMLResponse(_BETA_LOGIN_HTML)
-        form = await request.form()
-        if str(form.get('password', '')) == _BETA_PASSWORD:
+        from urllib.parse import parse_qs as _parse_qs
+        body = (await request.body()).decode('utf-8', 'replace')
+        password = _parse_qs(body).get('password', [''])[0]
+        if password == _BETA_PASSWORD:
             resp = RedirectResponse('/geolibre/', status_code=303)
             resp.set_cookie(
                 _BETA_COOKIE, _BETA_TOKEN, httponly=True,
