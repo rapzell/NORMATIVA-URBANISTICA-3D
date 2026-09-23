@@ -1,0 +1,30 @@
+# Mantiene despierto el servicio beta en Render free (duerme a los
+# ~15 min sin tráfico). Un GET a /beta-login cada 5 min basta: devuelve
+# 200 sin autenticación y cuenta como actividad.
+#
+# OJO: los workflows programados solo corren desde la rama por
+# defecto del repo (main). GitHub puede retrasar cron bajo carga —
+# si el ping llega tarde una vez, el servicio duerme y la siguiente
+# visita tarda ~30-60 s (cold start puntual, no error).
+#
+# GitHub desactiva schedules en repos con 60 días sin actividad;
+# basta un commit para reactivarlo.
+name: keepalive-beta
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:   # permite probarlo a mano desde la pestaña Actions
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping beta
+        run: |
+          code=$(curl -fsS -o /dev/null -w "%{http_code}" \
+            --max-time 60 \
+            https://normativa-galicia-beta.onrender.com/beta-login)
+          echo "beta-login -> $code"
+          test "$code" = "200"
