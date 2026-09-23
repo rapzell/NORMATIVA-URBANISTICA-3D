@@ -99,18 +99,90 @@
   /* Mapa */
   #map { flex: 1; height: 100%; }
 
-  /* Barra de controles del mapa — fila flex plegable con chevron */
-  #map-toolbar {
-    position: absolute; top: 12px; right: 12px; z-index: 10;
-    display: flex; gap: 6px; align-items: flex-start;
+  /* ── Toolbar superior unificada (rediseño UI) ── */
+  .visor-toolbar {
+    position: absolute; top: 12px; left: 12px; right: 12px; z-index: 10;
+    display: flex; align-items: center; gap: 14px;
+    padding: 6px 12px;
+    background: rgba(13, 17, 23, 0.92);
+    border: 1px solid #30363d; border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.32);
+    backdrop-filter: blur(12px);
+    overflow-x: auto; scrollbar-width: none;
   }
-  #map-toolbar.collapsed button:not(#toolbar-collapse) { display: none; }
+  .visor-toolbar::-webkit-scrollbar { display: none; }
+  .visor-toolbar.collapsed .toolbar-group { display: none; }
+
+  .toolbar-brand {
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    padding-right: 14px; border-right: 1px solid #30363d;
+  }
+  .brand-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #58a6ff; box-shadow: 0 0 10px #58a6ff;
+  }
+  .brand-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #e6edf3;
+  }
+
+  .toolbar-group {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+    padding-right: 14px; border-right: 1px solid #30363d;
+  }
+  .toolbar-group:last-of-type { border-right: none; padding-right: 0; }
+  .toolbar-group-label {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #8b949e; margin-right: 2px;
+  }
+
+  .tool-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; background: transparent;
+    border: 1px solid transparent; border-radius: 6px;
+    color: #8b949e; font-size: 12px; font-weight: 500;
+    cursor: pointer; white-space: nowrap;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .tool-btn::before { font-size: 13px; line-height: 1; }
+  .tool-btn:hover { background: rgba(148,163,184,0.08); color: #e6edf3; }
+  .tool-btn.active, .tool-btn[aria-pressed="true"] {
+    background: rgba(88,166,255,0.14);
+    border-color: rgba(88,166,255,0.45); color: #e6edf3;
+  }
+  #toggle-clasificacion::before { content: '◧'; }
+  #toggle-ords::before          { content: '▤'; }
+  #toggle-afecciones::before    { content: '⚠'; }
+  #toggle-3d::before            { content: '◫'; }
+  #toggle-shadows::before       { content: '☀'; }
+  #toggle-projects::before      { content: '▣'; }
+  #toggle-save::before          { content: '⎘'; }
+
   #toolbar-collapse {
-    padding: 8px 10px; background: #161b22; border: 1px solid #30363d;
-    color: #8b949e; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
+    margin-left: auto; flex-shrink: 0;
+    padding: 6px 10px; background: transparent; border: 1px solid #30363d;
+    color: #8b949e; border-radius: 6px; cursor: pointer;
+    font-size: 13px; font-weight: 600;
   }
-  #toolbar-collapse:hover { background: #21262d; color: #e6edf3; }
+  #toolbar-collapse:hover { background: rgba(148,163,184,0.1); color: #e6edf3; }
+
+  /* ── Panel de capas unificado (leyenda, izquierda sobre el mapa) ── */
+  .visor-panel-layers {
+    position: absolute; top: 64px; left: 12px; z-index: 9;
+    width: 250px; max-height: calc(100% - 300px); overflow-y: auto;
+    background: rgba(13, 17, 23, 0.88);
+    border: 1px solid #30363d; border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.32);
+    backdrop-filter: blur(12px);
+    font-size: 11.5px; color: #c9d1d9;
+  }
+  .visor-panel-layers .layer-section { border-bottom: 1px solid #30363d; padding: 8px 12px; }
+  .visor-panel-layers .layer-section:last-child { border-bottom: none; }
+  .visor-panel-layers .collapse-head { margin-bottom: 0; font-weight: 600; color: #c9d1d9; }
+  .visor-panel-layers .collapsible:not(.collapsed) > .collapse-head { margin-bottom: 6px; }
+  .visor-panel-layers .info-row { padding: 2px 0; }
+  .visor-panel-layers .hint { margin-top: 4px; }
+  #map-legend { font-size: 11px; line-height: 1.7; padding: 8px 12px; }
 
   /* Secciones plegables genéricas (leyendas del panel lateral) */
   .collapse-head { cursor: pointer; font-size: 12px; color: #8b949e; margin-bottom: 8px; user-select: none; }
@@ -118,55 +190,6 @@
   .collapse-head .chev { float: right; color: #58a6ff; }
   .collapsible.collapsed > .collapse-body { display: none; }
   .collapsible.collapsed > .collapse-head { margin-bottom: 0; }
-
-  /* Toggle 3D */
-  #toggle-3d {
-    padding: 8px 14px; background: #161b22; border: 1px solid #58a6ff;
-    color: #58a6ff; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
-  }
-  #toggle-3d:hover { background: #21262d; }
-  #toggle-3d.active { background: #1f6feb; color: #fff; }
-
-  #toggle-afecciones {
-    padding: 8px 14px; background: #161b22; border: 1px solid #f39c12;
-    color: #f39c12; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
-  }
-  #toggle-afecciones:hover { background: #21262d; }
-  #toggle-afecciones.active { background: #d68910; color: #fff; }
-
-  #toggle-shadows {
-    padding: 8px 14px; background: #161b22; border: 1px solid #9b59b6;
-    color: #9b59b6; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
-  }
-  #toggle-shadows:hover { background: #21262d; }
-  #toggle-shadows.active { background: #8e44ad; color: #fff; }
-
-  #toggle-projects {
-    padding: 8px 14px; background: #161b22; border: 1px solid #58a6ff;
-    color: #58a6ff; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
-  }
-  #toggle-projects:hover { background: #21262d; }
-  #toggle-projects.active { background: #1f6feb; color: #fff; }
-
-  #toggle-clasificacion {
-    padding: 8px 14px; background: #161b22; border: 1px solid #2da44e;
-    color: #2da44e; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
-  }
-  #toggle-clasificacion:hover { background: #21262d; }
-  #toggle-clasificacion.active { background: #2da44e; color: #fff; }
-
-  #toggle-ords {
-    padding: 8px 14px; background: #161b22; border: 1px solid #8b5cf6;
-    color: #8b5cf6; border-radius: 8px; cursor: pointer; font-size: 13px;
-    font-weight: 600;
-  }
-  #toggle-ords:hover { background: #21262d; }
-  #toggle-ords.active { background: #8b5cf6; color: #fff; }
 
   .q-badge {
     display: inline-block; padding: 1px 6px; border-radius: 6px;
@@ -180,7 +203,7 @@
 
   /* Panel de proyectos */
   #projects-panel {
-    position: absolute; top: 52px; right: 12px; z-index: 15;
+    position: absolute; top: 64px; right: 12px; z-index: 15;
     width: 300px; max-height: 60vh; overflow-y: auto;
     background: rgba(13, 17, 23, 0.96); border: 1px solid #30363d;
     border-radius: 10px; padding: 14px; display: none;
@@ -233,6 +256,7 @@
     background: rgba(13, 17, 23, 0.94); color: #e6edf3;
     border: 1px solid #30363d; border-radius: 10px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.3); font-size: 12px;
+    backdrop-filter: blur(12px);
   }
   #map-summary .sum-title { color: #58a6ff; font-weight: 700; margin-bottom: 6px; cursor: pointer; user-select: none; }
   #map-summary .sum-title .chev { float: right; margin-left: 10px; }
@@ -244,16 +268,22 @@
   #map-legend .leg-head .chev { float: right; margin-left: 10px; }
   #map-legend.collapsed .leg-body { display: none; }
 
-  /* Asistente IA de normativa */
+  /* Asistente IA de normativa — FAB inferior derecho, encima del zoom */
   #toggle-chat {
-    position: absolute; bottom: 16px; right: 12px; z-index: 11;
-    background: #1f6feb; color: #fff; border: none; border-radius: 20px;
-    padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    position: absolute; bottom: 130px; right: 12px; z-index: 11;
+    display: inline-flex; align-items: center; gap: 8px;
+    background: #1f6feb; color: #fff; border: none; border-radius: 999px;
+    padding: 10px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 8px 24px rgba(31,111,235,0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
   }
-  #toggle-chat:hover { background: #388bfd; }
+  #toggle-chat::before { content: '💬'; }
+  #toggle-chat:hover {
+    background: #388bfd; transform: translateY(-1px);
+    box-shadow: 0 10px 28px rgba(31,111,235,0.5);
+  }
   #chat-panel {
-    display: none; position: absolute; bottom: 16px; right: 12px; z-index: 12;
+    display: none; position: absolute; bottom: 16px; right: 64px; z-index: 12;
     width: 380px; max-width: 92vw; height: 480px; max-height: 78vh;
     background: #161b22; border: 1px solid #30363d; border-radius: 12px;
     box-shadow: 0 10px 32px rgba(0,0,0,0.5);
@@ -284,6 +314,16 @@
   #chat-send { background: #1f6feb; color: #fff; border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-weight: 600; }
   #chat-send:disabled { opacity: 0.5; cursor: default; }
   .chat-thinking { color: #8b949e; font-style: italic; }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .visor-panel-layers { width: 210px; }
+    .toolbar-group-label { display: none; }
+  }
+  @media (max-width: 640px) {
+    .visor-panel-layers { display: none; }
+    .brand-label { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -304,53 +344,72 @@
         Pulsa un municipio para volar hasta alli, cargar edificios 3D y ver las subzonas.
         Haz clic en una subzona o en un edificio para ver su informacion.
       </div>
-      <div class="info-card collapsible collapsed">
-        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda edificios 3D <span class="chev">▸</span></div>
-        <div class="collapse-body">
-        <div class="info-row"><span class="key" style="background:#2da44e;color:#fff">Verde</span><span class="val">dentro del máximo oficial</span></div>
-        <div class="info-row"><span class="key" style="background:#e8a13a;color:#fff">Ámbar</span><span class="val">sobre cornisa, ≤ tope absoluto (cubierta)</span></div>
-        <div class="info-row"><span class="key" style="background:#f85149;color:#fff">Rojo</span><span class="val">supera el tope absoluto</span></div>
-        <div class="info-row"><span class="key" style="background:#9a6700;color:#fff">Amarillo</span><span class="val">dentro del límite piloto</span></div>
-        <div class="info-row"><span class="key" style="background:#bc4c00;color:#fff">Naranja</span><span class="val">supera el límite piloto</span></div>
-        <div class="info-row"><span class="key" style="background:#1976d2;color:#fff">Azul</span><span class="val">sin dato normativo</span></div>
-        <div class="hint">Las comparaciones piloto no acreditan cumplimiento urbanístico. «Ámbar»: la altura medida supera la altura a cornisa pero no el tope absoluto — normalmente es la cubierta.</div>
-        </div>
-      </div>
-      <div class="info-card collapsible collapsed">
-        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda afecciones (SIOSE) <span class="chev">▸</span></div>
-        <div class="collapse-body">
-        <div class="info-row"><span class="key" style="background:#1a5276;color:#fff">Azul oscuro</span><span class="val">sensible por agua</span></div>
-        <div class="info-row"><span class="key" style="background:#1e8449;color:#fff">Verde</span><span class="val">sensible natural</span></div>
-        <div class="info-row"><span class="key" style="background:#7f8c8d;color:#fff">Gris</span><span class="val">artificial</span></div>
-        </div>
-      </div>
-      <div class="info-card collapsible collapsed">
-        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda sombras <span class="chev">▸</span></div>
-        <div class="collapse-body">
-        <div class="info-row"><span class="key" style="background:#2c2c3e;color:#fff">Morado oscuro</span><span class="val">sombra proyectada</span></div>
-        <div class="hint" style="margin-top:4px">Solsticio de invierno (21 dic)</div>
-        </div>
-      </div>
-      <div class="info-card collapsible collapsed">
-        <div class="collapse-head" onclick="toggleCollapse(this)">Zonificación oficial <span class="chev">▸</span></div>
-        <div class="collapse-body">
-        <div class="hint" style="margin-top:4px">La zonificación del planeamiento vigente se carga automáticamente desde SIOTUGA (Xunta de Galicia) al seleccionar un municipio.</div>
-        </div>
-      </div>
     </div>
   </div>
 
   <div style="position: relative; flex: 1;">
-    <div id="map-toolbar">
-      <button id="toggle-3d" class="active" onclick="toggle3D()">3D: ON</button>
-      <button id="toggle-afecciones" onclick="toggleAfecciones()">Afecciones: OFF</button>
-      <button id="toggle-shadows" onclick="toggleShadows()">Sombras: OFF</button>
-      <button id="toggle-projects" onclick="toggleProjects()">Proyectos</button>
-      <button id="toggle-clasificacion" onclick="toggleClasificacion()">Clasificación: OFF</button>
-      <button id="toggle-ords" onclick="toggleOrds()" title="Zonas de ordenanza oficial del Concello (vectorial)">Ordenanzas mapa: OFF</button>
+    <header class="visor-toolbar" id="map-toolbar" role="toolbar" aria-label="Herramientas del visor">
+      <div class="toolbar-brand">
+        <span class="brand-dot"></span>
+        <span class="brand-label">NORMATIVA GALICIA 3D</span>
+      </div>
+      <nav class="toolbar-group" aria-label="Capas">
+        <span class="toolbar-group-label">Capas</span>
+        <button id="toggle-clasificacion" class="tool-btn" aria-pressed="false" onclick="toggleClasificacion()" title="Clasificación del suelo — capa oficial SIOTUGA">Clasificación: OFF</button>
+        <button id="toggle-ords" class="tool-btn" aria-pressed="false" onclick="toggleOrds()" title="Zonas de ordenanza oficial del Concello (vectorial)">Ordenanzas mapa: OFF</button>
+        <button id="toggle-afecciones" class="tool-btn" aria-pressed="false" onclick="toggleAfecciones()" title="Afecciones ambientales SIOSE (agua, vegetación sensible…)">Afecciones: OFF</button>
+        <button id="toggle-3d" class="tool-btn active" aria-pressed="true" onclick="toggle3D()" title="Extrusión 3D de los edificios">3D: ON</button>
+      </nav>
+      <nav class="toolbar-group" aria-label="Análisis">
+        <span class="toolbar-group-label">Análisis</span>
+        <button id="toggle-shadows" class="tool-btn" aria-pressed="false" onclick="toggleShadows()" title="Sombras proyectadas (solsticio de invierno)">Sombras: OFF</button>
+      </nav>
+      <nav class="toolbar-group" aria-label="Proyecto">
+        <span class="toolbar-group-label">Proyecto</span>
+        <button id="toggle-projects" class="tool-btn" onclick="toggleProjects()" title="Proyectos guardados en este navegador">Proyectos</button>
+        <button id="toggle-save" class="tool-btn" onclick="saveAsProject()" title="Guardar el edificio seleccionado como proyecto">Guardar</button>
+      </nav>
       <button id="toolbar-collapse" onclick="toggleToolbar()" title="Plegar controles">«</button>
-    </div>
-    <div id="shadow-controls" style="display:none;position:absolute;top:50px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
+    </header>
+    <aside class="visor-panel-layers" aria-label="Capas y leyenda">
+      <div class="layer-section" style="padding:0">
+        <div id="map-legend" style="display:none"></div>
+      </div>
+      <div class="layer-section collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda edificios 3D <span class="chev">▸</span></div>
+        <div class="collapse-body">
+          <div class="info-row"><span class="key" style="background:#2da44e;color:#fff">Verde</span><span class="val">dentro del máximo oficial</span></div>
+          <div class="info-row"><span class="key" style="background:#e8a13a;color:#fff">Ámbar</span><span class="val">sobre cornisa, ≤ tope absoluto (cubierta)</span></div>
+          <div class="info-row"><span class="key" style="background:#f85149;color:#fff">Rojo</span><span class="val">supera el tope absoluto</span></div>
+          <div class="info-row"><span class="key" style="background:#9a6700;color:#fff">Amarillo</span><span class="val">dentro del límite piloto</span></div>
+          <div class="info-row"><span class="key" style="background:#bc4c00;color:#fff">Naranja</span><span class="val">supera el límite piloto</span></div>
+          <div class="info-row"><span class="key" style="background:#1976d2;color:#fff">Azul</span><span class="val">sin dato normativo</span></div>
+          <div class="hint">Las comparaciones piloto no acreditan cumplimiento urbanístico. «Ámbar»: la altura medida supera la altura a cornisa pero no el tope absoluto — normalmente es la cubierta.</div>
+        </div>
+      </div>
+      <div class="layer-section collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda afecciones (SIOSE) <span class="chev">▸</span></div>
+        <div class="collapse-body">
+          <div class="info-row"><span class="key" style="background:#1a5276;color:#fff">Azul oscuro</span><span class="val">sensible por agua</span></div>
+          <div class="info-row"><span class="key" style="background:#1e8449;color:#fff">Verde</span><span class="val">sensible natural</span></div>
+          <div class="info-row"><span class="key" style="background:#7f8c8d;color:#fff">Gris</span><span class="val">artificial</span></div>
+        </div>
+      </div>
+      <div class="layer-section collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Leyenda sombras <span class="chev">▸</span></div>
+        <div class="collapse-body">
+          <div class="info-row"><span class="key" style="background:#2c2c3e;color:#fff">Morado oscuro</span><span class="val">sombra proyectada</span></div>
+          <div class="hint">Solsticio de invierno (21 dic)</div>
+        </div>
+      </div>
+      <div class="layer-section collapsible collapsed">
+        <div class="collapse-head" onclick="toggleCollapse(this)">Zonificación oficial <span class="chev">▸</span></div>
+        <div class="collapse-body">
+          <div class="hint">La zonificación del planeamiento vigente se carga automáticamente desde SIOTUGA (Xunta de Galicia) al seleccionar un municipio.</div>
+        </div>
+      </div>
+    </aside>
+    <div id="shadow-controls" style="display:none;position:absolute;top:64px;right:12px;z-index:10;background:#161b22;border:1px solid #9b59b6;border-radius:8px;padding:10px 14px;color:#c9d1d9;font-size:12px;min-width:260px">
       <div style="font-weight:600;margin-bottom:6px;color:#9b59b6">Hora del día (UTC)</div>
       <input type="range" id="shadow-slider" min="6" max="21" value="12" step="1" style="width:100%;accent-color:#9b59b6" oninput="onShadowSliderChange(this.value)" />
       <div id="shadow-slider-info" style="margin-top:6px;color:#8b949e">Hora: 12:00 UTC</div>
@@ -358,7 +417,6 @@
     <div id="map-loading"><div class="spinner"></div><span id="map-loading-text">Cargando…</span></div>
     <div id="building-tooltip"></div>
     <div id="map-summary" style="display:none"></div>
-    <div id="map-legend" style="display:none;position:absolute;top:52px;left:12px;z-index:10;background:rgba(22,27,34,0.92);border:1px solid #30363d;border-radius:8px;padding:8px 12px;color:#c9d1d9;font-size:11px;max-width:250px;line-height:1.7"></div>
     <button id="toggle-chat" onclick="toggleChat()">Asistente normativa</button>
     <div id="chat-panel">
       <div id="chat-header">
@@ -446,6 +504,7 @@ function toggleProjects() {
   const open = panel.style.display === 'block';
   panel.style.display = open ? 'none' : 'block';
   btn.classList.toggle('active', !open);
+  btn.setAttribute('aria-pressed', String(!open));
   if (!open) renderProjectsList();
 }
 
@@ -611,7 +670,7 @@ function initMap() {
     pitch: 60,
     bearing: -20
   });
-  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
   map.on('load', () => { mapReady = true; console.log('Mapa listo'); });
   map.on('error', (e) => { console.error('Error mapa:', e); });
 }
@@ -811,6 +870,7 @@ function renderSubzones3D(data) {
 function toggle3D() {
   show3D = !show3D;
   const btn = document.getElementById('toggle-3d');
+  btn.setAttribute('aria-pressed', String(show3D));
   if (show3D) {
     btn.textContent = '3D: ON';
     btn.classList.add('active');
@@ -890,6 +950,7 @@ async function loadAfecciones() {
 function toggleAfecciones() {
   showAfecciones = !showAfecciones;
   const btn = document.getElementById('toggle-afecciones');
+  btn.setAttribute('aria-pressed', String(showAfecciones));
   if (showAfecciones) {
     btn.textContent = 'Afecciones: ON';
     btn.classList.add('active');
@@ -1051,6 +1112,7 @@ async function toggleOrds() {
   if (!showOrds) {
     btn.textContent = 'Ordenanzas mapa: OFF';
     btn.classList.remove('active');
+    btn.setAttribute('aria-pressed', 'false');
     for (const l of [...ORDS_LAYERS, 'ords-layer'])
       if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
     updateMapLegend();
@@ -1059,6 +1121,7 @@ async function toggleOrds() {
   const ine = MUNI_INE[activeMunicipio];
   if (!ine || !MUNI_ORDS_LAYER[ine]) {
     btn.textContent = 'Ordenanzas mapa: sin capa';
+    btn.setAttribute('aria-pressed', 'false');
     showOrds = false;
     return;
   }
@@ -1068,6 +1131,7 @@ async function toggleOrds() {
     const gj = await resp.json();
     if (!resp.ok || !(gj.features || []).length) {
       btn.textContent = 'Ordenanzas mapa: sin capa';
+      btn.setAttribute('aria-pressed', 'false');
       showOrds = false;
       return;
     }
@@ -1104,9 +1168,11 @@ async function toggleOrds() {
     }
     btn.textContent = 'Ordenanzas mapa: ON';
     btn.classList.add('active');
+    btn.setAttribute('aria-pressed', 'true');
   } catch (e) {
     console.warn('Error cargando ordenanzas municipales:', e);
     btn.textContent = 'Ordenanzas mapa: error';
+    btn.setAttribute('aria-pressed', 'false');
     showOrds = false;
   }
   updateMapLegend();
@@ -1173,6 +1239,7 @@ function updateMapLegend() {
 function toggleClasificacion() {
   showClasificacion = !showClasificacion;
   const btn = document.getElementById('toggle-clasificacion');
+  btn.setAttribute('aria-pressed', String(showClasificacion));
   if (showClasificacion) {
     if (!clasificacionLoaded) {
       loadClasificacion();
@@ -1294,6 +1361,7 @@ function onShadowSliderChange(val) {
 function toggleShadows() {
   showShadows = !showShadows;
   const btn = document.getElementById('toggle-shadows');
+  btn.setAttribute('aria-pressed', String(showShadows));
   const controls = document.getElementById('shadow-controls');
   if (showShadows) {
     btn.textContent = 'Sombras: ON';
