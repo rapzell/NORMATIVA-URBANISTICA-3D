@@ -50,12 +50,13 @@ class DebugPlanResponse(BaseModel):
     params: dict
 
 import os
+from pathlib import Path
 from typing import Optional
 import mimetypes
 import logging
 from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, HTTPException, Response, Body, Request
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -4173,6 +4174,12 @@ def official_ordenanzas_vector(ine: str):
   if key not in ORDSUC_LAYERS:
     raise HTTPException(status_code=404,
                         detail='Sin capa de ordenanzas para ese INE')
+  # GeoJSON precomputado (scripts/generate_map_layers.py): se sirve
+  # directo de disco — en instancias de 512 MB el parse + reserializado
+  # de la capa completa agota la memoria y tumba el proceso.
+  slim = Path('datos/mapas') / f'{key}_ordenanzas.geojson'
+  if slim.is_file():
+    return FileResponse(str(slim), media_type='application/json')
   feats = capa_features(key)
   slim = [{
     'type': 'Feature',
@@ -4218,6 +4225,13 @@ def official_siotuga_clasificacion(municipio: Optional[str] = None,
         bb = (parts[0], parts[1], parts[2], parts[3])
     except Exception:
       bb = None
+  # Capa completa precomputada (scripts/generate_map_layers.py): el
+  # visor pide la capa entera sin bbox; servir el fichero evita parsear
+  # ~14 MB de GeoJSON en RAM, que en 512 MB mata el worker.
+  if bb is None:
+    slim = Path('datos/mapas') / f'{ine}_clasificacion.geojson'
+    if slim.is_file():
+      return FileResponse(str(slim), media_type='application/json')
   from src.siotuga.vector_downloader import obtener_capa_geojson
   try:
     fc = obtener_capa_geojson(ine, layer, bbox=bb)
