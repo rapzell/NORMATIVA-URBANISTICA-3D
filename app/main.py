@@ -49,7 +49,9 @@ class DebugPlanResponse(BaseModel):
     provider: str
     params: dict
 
+import functools
 import os
+import threading
 from pathlib import Path
 from typing import Optional
 import mimetypes
@@ -77,6 +79,21 @@ except ImportError:
     pass
 
 API_VERSION = "0.2.1"
+
+# Los endpoints que resuelven contexto geoespacial construyen STRtrees
+# de capas grandes (3CLAS, 4ORDSUC, 2DOTPOL, ordenanzas municipales).
+# En instancias de 512 MB (Render free) dos builds concurrentes agotan
+# la memoria y el proceso muere (502). Este lock los serializa: el
+# primer clic tarda un poco más, los siguientes reutilizan la caché.
+_GEO_HEAVY_LOCK = threading.Lock()
+
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _GEO_HEAVY_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
 
 # Lifespan para inicialización (autocarga de plan por defecto si existe datos/plan_uploaded.csv)
 @asynccontextmanager
@@ -3715,6 +3732,7 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
 
 
 @app.get('/zoning/building-diagnostic')
+@_serialized
 def zoning_building_diagnostic(
   height_m: float | None = None,
   levels: int | None = None,
@@ -3942,6 +3960,7 @@ def official_catastro_by_ref(refcat: str):
 
 
 @app.get('/official/context')
+@_serialized
 def official_context(municipio: Optional[str] = None, subzona: Optional[str] = None, lon: Optional[float] = None, lat: Optional[float] = None):
   return _build_official_context(municipio=municipio, subzona=subzona, lon=lon, lat=lat)
 
@@ -4282,6 +4301,7 @@ def official_siotuga_clasificacion(municipio: Optional[str] = None,
 
 
 @app.get('/official/building-data')
+@_serialized
 def official_building_data(lon: float, lat: float,
                            refcat: Optional[str] = None,
                            osm_height: Optional[float] = None,
@@ -4553,6 +4573,7 @@ def planeamento_subzonas_lookup(lon: float, lat: float,
 
 
 @app.get("/proxy/osm-buildings")
+@_serialized
 def proxy_osm_buildings(municipio: str, limit: int = 800):
   """Devuelve edificios OSM en GeoJSON listos para extrusión 3D."""
   try:

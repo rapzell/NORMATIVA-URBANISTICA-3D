@@ -2448,10 +2448,17 @@ async function selectBuilding(feature) {
     const coords = center.geometry.coordinates;
     // Cargar diagnóstico comparativo y contexto oficial en paralelo
     showMapLoading('Consultando fuentes oficiales…');
+    const diagParams = new URLSearchParams({ subzona: props.subzona || '', municipio: props.municipio || activeMunicipio || '', lon: coords[0], lat: coords[1] });
+    if (props.height) diagParams.set('height_m', props.height);
+    if (props.levels) diagParams.set('levels', props.levels);
+    if (footprint) diagParams.set('footprint_m2', footprint);
+    const bdParams = new URLSearchParams({ lon: coords[0], lat: coords[1] });
+    if (props.height) bdParams.set('osm_height', props.height);
+    if (props.levels) bdParams.set('osm_levels', props.levels);
     const [diagResp, ctx, bdata] = await Promise.all([
-      fetch(`${API}/zoning/building-diagnostic?height_m=${props.height || ''}&levels=${props.levels || ''}&footprint_m2=${footprint || ''}&subzona=${encodeURIComponent(props.subzona || '')}&municipio=${encodeURIComponent(props.municipio || activeMunicipio || '')}&lon=${coords[0]}&lat=${coords[1]}`).then(r => r.json()).catch(() => null),
+      fetch(`${API}/zoning/building-diagnostic?${diagParams}`).then(r => r.json()).catch(() => null),
       fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
-      fetch(`${API}/official/building-data?lon=${coords[0]}&lat=${coords[1]}&osm_height=${props.height || ''}&osm_levels=${props.levels || ''}`).then(r => r.json()).catch(() => null),
+      fetch(`${API}/official/building-data?${bdParams}`).then(r => r.json()).catch(() => null),
     ]);
     hideMapLoading();
     if (ctx) ctx.building_data = bdata || ctx.edificio_datos || {};
