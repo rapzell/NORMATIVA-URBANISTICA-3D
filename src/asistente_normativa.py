@@ -1,8 +1,6 @@
 import json
-from sentence_transformers import SentenceTransformer, CrossEncoder
 import numpy as np
 import textwrap
-from ctransformers import AutoModelForCausalLM
 try:
     # When running from src/ directly
     from model_gateway import generate_with_fallback
@@ -24,6 +22,13 @@ def cargar_recursos():
     Siempre intenta devolver (chunks, index, bi_encoder, cross_encoder, llm),
     aunque llm pueda ser None si el modelo local no está disponible.
     """
+    from src.building_data.mds_wcs import beta_light
+    if beta_light():
+        # Render free (~512 MB): importar torch/ctransformers y descargar
+        # modelos agota la memoria; el asistente agéntico (/qa/edificio)
+        # degrada a BM25 y los endpoints /qa caen a modo básico.
+        print("[beta-light] Recursos RAG locales desactivados en hosting ligero.")
+        return [], None, None, None, None
     print("Cargando modelos y datos. Esto puede tardar un momento...")
 
     # 1) Cargar chunks e índice con nombres actuales y fallback legacy
@@ -65,6 +70,7 @@ def cargar_recursos():
         return [], None, None, None, None
 
     print("Cargando modelos de embedding y re-ranking...")
+    from sentence_transformers import SentenceTransformer, CrossEncoder
     bi_encoder = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
     ce_name = os.getenv('CROSS_ENCODER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
     cross_encoder = CrossEncoder(ce_name)
@@ -122,6 +128,7 @@ def cargar_recursos():
             context_len = int(os.getenv("GGUF_CONTEXT"))
         else:
             context_len = 1024 if profile == 'fast' else 2048
+        from ctransformers import AutoModelForCausalLM
         llm = AutoModelForCausalLM.from_pretrained(
             model_path,
             model_type=model_type,

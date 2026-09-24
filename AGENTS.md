@@ -43,6 +43,12 @@ HF Spaces ya no admite docker gratis (exige PRO). Ruta actual:
   instalado, `_reranker()` intentaría cargar el cross-encoder ALIA →
   importa torch → OOM en 512 MB (mata el worker, 502 en `/qa/health`
   y cualquier endpoint que lo invoque).
+- **Los imports pesados son perezosos**: `asistente_normativa` importa
+  `sentence_transformers`/`ctransformers` dentro de `cargar_recursos()`
+  (no a nivel de módulo — importarlo al arrancar cargaba torch, ~500 MB
+  de baseline que provocaba OOM en cualquier endpoint pesado). En Render,
+  `beta_light()` hace que `cargar_recursos` devuelva vacío y `/qa` use
+  el fallback básico; el asistente agéntico usa `src/rag` (sin torch).
 - Cambios de env vars por API **no reinician el contenedor**: hay que
   lanzar un deploy (`POST /v1/services/{id}/deploys`). El servicio
   beta vive en `srv-dapc50tbedkc738bdv80` (team "Visor Arquitectos"),
