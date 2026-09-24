@@ -409,6 +409,55 @@ def hoja_lidar_para_punto(lon: float, lat: float,
                 'error': str(e)}
 
 
+def _altura_precalculada_en_punto(lon: float, lat: float) -> DataPoint | None:
+    """Altura medida precalculada de la capa de edificios en caché.
+
+    En la beta ligera no se puede medir LiDAR en runtime, pero la capa
+    ``datos/cache/osm_buildings/*.json`` que sirve el mapa ya lleva
+    ``altura_medida_m`` (nDSM IDEE) calculada offline. Busca la huella
+    que contiene el punto en las cachés del esquema vigente.
+    """
+    try:
+        from src.subzones_service import _OVERPASS_DISK_CACHE_DIR, _PROPS_SCHEMA
+        from shapely.geometry import Point, shape
+    except Exception:
+        return None
+    pt = Point(lon, lat)
+    paths = sorted(glob.glob(os.path.join(
+        _OVERPASS_DISK_CACHE_DIR, f"*_v{_PROPS_SCHEMA}.json")), reverse=True)
+    for path in paths:
+        try:
+            import json as _json
+            with open(path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+        except Exception:
+            continue
+        best = None
+        best_area = None
+        for ft in data.get("features") or []:
+            p = ft.get("properties") or {}
+            val = p.get("altura_medida_m")
+            if val is None:
+                continue
+            geom = ft.get("geometry")
+            if not geom:
+                continue
+            try:
+                g = shape(geom)
+            except Exception:
+                continue
+            if g.contains(pt) or g.touches(pt):
+                if best_area is None or g.area < best_area:
+                    best, best_area = val, g.area
+        if best is not None:
+            return measured(
+                best, "m",
+                "LiDAR PNOA (nDSM edificación 2,5 m, IDEE) — precalculado",
+                source_ref="capa de edificios en caché",
+            )
+    return None
+
+
 def obtener_datos_edificio(lon: float, lat: float,
                            refcat: str | None = None,
                            footprint: dict | None = None,
@@ -423,6 +472,18 @@ def obtener_datos_edificio(lon: float, lat: float,
     """
     out: dict[str, Any] = {}
     out['altura'] = obtener_altura_lidar(footprint, lon, lat).to_dict()
+    if out['altura']['data_quality'] == DataQuality.UNAVAILABLE.value:
+        # En hosting ligero la medición WCS/LAZ está desactivada, pero la
+        # capa de edificios que sirve el mapa ya lleva ``altura_medida_m``
+        # precalculada con el mismo nDSM — la reutilizamos por huella.
+        try:
+            from src.building_data.mds_wcs import beta_light
+            if beta_light():
+                precalc = _altura_precalculada_en_punto(lon, lat)
+                if precalc is not None:
+                    out['altura'] = precalc.to_dict()
+        except Exception:
+            pass
     if out['altura']['data_quality'] == DataQuality.UNAVAILABLE.value:
         try:
             tile = hoja_lidar_para_punto(lon, lat, fetch=fetch)
