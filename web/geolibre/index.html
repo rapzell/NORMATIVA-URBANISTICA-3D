@@ -2457,7 +2457,7 @@ async function selectBuilding(feature) {
     if (props.levels) bdParams.set('osm_levels', props.levels);
     const [diagResp, ctx, bdata] = await Promise.all([
       fetch(`${API}/zoning/building-diagnostic?${diagParams}`).then(r => r.json()).catch(() => null),
-      fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }),
+      fetchOfficialContext({ municipio: props.municipio || activeMunicipio, subzona: props.subzona, lon: coords[0], lat: coords[1] }).catch(() => null),
       fetch(`${API}/official/building-data?${bdParams}`).then(r => r.json()).catch(() => null),
     ]);
     hideMapLoading();
