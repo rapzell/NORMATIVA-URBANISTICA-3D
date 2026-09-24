@@ -3123,11 +3123,21 @@ def _fetch_catastro_by_coords(lon: float, lat: float, srs: str = 'EPSG:4326') ->
     return cached
   base = 'https://ovc.catastro.meh.es/ovcservweb/ovcswlocalizacionrc/ovccoordenadas.asmx/Consulta_RCCOOR'
   url = f"{base}?{urlencode({'SRS': srs, 'Coordenada_X': lon, 'Coordenada_Y': lat})}"
-  req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
-  with urlopen(req, timeout=10) as resp:
-    result = _parse_catastro_rccoor_xml(resp.read())
-  _official_cache_set(cache_key, result)
-  return result
+  # OVC corta conexiones de forma intermitente (rate-limit por IP de
+  # datacenter en hosting) — reintentos cortos con backoff.
+  last_err: Exception | None = None
+  for attempt in range(3):
+    try:
+      req = Request(url, headers={'User-Agent': 'NormativaGalicia/1.0'})
+      with urlopen(req, timeout=8) as resp:
+        result = _parse_catastro_rccoor_xml(resp.read())
+      _official_cache_set(cache_key, result)
+      return result
+    except Exception as e:
+      last_err = e
+      if attempt < 2:
+        time.sleep(0.8 * (attempt + 1))
+  raise last_err
 
 
 def _fetch_catastro_by_ref(refcat: str) -> dict:
