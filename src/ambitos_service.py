@@ -175,14 +175,15 @@ def _ambito_tree(ine: str):
         return hit[1]
     tree = None
     try:
-        from shapely.geometry import shape
         from shapely.strtree import STRtree
-        from src.siotuga.vector_downloader import capa_cacheada
-        fc = capa_cacheada(ine)
+        from src.siotuga.vector_downloader import _point_tree
+        # Reutiliza el árbol de la capa local (copia ligera de
+        # datos/mapas/ o caché completa) — evita re-parsear ~14 MB.
+        data = _point_tree(ine)
+        tree_all, geoms_all, props_all = data if data else (None, [], [])
         feats = []
         geoms = []
-        for f in (fc or {}).get('features') or []:
-            p = f.get('properties') or {}
+        for i, p in enumerate(props_all):
             obsv = str(p.get('obsv') or '')
             cat = str(p.get('cat_plan') or p.get('cat_ley') or ''
                         ).upper()
@@ -193,11 +194,8 @@ def _ambito_tree(ine: str):
                 bool(_DENOM_NUM_RE.match(denom))
             if not (es_api or es_ambito):
                 continue
-            try:
-                geoms.append(shape(f['geometry']))
-                feats.append(p)
-            except Exception:
-                continue
+            geoms.append(geoms_all[i])
+            feats.append(p)
         if geoms:
             tree = (STRtree(geoms), geoms, feats)
     except Exception:
@@ -369,6 +367,8 @@ def _arcgis_tree(ine: str, feats: list[dict],
         except Exception:
             continue
     tree = STRtree(geoms) if geoms else None
+    for f in feats:
+        f['geometry'] = None  # el índice ya retiene las geometrías
     _ARCGIS_TREE[key] = (feats, tree, geoms, kept)
     return tree, geoms, kept
 

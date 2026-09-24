@@ -396,6 +396,67 @@ def _point_in_features(lon: float, lat: float,
     return hits
 
 
+# Índice espacial por municipio para las consultas por punto: parsear
+# la copia local (~14 MB en Vigo) en cada clic disparaba la memoria en
+# el hosting ligero — el árbol se construye una vez y se reutiliza.
+_POINT_TREE: dict[str, tuple] = {}
+
+
+def _puntos_slim_path(ine_code: str):
+    """Copia ligera precomputada (``scripts/generate_map_layers.py``)."""
+    from pathlib import Path
+    return Path('datos/mapas') / f'{ine_code}_clasif_puntos.geojson'
+
+
+def _point_tree(ine_code: str):
+    """``(STRtree, geoms, props)`` de la capa local del municipio.
+
+    Lee preferentemente ``datos/mapas/{ine}_clasif_puntos.geojson``
+    (props crudas reducidas + geometría simplificada, ~4 MB); si no
+    existe, ``capa_cacheada``. Retener props sin geometría duplicada
+    mantiene la huella residente pequeña.
+    """
+    hit = _POINT_TREE.get(str(ine_code))
+    if hit is not None:
+        return hit
+    import json as _json
+    feats = None
+    slim = _puntos_slim_path(str(ine_code))
+    try:
+        if slim.exists():
+            feats = (_json.loads(slim.read_text(encoding='utf-8'))
+                     .get('features') or [])
+    except Exception:
+        feats = None
+    if feats is None:
+        fc = capa_cacheada(str(ine_code))
+        feats = (fc or {}).get('features') or []
+    from shapely.strtree import STRtree
+    geoms, props = [], []
+    for f in feats:
+        g = f.get('geometry')
+        if not g:
+            continue
+        try:
+            geoms.append(shape(g))
+            props.append(f.get('properties') or {})
+        except Exception:
+            continue
+    tree = STRtree(geoms) if geoms else None
+    _POINT_TREE[str(ine_code)] = (tree, geoms, props)
+    return _POINT_TREE[str(ine_code)]
+
+
+def _point_in_tree(lon: float, lat: float, ine_code: str) -> list[dict]:
+    """Features (solo ``properties``) cuyo polígono contiene el punto."""
+    tree, geoms, props = _point_tree(ine_code)
+    if tree is None:
+        return []
+    pt = Point(lon, lat)
+    return [{'properties': props[int(i)]}
+            for i in tree.query(pt) if geoms[int(i)].contains(pt)]
+
+
 def _fetch_point_live(lon: float, lat: float, ine_code: str, layer: str,
                       fetch: Callable[[str], bytes] | None = None) -> dict:
     """Consulta WFS acotada al punto (fallback sin copia local).
@@ -457,17 +518,18 @@ def consultar_clasificacion_punto(
     (nunca red): útil cuando GetCapabilities o el servicio están caídos.
     """
     fc = _load_local_layer(ine_code, layer_name) if layer_name else None
-    if not (fc and fc.get('features')):
-        fc = capa_cacheada(ine_code)
+    best = None
     if fc and fc.get('features'):
         best = _pick_best(_point_in_features(lon, lat, fc['features']))
-        if best:
-            result = props_to_result(best['properties'])
-            result['fuente'] = 'SIOTUGA WFS (vectorial local)'
-            result['vectorial_local'] = True
-            return result
-        # Punto fuera de los polígonos descargados: puede ser suelo
-        # no clasificado o borde de municipio; seguimos con consulta viva.
+    else:
+        best = _pick_best(_point_in_tree(lon, lat, ine_code))
+    if best:
+        result = props_to_result(best['properties'])
+        result['fuente'] = 'SIOTUGA WFS (vectorial local)'
+        result['vectorial_local'] = True
+        return result
+    # Punto fuera de los polígonos descargados: puede ser suelo
+    # no clasificado o borde de municipio; seguimos con consulta viva.
     if not layer_name:
         return {}
     return _fetch_point_live(lon, lat, ine_code, layer_name, fetch)

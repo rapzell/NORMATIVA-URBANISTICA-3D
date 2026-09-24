@@ -37,6 +37,18 @@ PCT = 90
 MAX_HEIGHT_M = 100.0
 
 
+def beta_light() -> bool:
+    """True en hosting ligero (Render free ~512 MB) — sin rasterio/LiDAR.
+
+    Render define ``RENDER=true`` en todos sus servicios; importar
+    rasterio/GDAL agota la memoria del plan gratuito, así que la medición
+    LiDAR se desactiva allí (las alturas del mapa usan la caché
+    precalculada). ``BETA_LIGHT=0`` la reactiva si el plan sube.
+    """
+    default = '1' if os.environ.get('RENDER') else '0'
+    return os.environ.get('BETA_LIGHT', default) != '0'
+
+
 def _to_3042(lon: float, lat: float) -> tuple[float, float]:
     from pyproj import Transformer
     t = Transformer.from_crs('EPSG:4326', TARGET_CRS, always_xy=True)
@@ -90,6 +102,12 @@ def altura_mdsn_edificio(
     """
     if lon is None or lat is None:
         return unavailable('IDEE WCS MDSN', 'Faltan coordenadas')
+    if beta_light():
+        return unavailable(
+            'IDEE WCS MDSN',
+            'medición LiDAR desactivada en la beta ligera (límite de '
+            'memoria del hosting) — las alturas del mapa usan la caché '
+            'precalculada')
     try:
         import numpy as np
         import rasterio

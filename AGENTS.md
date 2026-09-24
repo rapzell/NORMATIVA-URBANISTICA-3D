@@ -119,6 +119,8 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Caché unificada en disco + HTTP con reintentos | `src/cache.py` |
 | Clasificación vectorial SIOTUGA (descarga + punto-en-polígono) | `src/siotuga/vector_downloader.py` |
 | GeoJSONs precomputados para el mapa (clasificación + ordenanzas; los sirven `FileResponse` en `/official/siotuga-clasificacion` y `/official/ordenanzas-vector` — sin ellos el parse de ~14 MB agota los 512 MB de Render free) | `datos/mapas/{ine}_*.geojson`, `scripts/generate_map_layers.py` |
+| Copia ligera para consultas punto-en-polígono (`{ine}_clasif_puntos.geojson`, props crudas) — la usa `vector_downloader._point_tree` (STRtree cacheado) y `ambitos_service._ambito_tree` | `datos/mapas/`, `scripts/generate_map_layers.py` |
+| Modo beta ligera: `beta_light()` desactiva la medición LiDAR (rasterio/laspy ~200 MB RSS) cuando `RENDER` está definido o `BETA_LIGHT=1` — las alturas del mapa vienen precalculadas en la caché OSM | `src/building_data/mds_wcs.py` |
 | Documentos oficiales SIOTUGA (PDFs normativa, sesión+token) | `src/siotuga/document_client.py` |
 | Ordenanza SUC por punto vía capa municipal oficial (Vigo GeoServer, caché local + STRtree) | `src/muni_wfs.py` |
 | Ámbitos oficiales PXOM 2025 (PEP/PERI/PP/API) vía FeatureServer ArcGIS público del Concello — cubren los huecos de `4ordsuc` donde la zona rige por instrumento propio | `src/ambitos_service.py` → `ambito_oficial_en_punto` |

@@ -959,6 +959,9 @@ def _attach_mdsn_heights(features: list[dict[str, Any]],
     ``height_estimated=False`` y reclasifica el cumplimiento con la
     altura real. Devuelve cuántas huellas obtuvieron medición.
     """
+    from src.building_data.mds_wcs import beta_light
+    if beta_light():
+        return 0
     import numpy as np
     import rasterio
     from pyproj import Transformer

@@ -83,3 +83,23 @@ def test_altura_mdsn_unavailable_sin_pixeles(monkeypatch):
     monkeypatch.setattr(mds_wcs, '_fetch_tiff', lambda *a, **k: tiff)
     dp = mds_wcs.altura_mdsn_edificio(None, -8.7, 42.23)
     assert dp.to_dict()['data_quality'] == 'unavailable'
+
+
+def test_beta_light_desactiva_lidar(monkeypatch):
+    """En Render free (RENDER=true) no se importa rasterio ni se llama WCS."""
+    monkeypatch.setenv('RENDER', 'true')
+    monkeypatch.delenv('BETA_LIGHT', raising=False)
+    assert mds_wcs.beta_light()
+    monkeypatch.setattr(mds_wcs, '_fetch_tiff',
+                        lambda *a, **k: pytest.fail('no debe descargar'))
+    dp = mds_wcs.altura_mdsn_edificio(None, -8.7, 42.23)
+    d = dp.to_dict()
+    assert d['data_quality'] == 'unavailable'
+    assert 'beta ligera' in (d['notes'] or '')
+
+
+def test_beta_light_escape(monkeypatch):
+    """BETA_LIGHT=0 reactiva la medición aunque RENDER esté definido."""
+    monkeypatch.setenv('RENDER', 'true')
+    monkeypatch.setenv('BETA_LIGHT', '0')
+    assert not mds_wcs.beta_light()

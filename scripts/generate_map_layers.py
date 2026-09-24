@@ -29,6 +29,14 @@ CLASIF_PROPS = {
 }
 ORDS_PROPS = {'ord'}
 
+# Props crudas que necesitan las consultas punto-en-polígono
+# (props_to_result + detección de ámbitos por obsv/denom).
+PUNTOS_PROPS = {
+    'cat_ley', 'cat_homo', 'cat_plan', 'cla_ley', 'cla_homo', 'uso',
+    'denom', 'obsv', 'id_recinto', 'geom_area', 'estado', 'cat_wiug',
+    'sup_ficha', 'edif_ficha',
+}
+
 TOLERANCE_DEG = 0.000008  # ~0.9 m a la latitud de Galicia
 COORD_DIGITS = 6          # ~0.11 m — sobra para pintar en el mapa
 
@@ -74,6 +82,27 @@ def _write(name: str, fc: dict, keep: set, extra_meta: dict | None = None):
     print(f'{name}: {len(feats)} features, {len(raw)/1e6:.1f} MB')
 
 
+def _write_puntos(ine: str):
+    """Capa ligera con props crudas para ``vector_downloader._point_tree``
+    — evita parsear la caché completa (~14 MB) en cada consulta."""
+    import glob as _glob
+    best = None
+    for path in _glob.glob(f'datos/cache/siotuga/{ine}_*.json'):
+        try:
+            d = json.loads(Path(path).read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        fc = d.get('data') or d
+        n = len(fc.get('features') or [])
+        if n > len((best or {}).get('features') or []):
+            best = fc
+    if not best:
+        print(f'{ine}: sin caché siotuga — se omite clasif_puntos')
+        return
+    _write(f'{ine}_clasif_puntos.geojson', best, PUNTOS_PROPS,
+           {'source': 'SIOTUGA WFS — props crudas para consulta puntual'})
+
+
 def main() -> int:
     fc = _fetch('/official/siotuga-clasificacion?municipio=Vigo')
     _write('36057_clasificacion.geojson', fc, CLASIF_PROPS)
@@ -81,6 +110,8 @@ def main() -> int:
     fc = _fetch('/official/ordenanzas-vector?ine=36057')
     _write('36057_ordenanzas.geojson', fc, ORDS_PROPS,
            {'source': 'Concello de Vigo — ordenanzas SUC'})
+
+    _write_puntos('36057')
     return 0
 
 

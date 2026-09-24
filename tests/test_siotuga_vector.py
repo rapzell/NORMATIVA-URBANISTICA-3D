@@ -105,6 +105,11 @@ def test_consultar_punto_sin_layer_ni_red_usa_cache(tmp_path, monkeypatch):
     """Sin layer_name ni red: resuelve desde cualquier capa cacheada."""
     from src import cache
     monkeypatch.setattr(cache, 'CACHE_ROOT', str(tmp_path))
+    # Aislar de la copia ligera real del repo (datos/mapas/) y del árbol
+    # cacheado entre tests — monkeypatch restaura el dict original.
+    monkeypatch.setattr(vd, '_puntos_slim_path',
+                        lambda ine: tmp_path / 'no_slim.geojson')
+    monkeypatch.setattr(vd, '_POINT_TREE', {})
     vd.descargar_clasificacion_municipio('36057', LAYER, fetch=_fake_fetch)
 
     def _boom(url):

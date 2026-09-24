@@ -216,6 +216,12 @@ def obtener_altura_lidar(footprint: dict | None = None,
     """
     if lon is None or lat is None:
         return unavailable('PNOA LiDAR', 'Faltan coordenadas')
+    from src.building_data.mds_wcs import beta_light
+    if beta_light():
+        return unavailable(
+            'PNOA LiDAR',
+            'medición LiDAR desactivada en la beta ligera (límite de '
+            'memoria del hosting) — alturas precalculadas en caché')
     files = _laz_files_covering(lon, lat)
     if not files:
         # Sin LAZ local: nDSM oficial del IDEE vía WCS (sin captcha).
