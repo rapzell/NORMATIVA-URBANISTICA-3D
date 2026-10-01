@@ -95,6 +95,25 @@ def _serialized(fn):
             return fn(*args, **kwargs)
     return wrapper
 
+
+def _warm_geo_trees():
+    """Precalienta los STRtrees espaciales tras el arranque.
+
+    Solo en hosting ligero (beta_light): construir los árboles de
+    clasificación/ordenanzas/ámbitos tarda ~15-20 s la primera vez;
+    hacerlo en background justo tras arrancar evita que el primer
+    clic del usuario pague ese coste tras un cold start. Va bajo el
+    lock compartido para no duplicar memoria si llega tráfico durante
+    el warmup.
+    """
+    try:
+        with _GEO_HEAVY_LOCK:
+            _build_official_context(
+                municipio='Vigo', subzona='U2',
+                lon=-8.7169, lat=42.2215)
+    except Exception:
+        pass
+
 # Lifespan para inicialización (autocarga de plan por defecto si existe datos/plan_uploaded.csv)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -555,6 +574,15 @@ async def lifespan(app: FastAPI):
             })
         except Exception as e:
             print("[API] Error loading resources:", e)
+    # Warmup de árboles espaciales en hosting ligero — solo beta_light
+    # (Render free): en local/tests no se quiere tráfico ni trabajo extra.
+    if not os.getenv('PYTEST_CURRENT_TEST'):
+        try:
+            from src.building_data.mds_wcs import beta_light
+            if beta_light():
+                threading.Thread(target=_warm_geo_trees, daemon=True).start()
+        except Exception:
+            pass
     yield
 
     # (eliminado duplicado de app y mounts)
