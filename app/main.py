@@ -3601,6 +3601,24 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
         arq = afeccion_arqueoloxica_en_punto(lon, lat, ine_amb)
         if arq:
           ctx['contorno_arqueoloxico'] = arq
+      # Casco histórico de Santiago: calificación parcelaria do PE-1
+      # (RI/AU/LH/R/THR/EQ) + alzados de ordenación próximos (onde se
+      # fixa a altura máxima, arts. 95-98).
+      amb_cod = str((ctx.get('ambito') or {}).get('codigo')
+                    or ctx.get('ambito_detectado') or '').upper()
+      if amb_cod.startswith('PE-1') and lon is not None and lat is not None:
+        from src.ambitos_service import (pe1_en_punto,
+                                         pe1_alzados_en_punto,
+                                         pe1_ordenanza_params)
+        pe1 = pe1_en_punto(lon, lat, ine_amb)
+        if pe1:
+          pe1['params'] = pe1_ordenanza_params(
+            ine_amb, pe1.get('califica'))
+          ctx['pe1'] = pe1
+        ctx['pe1_altura_regimen'] = 'alzados_ordenacion'
+        alz = pe1_alzados_en_punto(lon, lat, ine_amb)
+        if alz:
+          ctx['pe1_alzados'] = alz
     except Exception:
       pass
     # Datos del edificio (altura medida MDSN/LiDAR, Catastro BU)
@@ -3749,6 +3767,30 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
         'name': 'SIOTUGA',
         'url': 'https://siotuga.xunta.gal/siotuga/inventario?lang=es_ES',
         'label': 'Inventario de planeamiento',
+      })
+    # PE-1 casco histórico de Santiago: ordenanza oficial da
+    # calificación + planos de fachada + localizador do Xeoportal.
+    pe1_ctx = ctx.get('pe1') or {}
+    if pe1_ctx.get('normativa_url'):
+      links.append({
+        'name': 'PE-1 ordenanza',
+        'url': pe1_ctx['normativa_url'],
+        'label': (f"Ordenanza do PE-1 — {pe1_ctx.get('califica') or ''} "
+                  f"{pe1_ctx.get('entidad') or ''}").strip(),
+      })
+    for a in (ctx.get('pe1_alzados') or [])[:2]:
+      for p in (a.get('pdfs') or [])[:2]:
+        links.append({
+          'name': 'PE-1 alzado',
+          'url': p['url'],
+          'label': f"Alzado de ordenación — manzana {a.get('manzana') or '?'}",
+        })
+    if pe1_ctx or ctx.get('pe1_altura_regimen'):
+      links.append({
+        'name': 'PE-1 localizador',
+        'url': 'https://xeoportal.santiagodecompostela.gal'
+               '/Visor/#/ModificacionPE1',
+        'label': 'Localizador de fachadas do PE-1 (Xeoportal Concello)',
       })
     # SIOSE: enlace GetFeatureInfo del WMS que devuelve los datos de la parcela
     if cat_qlon is not None and cat_qlat is not None:

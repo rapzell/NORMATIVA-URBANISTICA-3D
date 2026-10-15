@@ -1580,6 +1580,18 @@ function renderOfficialContext(ctx) {
     } else if (ctx && ctx.ambito_detectado) {
       html += `<div class="info-row"><span class="key">Ámbito</span><span class="val">${escapeHtml(ctx.ambito_detectado)} — ficha non indexada, verificar no planeamento municipal</span></div>`;
     }
+    // PE-1 casco histórico de Santiago: calificación parcelaria oficial
+    const pe1 = (ctx && ctx.pe1) || null;
+    if (pe1 && pe1.califica) {
+      html += `<div class="info-row"><span class="key">Calificación PE-1</span><span class="val" style="font-weight:600">${escapeHtml(pe1.califica)}${pe1.entidad ? ' — ' + escapeHtml(pe1.entidad) : ''} ${qualityBadge('official')}</span></div>`;
+      if (pe1.uso) html += `<div class="info-row"><span class="key">Uso PE-1</span><span class="val">${escapeHtml(pe1.uso)}</span></div>`;
+      const pe1p = (pe1.params || {});
+      if (pe1p.articulo) html += `<div class="hint">Ordenanza do PE-1: ${escapeHtml(pe1p.titulo || '')} (art. ${escapeHtml(String(pe1p.articulo))})</div>`;
+      if (pe1p.params && pe1p.params.regimen) html += `<div class="hint">Régimen: ${escapeHtml(pe1p.params.regimen)}</div>`;
+    }
+    if (ctx && ctx.pe1_altura_regimen === 'alzados_ordenacion') {
+      html += `<div class="hint">A altura máxima determínase nos <b>alzados de ordenación</b> da manzana (arts. 95-98 do PE-1) — non hai valor tabulado. Os enlaces de fachada están abaixo en «Verificar en fonte oficial».</div>`;
+    }
     if (siotuga.plan_title) {
       const planLabel = String(siotuga.plan_title).startsWith('_') ? `PXOM de ${ctx.municipio || 'municipio'}` : siotuga.plan_title;
       html += `<div class="info-row"><span class="key">Plan</span><span class="val">${escapeHtml(planLabel)}</span></div>`;
@@ -2294,6 +2306,16 @@ async function submitGenerateReport() {
     subzona_piloto: props.subzona_piloto || null,
     ambito: props.ambito || null,
     ambito_nombre: props.ambito_nombre || null,
+    pe1: props.pe1_califica ? {
+      califica: props.pe1_califica,
+      entidad: props.pe1_entidad || null,
+      uso: props.pe1_uso || null,
+      articulo: props.pe1_articulo || null,
+      ordenanza_titulo: props.pe1_ordenanza_titulo || null,
+      normativa_pdf: props.pe1_normativa_pdf || null,
+      altura_regimen: props.pe1_altura_regimen || null,
+      alzados: props.pe1_alzados || null,
+    } : null,
     crs: 'EPSG:4326',
     height_m: height,
     footprint_m2: footprint,
@@ -2390,6 +2412,21 @@ async function selectBuilding(feature) {
   if (footprint != null) html += `<div class="info-row"><span class="key">Huella aproximada</span><span class="val">${footprint} m²</span></div>`;
   html += `<div class="info-row"><span class="key">${props.subzona || props.normative_status === 'unavailable' ? 'Ordenanza oficial' : 'Subzona piloto'}</span><span class="val">${escapeHtml(subzona)}</span></div>`;
   if (props.ambito) html += `<div class="info-row"><span class="key">Ámbito de planeamento</span><span class="val">${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''} ${qualityBadge('official')}</span></div>`;
+  if (props.pe1_califica) {
+    const pdfOrd = props.pe1_normativa_pdf ? ` <a href="${escapeHtml(props.pe1_normativa_pdf)}" target="_blank" rel="noopener" style="color:#58a6ff">ordenanza PDF ↗</a>` : '';
+    html += `<div class="info-row"><span class="key">Calificación PE-1</span><span class="val"><b>${escapeHtml(props.pe1_califica)}</b>${props.pe1_entidad ? ' — ' + escapeHtml(props.pe1_entidad) : ''}${props.pe1_articulo ? ' (art. ' + escapeHtml(String(props.pe1_articulo)) + ')' : ''} ${qualityBadge('official')}${pdfOrd}</span></div>`;
+    if (props.pe1_ordenanza_titulo) html += `<div class="hint" style="margin:-4px 0 6px">${escapeHtml(props.pe1_ordenanza_titulo)}</div>`;
+    if (props.pe1_params && props.pe1_params.regimen) html += `<div class="hint" style="margin:-4px 0 6px">Régimen: ${escapeHtml(props.pe1_params.regimen)}.</div>`;
+    if (props.pe1_altura_regimen === 'alzados_ordenacion') html += `<div class="hint" style="margin:-4px 0 6px">La <b>altura máxima</b> se determina en los <b>alzados de ordenación</b> de la manzana (arts. 95-98 del PE-1) — no hay un valor tabulado general.</div>`;
+    if (Array.isArray(props.pe1_alzados) && props.pe1_alzados.length) {
+      const alzLinks = props.pe1_alzados.map(a => {
+        const links = (a.pdfs || []).map(p => `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener" style="color:#58a6ff">${escapeHtml(p.url.split('/').pop() || 'alzado')}</a>`).join(' ');
+        return `manzana ${escapeHtml(a.manzana || '?')}: ${links}`;
+      }).join('<br>');
+      html += `<div class="info-row"><span class="key">Alzados PE-1 (contorna)</span><span class="val" style="font-size:0.78rem">${alzLinks}</span></div>`;
+      html += `<div class="hint" style="margin:-4px 0 6px">Planos de fachada oficiales próximos — la asociación es por proximidad espacial; verificar la manzana exacta en el <a href="https://xeoportal.santiagodecompostela.gal/Visor/#/ModificacionPE1" target="_blank" rel="noopener" style="color:#58a6ff">localizador do Xeoportal</a>.</div>`;
+    }
+  }
   if (props.dotacion) html += `<div class="info-row"><span class="key">Dotación oficial</span><span class="val">${escapeHtml(props.dotacion)} ${qualityBadge('official')}</span></div>`;
   if (Array.isArray(props.contorno_arqueoloxico) && props.contorno_arqueoloxico.length) html += `<div class="info-row"><span class="key">Contorno arqueolóxico</span><span class="val">${escapeHtml(props.contorno_arqueoloxico.join(', '))} ${qualityBadge('official')}</span></div>`;
   if (!props.subzona && Array.isArray(props.candidatas_proximas) && props.candidatas_proximas.length) {

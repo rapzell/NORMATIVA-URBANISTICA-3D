@@ -33,7 +33,7 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 # v7: estado sin_limite para ordenanzas de conservación;
 # v8: altura_medida_m/altura_osm_m — altura real MDSN por huella) — las
 # cachés antiguas con 'subzona: R-1' quedan invalidadas.
-_PROPS_SCHEMA = 15
+_PROPS_SCHEMA = 16
 
 
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
@@ -931,6 +931,43 @@ def _attach_ambito(props: dict[str, Any], lon: float, lat: float,
         arq = None
     if arq:
         props["contorno_arqueoloxico"] = arq.get('codigos')
+    # Casco histórico de Santiago (PE-1): calificación parcelaria
+    # oficial (RI/AU/LH/R/THR/EQ…) + alzados de ordenación próximos,
+    # onde se fixa a altura máxima (arts. 95-98). A altura non é un
+    # valor tabulado — declárase o réxime, nunca se inventa a cota.
+    if str(props.get("ambito") or '').upper().startswith('PE-1'):
+        try:
+            from src.ambitos_service import (pe1_en_punto,
+                                             pe1_alzados_en_punto,
+                                             pe1_ordenanza_params)
+            pe1 = pe1_en_punto(lon, lat, ine)
+        except Exception:
+            pe1 = None
+        if pe1:
+            props["pe1_califica"] = pe1.get('califica')
+            props["pe1_entidad"] = pe1.get('entidad')
+            if pe1.get('uso'):
+                props["pe1_uso"] = pe1['uso']
+            if pe1.get('normativa_url'):
+                props["pe1_normativa_pdf"] = pe1['normativa_url']
+                props["pe1_normativa_titulo"] = pe1.get(
+                    'normativa_titulo')
+            params = pe1_ordenanza_params(ine, pe1.get('califica'))
+            if params:
+                props["pe1_articulo"] = params.get('articulo')
+                props["pe1_ordenanza_titulo"] = params.get('titulo')
+                props["pe1_params"] = params.get('params') or {}
+                if not pe1.get('normativa_url') and params.get('pdf'):
+                    props["pe1_normativa_pdf"] = params['pdf']
+        props["pe1_altura_regimen"] = 'alzados_ordenacion'
+        try:
+            alz = pe1_alzados_en_punto(lon, lat, ine)
+        except Exception:
+            alz = []
+        if alz:
+            props["pe1_alzados"] = [
+                {'manzana': a.get('manzana'), 'pdfs': a.get('pdfs')}
+                for a in alz if a.get('pdfs')]
 
 
 def find_subzone_by_name(municipio: str, subzona: str) -> dict[str, Any] | None:
@@ -1033,6 +1070,10 @@ def _attach_mdsn_heights(features: list[dict[str, Any]],
                 'ambito': p.get('ambito'),
                 'ambito_nombre': p.get('ambito_nombre'),
                 'dotacion': p.get('dotacion'),
+                'pe1_califica': p.get('pe1_califica'),
+                'pe1_entidad': p.get('pe1_entidad'),
+                'pe1_altura_regimen': p.get('pe1_altura_regimen'),
+                'pe1_alzados': p.get('pe1_alzados'),
             })
             p['cumplimiento_altura'] = comp['status']
             p['cumplimiento_detalle'] = comp['detail']
@@ -1090,6 +1131,18 @@ def _feature_edificio(coords: list, osm_id, name: str, building: str,
             "altura_absoluta_subzona_m": (subzone_props or {}).get("altura_absoluta_m"),
             "altura_por_ancho_rua": (subzone_props or {}).get("altura_por_ancho_rua"),
             "altura_por_ancho_rua_tabla": (subzone_props or {}).get("altura_por_ancho_rua_tabla"),
+            # PE-1 (casco histórico de Santiago): calificación
+            # parcelaria oficial + réxime de altura (alzados de
+            # ordenación — non hai valor tabulado).
+            "pe1_califica": (subzone_props or {}).get("pe1_califica"),
+            "pe1_entidad": (subzone_props or {}).get("pe1_entidad"),
+            "pe1_uso": (subzone_props or {}).get("pe1_uso"),
+            "pe1_articulo": (subzone_props or {}).get("pe1_articulo"),
+            "pe1_ordenanza_titulo": (subzone_props or {}).get("pe1_ordenanza_titulo"),
+            "pe1_params": (subzone_props or {}).get("pe1_params"),
+            "pe1_normativa_pdf": (subzone_props or {}).get("pe1_normativa_pdf"),
+            "pe1_altura_regimen": (subzone_props or {}).get("pe1_altura_regimen"),
+            "pe1_alzados": (subzone_props or {}).get("pe1_alzados"),
             "normative_status": (subzone_props or {}).get("normative_status"),
             "normative_source": (subzone_props or {}).get("fuente"),
             "cumplimiento_altura": compliance["status"],
@@ -1606,6 +1659,29 @@ def _find_subzone_for_ring(coords: list[list[float]], municipio: str | None) -> 
 
 def _classify_building_compliance(height: float, subzone_props: dict[str, Any] | None) -> dict[str, str]:
     limit = None if not subzone_props else subzone_props.get("altura_maxima_m")
+    if limit is None and \
+            (subzone_props or {}).get("pe1_altura_regimen") == \
+            'alzados_ordenacion':
+        # PE-1 (casco histórico de Santiago): la altura máxima se fija
+        # en los alzados de ordenación por fachada (arts. 95-98) — no
+        # hay valor tabulado. Estado oficial concreto, nunca inventado.
+        cal = (subzone_props or {}).get('pe1_califica') or ''
+        ent = (subzone_props or {}).get('pe1_entidad') or ''
+        alz = (subzone_props or {}).get('pe1_alzados') or []
+        return {
+            "status": "altura_alzados",
+            "detail": (
+                f"PE-1 · calificación {cal or 'oficial'}"
+                + (f" ({ent})" if ent else "")
+                + " — la altura máxima se determina en los alzados de "
+                  "ordenación de la manzana (arts. 95-98 PE-1), no en "
+                  "una tabla"
+                + (f" — {len(alz)} plano(s) de fachada enlazado(s)"
+                   if alz else " — plano de fachada: consultar el "
+                                "localizador del Xeoportal")),
+            "color_semantics": ("azul = altura definida en alzados de "
+                                "ordenación (PE-1)"),
+        }
     if limit is None and (subzone_props or {}).get("altura_por_ancho_rua"):
         return {
             "status": "altura_tabla",

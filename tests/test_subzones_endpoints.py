@@ -256,3 +256,92 @@ def test_classify_sin_tope_absoluto_mantiene_supera_altura():
              "altura_maxima_m": 10.5}
     comp = _classify_building_compliance(12.0, props)
     assert comp["status"] == "supera_altura"
+
+
+def test_classify_pe1_altura_alzados():
+    """Calificación oficial do PE-1 → estado dedicado 'altura_alzados':
+    la altura máxima se fija en los alzados de ordenación (arts. 95-98),
+    nunca en una tabla — no se inventa un valor numérico."""
+    from src.subzones_service import _classify_building_compliance
+    props = {"normative_status": "unavailable", "ambito": "PE-1",
+             "pe1_califica": "RI", "pe1_entidad": "Recinto intramuros",
+             "pe1_altura_regimen": "alzados_ordenacion",
+             "pe1_alzados": [{"manzana": "5306_5303", "pdfs": [
+                 {"url": "https://xeoportal.santiagodecompostela.gal/"
+                         "contidos/arqueoloxia/fachadas/"
+                         "40_5306_5303_Peso_Entremurallas.pdf",
+                  "titulo": "Ver"}]}]}
+    comp = _classify_building_compliance(12.0, props)
+    assert comp["status"] == "altura_alzados"
+    assert "alzados" in comp["detail"]
+    assert "RI" in comp["detail"]
+
+
+def test_pe1_ordenanza_params_curados():
+    """El índice curado pe1_ordenanzas.json devuelve los parámetros
+    oficiales de cada calificación (RI=art.150, AU=151…)."""
+    from src.ambitos_service import pe1_ordenanza_params
+    ri = pe1_ordenanza_params('15078', 'RI')
+    assert ri and ri['articulo'] == 150
+    assert ri['params']['altura_regimen'] == 'alzados_ordenacion'
+    assert ri['pdf'].endswith('ORD_RI.pdf')
+    # código desconocido → None, nunca inventado
+    assert pe1_ordenanza_params('15078', 'XX') is None
+
+
+def test_pe1_alzados_identify(monkeypatch):
+    """pe1_alzados_en_punto consulta el identify del MapServer
+    municipal (la geometría de la capa está deshabilitada en REST)
+    y devuelve los enlaces de fachada deduplicados."""
+    import src.ambitos_service as am
+
+    class _Resp:
+        def json(self):
+            return {'results': [
+                {'attributes': {
+                    'MANZANA': '5306_5303',
+                    'FACHADAS': "<a href='https://xeoportal."
+                                "santiagodecompostela.gal/f1.pdf'>Ver</a>"}},
+                # duplicado por OBJECTID — debe deduplicarse por URL
+                {'attributes': {
+                    'MANZANA': '5306_5303',
+                    'FACHADAS': "<a href='https://xeoportal."
+                                "santiagodecompostela.gal/f1.pdf'>Ver</a>"}},
+            ]}
+    calls = {}
+
+    def _get(url, params=None, timeout=None):
+        calls['url'] = url
+        calls['params'] = params
+        return _Resp()
+
+    monkeypatch.setattr('requests.get', _get)
+    am._PE1_IDENTIFY_CACHE.clear()
+    out = am.pe1_alzados_en_punto(-8.5447, 42.8770, '15078')
+    assert 'identify' in calls['url']
+    assert calls['params']['layers'] == 'all:2'
+    assert len(out) == 1
+    assert out[0]['manzana'] == '5306_5303'
+    assert out[0]['pdfs'][0]['url'].endswith('f1.pdf')
+    # otro municipio → sin consulta
+    calls.clear()
+    assert am.pe1_alzados_en_punto(-8.7, 42.2, '36057') == []
+    assert 'url' not in calls
+
+
+def test_pe1_en_punto_poligono(monkeypatch):
+    """pe1_en_punto devuelve la calificación oficial del polígono
+    ModifPE1_NoEquip que contiene el punto."""
+    import src.ambitos_service as am
+    monkeypatch.setattr(am, '_arcgis_poligonos_en_punto', lambda *a, **k: [
+        {'CALIFICA': 'RI', 'ENTIDADBAS': 'Recinto intramuros',
+         'USO': 'U1', 'MASA': '73742', 'EDIF_PARC': 'E',
+         'Shape__Area': 100.0,
+         'NORMATIVA': "<a href='https://xeoportal.santiagodecompostela"
+                      ".gal/contidos/RegulacionDosUsos/PE1/ORD_RI.pdf'>"
+                      "Recinto intramuros</a>"}])
+    r = am.pe1_en_punto(-8.5447, 42.8770, '15078')
+    assert r['califica'] == 'RI'
+    assert r['uso'] == 'U1'
+    assert r['normativa_url'].endswith('ORD_RI.pdf')
+    assert r['data_quality'] == 'official'

@@ -187,6 +187,28 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
         loc_txt += (f"<div class=muted>Ámbito de planeamento: "
                     f"{esc(amb)}{(' — ' + esc(amb_nom)) if amb_nom else ''}"
                     " (oficial, PXOM)</div>")
+    pe1 = body.get('pe1') if isinstance(body, dict) else None
+    if isinstance(pe1, dict) and pe1.get('califica'):
+        pe1_bits = [esc(str(pe1['califica']))]
+        if pe1.get('entidad'):
+            pe1_bits.append(esc(str(pe1['entidad'])))
+        if pe1.get('articulo'):
+            pe1_bits.append(f"art. {esc(str(pe1['articulo']))}")
+        loc_txt += ("<div class=muted>Calificación oficial PE-1: "
+                    + ' — '.join(pe1_bits)
+                    + ". A altura máxima determínase nos alzados de "
+                      "ordenación da manzana (arts. 95-98 do PE-1) — "
+                      "non existe valor tabulado.</div>")
+        if pe1.get('normativa_pdf'):
+            loc_txt += (f"<div class=muted>Ordenanza oficial: "
+                        f"<a href='{esc(pe1['normativa_pdf'])}'>"
+                        f"{esc(pe1.get('ordenanza_titulo') or pe1['normativa_pdf'])}</a></div>")
+        for a in (pe1.get('alzados') or [])[:2]:
+            for p in (a.get('pdfs') or [])[:1]:
+                loc_txt += (f"<div class=muted>Alzado de ordenación "
+                            f"(manzana {esc(str(a.get('manzana') or '?'))}): "
+                            f"<a href='{esc(p.get('url'))}'>ver plano de "
+                            f"fachada oficial</a></div>")
     import datetime as _dt
     gen_date = _dt.datetime.now().strftime('%Y-%m-%d %H:%M')
     ttl = esc(title) if title else 'Informe de Viabilidad'

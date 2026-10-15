@@ -307,6 +307,11 @@ _ARCGIS_AMBITOS = {
                  'nome_fijo': 'Plan Especial de protección do Casco '
                               'Histórico (PE-1)'},
             ],
+            # Calificación parcelaria do PE-1 (casco histórico):
+            # polígonos con CALIFICA (RI/AU/LH/R/THR/EQ…), USO, MASA e
+            # enlace ao PDF oficial da ordenanza (Modificación puntual
+            # do PE-1, regulación de usos).
+            'pe1': [{'svc': 'ModifPE1_NoEquip', 'layer': 0}],
         },
     },
 }
@@ -332,7 +337,8 @@ def _arcgis_download(base: str, svc, tipo: str = 'FeatureServer',
         r = requests.get(
             f"{base}/{svc}/{tipo}/{layer}/query",
             params={'where': where, 'outFields': '*', 'f': 'geojson',
-                    'outSR': '4326', 'resultRecordCount': '2000',
+                    'outSR': '4326', 'returnGeometry': 'true',
+                    'resultRecordCount': '2000',
                     'resultOffset': str(offset)},
             timeout=90)
         page = (r.json() or {}).get('features') or []
@@ -492,6 +498,144 @@ def ambito_oficial_en_punto(lon: float, lat: float,
             'capa': p.get('_svc'),
         }
     return None
+
+
+def _html_links(valor) -> list[dict]:
+    """Enlaces ``{url, titulo}`` desde un campo HTML ArcGIS (puede
+    llevar varias anclas)."""
+    out = []
+    for m in re.finditer(r"href=['\"]([^'\"]+)['\"][^>]*>([^<]*)",
+                         str(valor or '')):
+        out.append({'url': m.group(1).strip(),
+                    'titulo': m.group(2).strip() or None})
+    return out
+
+
+def pe1_en_punto(lon: float, lat: float,
+                 ine: str | None) -> dict | None:
+    """Calificación oficial do PE-1 (casco histórico de Santiago) que
+    contén o punto — capa ``ModifPE1_NoEquip`` do XeoPortal municipal.
+
+    Devolve a ordenanza do Plan Especial (RI/AU/LH/R/THR/EQ…), entidade,
+    uso, manzana (MASA) e o enlace ao PDF oficial da ordenanza. ``None``
+    fóra do casco ou sen capa."""
+    hits = _arcgis_poligonos_en_punto(lon, lat, ine, 'pe1')
+    if not hits:
+        return None
+    # Polígono máis específico: o de menor área entre os que conteñen.
+    p = min(hits, key=lambda h: h.get('Shape__Area') or 1e18)
+    cal = str(p.get('CALIFICA') or '').strip()
+    if not cal or cal == '\x08':
+        cal = str(p.get('ENTIDADBAS') or '').strip() or cal
+    link = _doc_url(p.get('NORMATIVA'))
+    return {
+        'califica': cal or None,
+        'entidad': str(p.get('ENTIDADBAS') or '').strip() or None,
+        'uso': str(p.get('USO') or '').strip() or None,
+        'masa': str(p.get('MASA') or '').strip() or None,
+        'edif_parc': str(p.get('EDIF_PARC') or '').strip() or None,
+        'normativa_url': link,
+        'normativa_titulo': next(
+            (l['titulo'] for l in _html_links(p.get('NORMATIVA'))
+             if l['url'] == link), None),
+        'data_quality': 'official',
+        'fuente': ('XeoPortal Concello de Santiago — Modificación '
+                   'puntual do PE-1, regulación de usos '
+                   '(aprobación provisional)'),
+        'capa': 'ModifPE1_NoEquip',
+    }
+
+
+_PE1_IDENTIFY_CACHE: dict[tuple, list] = {}
+
+
+def pe1_alzados_en_punto(lon: float, lat: float, ine: str | None,
+                         tolerancia_px: int = 20,
+                         max_alzados: int = 3) -> list[dict]:
+    """Alzados de ordenación do PE-1 no punto, vía ``identify`` do
+    MapServer municipal.
+
+    A capa «Localizador fachadas PE1» ten a xeometría deshabilitada
+    nas consultas REST (``geometryField`` baleiro en todos os
+    servizos), pero ``identify`` resolve a intersección no servidor:
+    devolve os bordes de manzana que tocan o punto (tolerancia en px
+    sobre unha vista de ~100 m). ``[{manzana, pdfs: [{url, titulo}]}]``
+    deduplicado por URL — ata ``max_alzados`` grupos.
+
+    A asociación é por proximidade espacial no servidor municipal;
+    cando o punto cae entre dous bordes pode devolver alzados de
+    manzanas veciñas — o consumidor debe mostralos como planos de
+    referencia da contorna, non como o alzado exacto da parcela.
+    """
+    if str(ine or '') != '15078':
+        return []
+    key = (round(lon, 5), round(lat, 5))
+    if key in _PE1_IDENTIFY_CACHE:
+        return _PE1_IDENTIFY_CACHE[key]
+    out: list[dict] = []
+    try:
+        import requests
+        r = requests.get(
+            'https://xeoportal.santiagodecompostela.gal'
+            '/ags/rest/services/Planeamento_urbanistico'
+            '/MapServer/identify',
+            params={
+                'f': 'json', 'geometry': f'{lon},{lat}',
+                'geometryType': 'esriGeometryPoint', 'sr': '4326',
+                'layers': 'all:2', 'tolerance': str(tolerancia_px),
+                # Extent ~1,5 km de ancho → 1 px ≈ 1,2 m a esta lat;
+                # tolerancia 10 px ≈ 12 m ao redor do punto.
+                'mapExtent': f'{lon - 0.01},{lat - 0.0067},'
+                             f'{lon + 0.01},{lat + 0.0067}',
+                'imageDisplay': '1200,800,96',
+                'returnGeometry': 'false',
+            },
+            timeout=30)
+        seen: set[tuple] = set()
+        for res in (r.json() or {}).get('results', []):
+            attrs = res.get('attributes') or {}
+            pdfs = _html_links(attrs.get('FACHADAS'))
+            urls = tuple(sorted(p['url'] for p in pdfs))
+            if not urls or urls in seen:
+                continue
+            seen.add(urls)
+            out.append({
+                'manzana': str(attrs.get('MANZANA') or '').strip()
+                           or None,
+                'pdfs': pdfs,
+            })
+            if len(out) >= max_alzados:
+                break
+    except Exception:
+        out = []
+    if len(_PE1_IDENTIFY_CACHE) > 5000:
+        _PE1_IDENTIFY_CACHE.clear()
+    _PE1_IDENTIFY_CACHE[key] = out
+    return out
+
+
+_PE1_ORDS: dict | None = None
+
+
+def pe1_ordenanza_params(ine: str | None,
+                         califica: str | None) -> dict | None:
+    """Parámetros da ordenanza do PE-1 para unha calificación (RI, AU…).
+
+    Lese ``datos/normativa/15078/pe1_ordenanzas.json``, curado a partir
+    dos PDFs oficiais do XeoPortal (arts. 150-154 e 172)."""
+    global _PE1_ORDS
+    if not califica:
+        return None
+    if _PE1_ORDS is None:
+        from pathlib import Path
+        try:
+            _PE1_ORDS = json.loads(Path(
+                'datos/normativa/15078/pe1_ordenanzas.json'
+            ).read_text(encoding='utf-8'))
+        except Exception:
+            _PE1_ORDS = {}
+    ords = (_PE1_ORDS or {}).get('ordenanzas') or {}
+    return ords.get(str(califica).strip().upper())
 
 
 def _doc_url(valor) -> str | None:
