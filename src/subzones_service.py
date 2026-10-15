@@ -802,6 +802,9 @@ def _ordenanza_municipal_punto(lon: float, lat: float,
     return {
         'subzona': code,
         'ordenanza': key or code,
+        'ordenanza_display': ((r.get('prefijo_ordenanza') or '')
+                              + code) if code else None,
+        'detalle': r.get('detalle'),
         'titulo': titulo,
         'municipio': municipio,
         'normative_status': 'official',
@@ -1038,6 +1041,148 @@ def _attach_mdsn_heights(features: list[dict[str, Any]],
     return measured
 
 
+def _feature_edificio(coords: list, osm_id, name: str, building: str,
+                      height_info: dict, levels, municipio) -> dict:
+    """Feature GeoJSON de edificio con el esquema común de props
+    (ordenanza oficial, cumplimiento, fuentes) — compartido por las
+    fuentes OSM (Overpass) y Overture Maps."""
+    height = round(float(height_info["height"]), 2)
+    subzone_props = _find_subzone_for_ring(coords, municipio)
+    compliance = _classify_building_compliance(height, subzone_props)
+    return {
+        "type": "Feature",
+        "properties": {
+            "osm_id": osm_id,
+            "name": name,
+            "building": building,
+            "height": height,
+            "height_source": height_info["source"],
+            "height_estimated": height_info["estimated"],
+            "levels": levels,
+            # Plantas estimadas desde la altura (~3,2 m/planta,
+            # misma constante que la conversión levels→height) —
+            # solo cuando la fuente no declara niveles.
+            "plantas_estimadas": (
+                max(1, round(height / 3.2))
+                if not levels and height else None),
+            "_altura_visual": round(float(height), 2),
+            "municipio": (subzone_props or {}).get("municipio") or municipio,
+            # 'subzona' solo lleva códigos de la capa oficial
+            # municipal — nunca códigos piloto. El piloto viaja en
+            # 'subzona_piloto' para la comparación orientativa.
+            "subzona": (subzone_props or {}).get("subzona")
+                       if (subzone_props or {}).get("normative_status") == "official"
+                       else None,
+            "subzona_piloto": (subzone_props or {}).get("subzona")
+                              if (subzone_props or {}).get("normative_status") == "pilot"
+                              else None,
+            "ordenanza": (subzone_props or {}).get("ordenanza"),
+            "ordenanza_display": (subzone_props or {}).get("ordenanza_display"),
+            "titulo_ordenanza": (subzone_props or {}).get("titulo"),
+            "ambito": (subzone_props or {}).get("ambito"),
+            "ambito_nombre": (subzone_props or {}).get("ambito_nombre"),
+            "dotacion": (subzone_props or {}).get("dotacion"),
+            "dotacion_detalle": (subzone_props or {}).get("dotacion_detalle"),
+            "contorno_arqueoloxico": (subzone_props or {}).get("contorno_arqueoloxico"),
+            "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
+            "candidatas_proximas": (subzone_props or {}).get("candidatas_proximas"),
+            "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
+            "altura_absoluta_subzona_m": (subzone_props or {}).get("altura_absoluta_m"),
+            "altura_por_ancho_rua": (subzone_props or {}).get("altura_por_ancho_rua"),
+            "altura_por_ancho_rua_tabla": (subzone_props or {}).get("altura_por_ancho_rua_tabla"),
+            "normative_status": (subzone_props or {}).get("normative_status"),
+            "normative_source": (subzone_props or {}).get("fuente"),
+            "cumplimiento_altura": compliance["status"],
+            "cumplimiento_detalle": compliance["detail"],
+            "color_semantica": compliance["color_semantics"],
+        },
+        "geometry": {"type": "Polygon", "coordinates": [coords]},
+    }
+
+
+def _osm_features(raw: dict, municipio, limit: int) -> list[dict[str, Any]]:
+    """Features desde la respuesta Overpass (ways OSM con geom)."""
+    features: list[dict[str, Any]] = []
+    for el in (raw.get("elements") or []):
+        if el.get("type") != "way":
+            continue
+        geom = el.get("geometry") or []
+        if len(geom) < 4:
+            continue
+        coords = [[float(p["lon"]), float(p["lat"])] for p in geom if "lon" in p and "lat" in p]
+        if len(coords) < 4:
+            continue
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+        tags = el.get("tags") or {}
+        features.append(_feature_edificio(
+            coords, el.get("id"), tags.get("name") or "",
+            tags.get("building") or "yes",
+            _building_height_details(tags),
+            tags.get("building:levels") or None, municipio))
+        if len(features) >= max(1, limit):
+            break
+    return features
+
+
+def _overture_features(municipio, cfg: dict, limit: int) -> list[dict[str, Any]]:
+    """Features desde Overture Maps (huellas + alturas reales).
+
+    Fallback cuando los mirrors públicos de Overpass están saturados:
+    Overture sirve Parquet por S3 (DuckDB httpfs) y trae altura
+    derivada de LiDAR/fotogrametría y nº de plantas para buena parte
+    de las capitales. El `osm_id` va prefijado «ov:» para no
+    confundir la fuente.
+    """
+    try:
+        from src.building_data.height_extractor import \
+            obtener_huellas_municipio
+        from app.main import _get_ine_for_municipio
+    except Exception:
+        return []
+    ine = _get_ine_for_municipio(municipio)
+    if not ine:
+        return []
+    cx, cy = cfg["center"]
+    d = float(cfg.get("delta") or 0.01) * 0.22
+    bbox = (cx - d, cy - d, cx + d, cy + d)
+    try:
+        r = obtener_huellas_municipio(
+            ine, bbox=bbox, limite=max(limit * 2, limit))
+    except Exception:
+        return []
+    features: list[dict[str, Any]] = []
+    for f in (r.get("features") or []):
+        g = f.get("geometry") or {}
+        if g.get("type") != "Polygon":
+            continue
+        coords = g.get("coordinates", [[]])[0]
+        if len(coords) < 4:
+            continue
+        if coords[0] != coords[-1]:
+            coords = list(coords) + [coords[0]]
+        p = f.get("properties") or {}
+        ov_h = p.get("height")
+        ov_fl = p.get("num_floors")
+        if ov_h:
+            # Altura real de Overture (LiDAR/fotogrametría global)
+            height_info = {"height": float(ov_h),
+                           "source": "overture", "estimated": False}
+        elif ov_fl:
+            height_info = {"height": float(ov_fl) * 3.2,
+                           "source": "overture_levels", "estimated": True}
+        else:
+            height_info = _building_height_details(
+                {"building": p.get("class") or ""})
+        oid = p.get("overture_id") or ""
+        features.append(_feature_edificio(
+            coords, f"ov:{oid}" if oid else None, "",
+            p.get("class") or "yes", height_info, ov_fl, municipio))
+        if len(features) >= max(1, limit):
+            break
+    return features
+
+
 def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800) -> dict[str, Any]:
     """Devuelve edificios OSM en GeoJSON listos para extrusión 3D.
 
@@ -1098,75 +1243,17 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
         if raw is not None:
             break
     if raw is None:
-        raise last_error or RuntimeError("No se pudieron cargar edificios OSM")
-
-    features: list[dict[str, Any]] = []
-    for el in (raw.get("elements") or []):
-        if el.get("type") != "way":
-            continue
-        geom = el.get("geometry") or []
-        if len(geom) < 4:
-            continue
-        coords = [[float(p["lon"]), float(p["lat"])] for p in geom if "lon" in p and "lat" in p]
-        if len(coords) < 4:
-            continue
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
-        tags = el.get("tags") or {}
-        height_info = _building_height_details(tags)
-        height = round(float(height_info["height"]), 2)
-        subzone_props = _find_subzone_for_ring(coords, municipio)
-        compliance = _classify_building_compliance(height, subzone_props)
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "osm_id": el.get("id"),
-                "name": tags.get("name") or "",
-                "building": tags.get("building") or "yes",
-                "height": height,
-                "height_source": height_info["source"],
-                "height_estimated": height_info["estimated"],
-                "levels": tags.get("building:levels") or None,
-                # Plantas estimadas desde la altura (~3,2 m/planta,
-                # misma constante que la conversión levels→height) —
-                # solo cuando OSM no declara building:levels.
-                "plantas_estimadas": (
-                    max(1, round(height / 3.2))
-                    if not tags.get("building:levels") and height else None),
-                "_altura_visual": round(float(height), 2),
-                "municipio": (subzone_props or {}).get("municipio") or municipio,
-                # 'subzona' solo lleva códigos de la capa oficial
-                # municipal — nunca códigos piloto. El piloto viaja en
-                # 'subzona_piloto' para la comparación orientativa.
-                "subzona": (subzone_props or {}).get("subzona")
-                           if (subzone_props or {}).get("normative_status") == "official"
-                           else None,
-                "subzona_piloto": (subzone_props or {}).get("subzona")
-                                  if (subzone_props or {}).get("normative_status") == "pilot"
-                                  else None,
-                "ordenanza": (subzone_props or {}).get("ordenanza"),
-                "titulo_ordenanza": (subzone_props or {}).get("titulo"),
-                "ambito": (subzone_props or {}).get("ambito"),
-                "ambito_nombre": (subzone_props or {}).get("ambito_nombre"),
-                "dotacion": (subzone_props or {}).get("dotacion"),
-                "dotacion_detalle": (subzone_props or {}).get("dotacion_detalle"),
-                "contorno_arqueoloxico": (subzone_props or {}).get("contorno_arqueoloxico"),
-                "subzonas_candidatas": (subzone_props or {}).get("subzonas_candidatas"),
-                "candidatas_proximas": (subzone_props or {}).get("candidatas_proximas"),
-                "altura_maxima_subzona_m": (subzone_props or {}).get("altura_maxima_m"),
-                "altura_absoluta_subzona_m": (subzone_props or {}).get("altura_absoluta_m"),
-                "altura_por_ancho_rua": (subzone_props or {}).get("altura_por_ancho_rua"),
-                "altura_por_ancho_rua_tabla": (subzone_props or {}).get("altura_por_ancho_rua_tabla"),
-                "normative_status": (subzone_props or {}).get("normative_status"),
-                "normative_source": (subzone_props or {}).get("fuente"),
-                "cumplimiento_altura": compliance["status"],
-                "cumplimiento_detalle": compliance["detail"],
-                "color_semantica": compliance["color_semantics"],
-            },
-            "geometry": {"type": "Polygon", "coordinates": [coords]},
-        })
-        if len(features) >= max(1, int(limit)):
-            break
+        # Overpass saturado/caído: las huellas y alturas se toman de
+        # Overture Maps (release reciente, alturas derivadas de LiDAR/
+        # fotogrametría global — datos reales, fuente declarada).
+        features = _overture_features(municipio, cfg, int(limit))
+        if not features:
+            raise last_error or RuntimeError(
+                "No se pudieron cargar edificios OSM ni Overture")
+    else:
+        features = _osm_features(raw, municipio, int(limit))
+    if not features:
+        raise RuntimeError("Respuesta vacía de edificios")
 
     # Alturas medidas MDSN (nDSM edificación 2,5 m, LiDAR PNOA del
     # IDEE): una sola descarga WCS para toda la zona y percentil P90
@@ -1191,7 +1278,7 @@ def get_osm_buildings_geojson(municipio: str | None = None, *, limit: int = 800)
             for f in features:
                 p = f.get('properties') or {}
                 w = widths_official.get(p.get('osm_id'))
-                src = 'alineaciones oficiales PXOM'
+                src = 'alineaciones oficiales'
                 if not w:
                     w = widths_est.get(p.get('osm_id'))
                     src = 'estimado OSM'
@@ -1485,13 +1572,23 @@ def _official_street_widths(features: list[dict],
 def _resolve_fila_tabla(tabla: list[dict] | None,
                         ancho: float) -> dict | None:
     """Fila de la tabla «ancho de rúa → plantas/altura» aplicable al
-    ancho dado."""
+    ancho dado. Las filas con ``formula`` («ancho+N» / «ancho×F» —
+    ordenanzas de fórmula como la ord. 1 de Santiago) se evalúan con
+    el ancho real y devuelven ``altura_m`` calculada."""
     if not tabla or ancho is None:
         return None
     for r in sorted(tabla, key=lambda x: (x.get('ancho_min_m') or 0)):
         lo = r.get('ancho_min_m') or 0.0
         hi = r.get('ancho_max_m')
         if ancho >= lo and (hi is None or ancho < hi):
+            if r.get('formula') and r.get('altura_m') is None:
+                op = r.get('op_m')
+                if op is None:
+                    return r
+                altura = (ancho + op if r['formula'] == 'ancho+'
+                          else ancho * op)
+                return {**r, 'altura_m': round(altura, 2),
+                        'formula_evaluada': True}
             return r
     return None
 

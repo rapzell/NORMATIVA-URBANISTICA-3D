@@ -4264,16 +4264,6 @@ def official_siotuga_clasificacion(municipio: Optional[str] = None,
       'metadata': {'error': 'Municipio no encontrado en el mapeo INE',
                    'data_quality': 'unavailable'},
     }
-  wms_info = _fetch_siotuga_wms_layer(ine)
-  layer = wms_info.get('layer_name')
-  if not layer:
-    return {
-      'type': 'FeatureCollection', 'features': [],
-      'metadata': {
-        'error': wms_info.get('error') or 'Sin capa de clasificación vigente',
-        'data_quality': 'unavailable', 'source': 'SIOTUGA',
-      },
-    }
   bb = None
   if bbox:
     try:
@@ -4284,11 +4274,23 @@ def official_siotuga_clasificacion(municipio: Optional[str] = None,
       bb = None
   # Capa completa precomputada (scripts/generate_map_layers.py): el
   # visor pide la capa entera sin bbox; servir el fichero evita parsear
-  # ~14 MB de GeoJSON en RAM, que en 512 MB mata el worker.
+  # ~14 MB de GeoJSON en RAM, que en 512 MB mata el worker. Se sirve
+  # antes de consultar SIOTUGA: también cubre municipios cuya capa
+  # municipal precalculada sustituye a SIOTUGA (y resiste sus caídas).
   if bb is None:
     slim = Path('datos/mapas') / f'{ine}_clasificacion.geojson'
     if slim.is_file():
       return FileResponse(str(slim), media_type='application/json')
+  wms_info = _fetch_siotuga_wms_layer(ine)
+  layer = wms_info.get('layer_name')
+  if not layer:
+    return {
+      'type': 'FeatureCollection', 'features': [],
+      'metadata': {
+        'error': wms_info.get('error') or 'Sin capa de clasificación vigente',
+        'data_quality': 'unavailable', 'source': 'SIOTUGA',
+      },
+    }
   from src.siotuga.vector_downloader import obtener_capa_geojson
   try:
     fc = obtener_capa_geojson(ine, layer, bbox=bb)

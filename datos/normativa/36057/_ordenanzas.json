@@ -1,6 +1,6 @@
 {
- "_extracted_at": 1790082965.1379538,
- "_extractor_v": 3,
+ "_extracted_at": 1792063853.9417584,
+ "_extractor_v": 5,
  "municipio_ine": "36057",
  "ordenanzas": {
   "U1": {
@@ -162,57 +162,11 @@
   },
   "U6": {
    "ordenanza": "U6",
-   "titulo": "VIVENDA UNIFAMILIAR",
-   "params": {
-    "edificabilidad_max_m2_m2": 0.7,
-    "ocupacion_max_pct": 40.0,
-    "retranqueo_lateral_m": 2.0,
-    "retranqueo_posterior_m": 3.0,
-    "retranqueo_frontal_m": 3.0,
-    "altura_maxima_m": 7.0,
-    "altura_absoluta_m": 8.5,
-    "parcela_minima_m2": 250.0,
-    "usos_permitidos": "Terciario: Hoteleiro. Hoteleiro Categoría 1ª. Apartamentos e Vivendas Turísticas Vivendas de uso turístico; Terciario: Comercial. Categoría 1ª; Terciario: Oficinas. Categoría 1ª; Terciario: Recreativo. Categoría 1ª, Tipo I; Industrial: Produtiva. Categoría 1ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª; Dotacional-Equipamentos:; Educativo. Categoría 1ª, 2ª; Socio-Cultural. Categoría 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, 5ª; Administración institucional; Dotacional múltiple; Relixioso. Categoría 1ª Ordenanza U6.2. Extensións lineais das agrupacións de carácter tradicional"
-   },
-   "trazas": {
-    "edificabilidad_max_m2_m2": {
-     "pagina": 179,
-     "texto": "s unha fronte de 6,00 metros en contacto coa vía pública. A edificabilidade máxima establécese en 0,70 m2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade"
-    },
-    "ocupacion_max_pct": {
-     "pagina": 179,
-     "texto": "a. A edificabilidade máxima establécese en 0,70 m2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade das plantas incluídas as plant"
-    },
-    "retranqueo_lateral_m": {
-     "pagina": 179,
-     "texto": "conforme aos mapas estratéxicos de ruído. Establécense uns recuados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corr"
-    },
-    "retranqueo_posterior_m": {
-     "pagina": 179,
-     "texto": "ados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corredoura non se permitirá a edificació"
-    },
-    "retranqueo_frontal_m": {
-     "pagina": 179,
-     "texto": "• A edificación principal poderase situar na aliñación ou recuarse con respecto a ela un máximo de 3,00 metros, respectando en todo caso a situación da contigua si se tra"
-    },
-    "altura_maxima_m": {
-     "pagina": 179,
-     "texto": "e a viario de sección igual ou menor de catro metros. • A altura máxima fíxase en baixo e unha planta, equivalente a 7,00 metros medidos conforme ao establecido no artigo 62.5 desta Norma"
-    },
-    "altura_absoluta_m": {
-     "pagina": 179,
-     "texto": "os conforme ao establecido no artigo 62.5 desta Normativa, sen superar os 8,50 metros medidos desde calquera punto do terreo. • Non se autorizan voos sobre as aliñacións of"
-    },
-    "parcela_minima_m2": {
-     "pagina": 179,
-     "texto": "acaroada. Para efectos de nova parcelación establécese una parcela mínima de 250 m2 e terá polo menos unha fronte de 6,00 metros en contacto c"
-    },
-    "usos_permitidos": {
-     "pagina": 179,
-     "texto": "Permítese o uso residencial na Categoría 1ª de unifamiliar. En edificio exclusivo ou nos baixos da edificación principal autorízanse así mesmo os seguintes usos compatibles: • Terciario: Hoteleiro. Hoteleiro Categorí"
-    }
-   },
-   "fuente": "28719nu002.pdf pág. 179"
+   "titulo": "Vivenda unifamiliar",
+   "params": {},
+   "trazas": {},
+   "fuente": "28719nu002.pdf pág. 5",
+   "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "U7": {
    "ordenanza": "U7",
@@ -317,74 +271,210 @@
   },
   "SRPO": {
    "ordenanza": "SRPO",
-   "titulo": "DO SOLO RÚSTICO DE PROTECCIÓN ORDINARIA",
+   "titulo": "Do solo rústico de protección ordinaria",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 211",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPA": {
    "ordenanza": "SRPA",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN AGROPECUARIA",
+   "titulo": "Solo rústico de especial protección agropecuaria",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 212",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPF": {
    "ordenanza": "SRPF",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN FORESTAL",
+   "titulo": "Solo rústico de especial protección forestal",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 213",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPC": {
    "ordenanza": "SRPC",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE COSTAS",
+   "titulo": "Solo rústico de especial protección de costas",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 215",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPIN": {
    "ordenanza": "SRPIN",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE INFRAESTRUTURAS",
+   "titulo": "Solo rústico de especial protección de infraestruturas",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 217",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPAU": {
    "ordenanza": "SRPAU",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DAS AUGAS",
+   "titulo": "Solo rústico de especial protección das augas",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 218",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPPX": {
    "ordenanza": "SRPPX",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE INTERESE",
+   "titulo": "Solo rústico de especial protección de interese paisaxístico",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 220",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPEN": {
    "ordenanza": "SRPEN",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN DE ESPAZOS NATURAIS",
+   "titulo": "Solo rústico de especial protección de espazos naturais",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 221",
+   "fuente": "28719nu002.pdf pág. 6",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   },
   "SRPP": {
    "ordenanza": "SRPP",
-   "titulo": "SOLO RÚSTICO DE ESPECIAL PROTECCIÓN PATRIMONIAL",
+   "titulo": "Solo rústico de especial protección patrimonial",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.65,
+    "ocupacion_max_pct": 30.0,
+    "altura_maxima_m": 3.0
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 6,
+     "texto": "tigo 71.2 LSG poderá delimitar áreas de repartición, cunha edificabilidade máxima sobre superficie total da área, de 0,65 m2/m2, co obxecto de mellorar e completar a estrutura urbana exis"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 6,
+     "texto": "stalacións deportivas. A intensidade máxima fíxase cunha ocupación do 30% como máximo e cunha altura equivalente a 3 plantas e 10,50"
+    },
+    "altura_maxima_m": {
+     "pagina": 6,
+     "texto": "como parámetros unha edificabilidade de 0,70 m2/m2 e unha altura máxima de baixo e unha planta, debendo recuarse un mínimo de 3 metros de calquera linde de parcela. No caso de ampliación da edi"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 6"
+  },
+  "DOTACIONAL": {
+   "ordenanza": "DOTACIONAL",
+   "titulo": "ART",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.3,
+    "ocupacion_max_pct": 30.0
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 107,
+     "texto": "ección do sistema xeral viario, poderán autorizarse, cunha edificabilidade máxima de 0,3 m2/m2 áreas de servizo de subministración de carburantes, así co"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 107,
+     "texto": "elementos lixeiros e diáfanos de cuberta, sempre que a súa ocupación non supere o 30% da superficie libre de patio de cuarteirón. Permitiranse i"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 107"
+  },
+  "U6.1": {
+   "ordenanza": "U6.1",
+   "titulo": "Agrupacións compactas de carácter tradicional incorporadas ao solo urbano",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.7,
+    "ocupacion_max_pct": 40.0,
+    "retranqueo_frontal_m": 3.0,
+    "altura_maxima_m": 7.0,
+    "altura_absoluta_m": 8.5,
+    "usos_permitidos": "Terciario: Hoteleiro. Hoteleiro Categoría 1ª. Apartamentos e Vivendas Turísticas Vivendas de uso turístico; Terciario: Comercial. Categoría 1ª; Terciario: Oficinas. Categoría 1ª; Terciario: Recreativo. Categoría 1ª, Tipo I; Industrial: Produtiva. Categoría 1ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª; Dotacional-Equipamentos:; Educativo. Categoría 1ª, 2ª; Socio-Cultural. Categoría 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, 5ª; Administración institucional; Dotacional múltiple; Relixioso. Categoría 1ª"
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 179,
+     "texto": "s unha fronte de 6,00 metros en contacto coa vía pública. A edificabilidade máxima establécese en 0,70 m2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 179,
+     "texto": "a. A edificabilidade máxima establécese en 0,70 m2/m2 cunha ocupación máxima do 40% a aplicar para a totalidade das plantas incluídas as plant"
+    },
+    "retranqueo_frontal_m": {
+     "pagina": 179,
+     "texto": "• A edificación principal poderase situar na aliñación ou recuarse con respecto a ela un máximo de 3,00 metros, respectando en todo caso a situación da contigua si se tra"
+    },
+    "altura_maxima_m": {
+     "pagina": 179,
+     "texto": "e a viario de sección igual ou menor de catro metros. • A altura máxima fíxase en baixo e unha planta, equivalente a 7,00 metros medidos conforme ao establecido no artigo 62.5 desta Norma"
+    },
+    "altura_absoluta_m": {
+     "pagina": 179,
+     "texto": "os conforme ao establecido no artigo 62.5 desta Normativa, sen superar os 8,50 metros medidos desde calquera punto do terreo. • Non se autorizan voos sobre as aliñacións of"
+    },
+    "usos_permitidos": {
+     "pagina": 179,
+     "texto": "Permítese o uso residencial na Categoría 1ª de unifamiliar. En edificio exclusivo ou nos baixos da edificación principal autorízanse así mesmo os seguintes usos compatibles: • Terciario: Hoteleiro. Hoteleiro Categorí"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 179"
+  },
+  "U6.2": {
+   "ordenanza": "U6.2",
+   "titulo": "Extensións lineais das agrupacións de carácter tradicional",
+   "params": {
+    "edificabilidad_max_m2_m2": 0.7,
+    "ocupacion_max_pct": 40.0,
+    "retranqueo_lateral_m": 2.0,
+    "retranqueo_posterior_m": 3.0,
+    "retranqueo_frontal_m": 3.0,
+    "altura_maxima_m": 7.0,
+    "altura_absoluta_m": 8.5,
+    "parcela_minima_m2": 250.0,
+    "usos_permitidos": "Terciario: Hoteleiro. Hoteleiro Categoría 1ª. Apartamentos e Vivendas Turísticas Vivendas de uso turístico; Terciario: Comercial. Categoría 1ª; Terciario: Oficinas. Categoría 1ª; Terciario: Recreativo. Categoría 1ª; Industrial: Produtiva. Categoría 1ª; Garaxe aparcamento e servizo do automóbil. Categoría 1ª; Dotacional-Equipamentos:; Educativo. Categoría 1ª, 2ª; Socio-Cultural. Categoría 2ª; Asistencial-Sanitario. Categoría 1ª, 3ª, 5ª; Administración institucional; Dotacional múltiple; Relixioso. Categoría 1ª Ordenanza U6.3. De vivenda unifamiliar intensiva"
+   },
+   "trazas": {
+    "edificabilidad_max_m2_m2": {
+     "pagina": 181,
+     "texto": "sultante axude a completar a fisionomía urbana do treito. A edificabilidade máxima establécese en 0,70 m2/m2, cunha ocupación máxima do 40% a aplicar para a totalidade"
+    },
+    "ocupacion_max_pct": {
+     "pagina": 181,
+     "texto": ". A edificabilidade máxima establécese en 0,70 m2/m2, cunha ocupación máxima do 40% a aplicar para a totalidade das plantas incluídas as plant"
+    },
+    "retranqueo_lateral_m": {
+     "pagina": 181,
+     "texto": "conforme aos mapas estratéxicos de ruído. Establécense uns recuados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corr"
+    },
+    "retranqueo_posterior_m": {
+     "pagina": 181,
+     "texto": "ados laterais mínimos de 2,00 metros aos lindes laterais e de 3,00 metros ao linde posterior. Con fronte á rúa Corredoura non se permitirá a edificació"
+    },
+    "retranqueo_frontal_m": {
+     "pagina": 181,
+     "texto": "ón. A edificación principal poderase situar na aliñación ou recuarse con respecto a ela un máximo de 3,00 metros. Este recuado será obrigatorio para as parcelas que testen"
+    },
+    "altura_maxima_m": {
+     "pagina": 181,
+     "texto": "s plantas baixo rasante, ambas sobre parcela edificable. A altura máxima fíxase en baixo e unha planta, equivalente a 7,00 metros medidos conforme ao establecido no artigo 62.5 desta Norma"
+    },
+    "altura_absoluta_m": {
+     "pagina": 181,
+     "texto": "os conforme ao establecido no artigo 62.5 desta Normativa, sen superar os 8,50 metros medidos desde calquera punto do terreo. Na parcela con referencia catastral 1521106NG271"
+    },
+    "parcela_minima_m2": {
+     "pagina": 181,
+     "texto": "acaroada. Para efectos de nova parcelación establécese una parcela mínima de 250 m2 e terá polo menos unha fronte de 6,00 metros en contacto c"
+    },
+    "usos_permitidos": {
+     "pagina": 181,
+     "texto": "Permítese o uso residencial na Categoría 1ª de unifamiliar. En edificio exclusivo ou nos baixos da edificación principal autorízanse así mesmo os seguintes usos compatibles: • Terciario: Hoteleiro. Hoteleiro Categorí"
+    }
+   },
+   "fuente": "28719nu002.pdf pág. 181"
+  },
+  "POR": {
+   "ordenanza": "POR",
+   "titulo": "la que discurran vías del",
    "params": {},
    "trazas": {},
-   "fuente": "28719nu002.pdf pág. 223",
+   "fuente": "36057_PXOM_202502_AD01_NU_01NU_cas.pdf pág. 261",
    "nota": "A ordenanza non define parámetros numéricos extraíbles (conserva a edificabilidade existente ou expresa alturas en plantas)."
   }
  }

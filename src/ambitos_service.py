@@ -263,6 +263,7 @@ _ARCGIS_AMBITOS = {
     '36057': {
         'base': ('https://services9.arcgis.com/ss3qikvq575kYKRJ'
                  '/arcgis/rest/services'),
+        'fuente': 'ArcGIS Concello de Vigo — PXOM 2025 aprobación definitiva',
         'capas': {
             'ambitos': ['36057_PXOM_202502_AD01_5APR',
                         '36057_PXOM_202502_AD01_7API'],
@@ -277,6 +278,37 @@ _ARCGIS_AMBITOS = {
             'arqueoloxia': ['36057_PXOM_202502_AD01_CAT_CONTORNO_ARQLX'],
         },
     },
+    '15030': {
+        'base': 'https://ide.coruna.gal/server/rest/services',
+        'fuente': 'IDE municipal Concello da Coruña (ide.coruna.gal) — PGM 2013',
+        # Calificación. Ámbitos: SURT/SUD/… con ficha propia
+        # (ENLACE_02 = pdf de la ficha del ámbito).
+        'campos': {'cod': 'CODID', 'figura': 'AMBITO',
+                   'nome': 'DENOMINACI', 'ficha': 'ENLACE_02'},
+        'capas': {
+            'ambitos': [{'svc': 'Publica/PGM13_FICHAS_INFORMACION',
+                         'tipo': 'MapServer', 'layer': 3,
+                         'where': "ESTADO='VIGENTE'"}],
+        },
+    },
+    '15078': {
+        'base': 'https://xeoportal.santiagodecompostela.gal'
+                '/ags/rest/services',
+        'fuente': 'XeoPortal Concello de Santiago — PXOM / Regulación dos Usos 2025',
+        # Planeamento remitido (ámbitos con instrumento propio:
+        # MP-PXOU-OE-n, PERI…) + el casco histórico, que se rige por el
+        # Plan Especial 1 y no tiene ordenanza xeral.
+        'campos': {'cod': 'CLAVE', 'nome': 'ENTIDAD', 'ficha': 'DOCUMENTO'},
+        'capas': {
+            'ambitos': [
+                {'svc': 'RegulacionUsos2025', 'layer': 8},
+                {'svc': 'Planeamento_urbanistico', 'tipo': 'MapServer',
+                 'layer': 1, 'cod_fijo': 'PE-1',
+                 'nome_fijo': 'Plan Especial de protección do Casco '
+                              'Histórico (PE-1)'},
+            ],
+        },
+    },
 }
 _ARCGIS_TTL_S = 30 * 24 * 3600
 _ARCGIS_FEATS: dict[str, list[dict]] = {}
@@ -288,17 +320,18 @@ def _arcgis_cache_path(ine: str, svc: str):
     return Path('datos/cache/arcgis_ambitos') / f'{ine}_{svc}.geojson'
 
 
-def _arcgis_download(base: str, svc: str) -> dict | None:
-    """Descarga paginada de una capa FeatureServer como GeoJSON —
-    ``maxRecordCount`` (2000) exige ``resultOffset`` para capas
-    grandes como 4ORDSUC (~5.300 polígonos)."""
+def _arcgis_download(base: str, svc, tipo: str = 'FeatureServer',
+                     layer: int = 0, where: str = '1=1') -> dict | None:
+    """Descarga paginada de una capa FeatureServer/MapServer como
+    GeoJSON — ``maxRecordCount`` (2000) exige ``resultOffset`` para
+    capas grandes como 4ORDSUC (~5.300 polígonos)."""
     import requests
     feats: list[dict] = []
     offset = 0
     while True:
         r = requests.get(
-            f"{base}/{svc}/FeatureServer/0/query",
-            params={'where': '1=1', 'outFields': '*', 'f': 'geojson',
+            f"{base}/{svc}/{tipo}/{layer}/query",
+            params={'where': where, 'outFields': '*', 'f': 'geojson',
                     'outSR': '4326', 'resultRecordCount': '2000',
                     'resultOffset': str(offset)},
             timeout=90)
@@ -326,8 +359,20 @@ def _arcgis_features(ine: str | None,
     if key in _ARCGIS_FEATS:
         return _ARCGIS_FEATS[key]
     feats: list[dict] = []
-    for svc in capas:
-        path = _arcgis_cache_path(str(ine), svc)
+    for capa in capas:
+        # spec dict {svc, tipo, layer, where, cod_fijo, nome_fijo} o
+        # string con el nombre del servicio (FeatureServer/0, Vigo).
+        spec = capa if isinstance(capa, dict) else {'svc': capa}
+        svc = spec['svc']
+        # str legado (FeatureServer/0): conserva el nombre de fichero
+        # histórico para reutilizar la caché en disco ya descargada.
+        if isinstance(capa, str):
+            cache_id = svc
+        else:
+            safe = re.sub(r'[^A-Za-z0-9_.-]+', '_', svc)
+            cache_id = f"{safe}_{spec.get('tipo', 'FeatureServer')}_" \
+                       f"{spec.get('layer', 0)}"
+        path = _arcgis_cache_path(str(ine), cache_id)
         data = None
         if path.exists() and \
                 (time.time() - path.stat().st_mtime) < _ARCGIS_TTL_S:
@@ -337,7 +382,9 @@ def _arcgis_features(ine: str | None,
                 data = None
         if data is None:
             try:
-                data = _arcgis_download(cfg['base'], svc)
+                data = _arcgis_download(
+                    cfg['base'], svc, spec.get('tipo', 'FeatureServer'),
+                    spec.get('layer', 0), spec.get('where') or '1=1')
                 if data and data.get('features'):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(json.dumps(data), encoding='utf-8')
@@ -345,7 +392,12 @@ def _arcgis_features(ine: str | None,
                 continue
         for f in (data or {}).get('features') or []:
             if f.get('geometry'):
-                (f.setdefault('properties', {}))['_svc'] = svc
+                props = f.setdefault('properties', {})
+                props['_svc'] = svc
+                if spec.get('cod_fijo'):
+                    props['_cod_fijo'] = spec['cod_fijo']
+                if spec.get('nome_fijo'):
+                    props['_nome_fijo'] = spec['nome_fijo']
                 feats.append(f)
     _ARCGIS_FEATS[key] = feats
     return feats
@@ -397,29 +449,61 @@ def ambito_oficial_en_punto(lon: float, lat: float,
     contiene el punto — cubre los huecos de la capa de ordenanzas
     generales donde la zona se rige por instrumento propio (PEP, PERI,
     PP, API…). ``None`` si no hay capa o el punto cae fuera."""
+    cfg = _ARCGIS_AMBITOS.get(str(ine or '')) or {}
+    campos = cfg.get('campos') or {}
+    fuente = cfg.get('fuente') or \
+        'ArcGIS Concello de Vigo — PXOM 2025 aprobación definitiva'
     for p in _arcgis_poligonos_en_punto(lon, lat, ine, 'ambitos'):
-        figura = str(p.get('figura') or '').strip().upper()
-        cod = str(p.get('cod') or '').strip()
+        cod = str(p.get(campos.get('cod') or 'cod')
+                  or p.get('_cod_fijo') or '').strip()
+        figura = str(p.get(campos.get('figura') or 'figura')
+                     or '').strip().upper()
+        nome = str(p.get(campos.get('nome') or 'nome')
+                   or p.get('_nome_fijo') or '').strip()
+        ficha = p.get(campos.get('ficha') or 'enl_ficha')
+        ficha_url = _doc_url(ficha)
         if not cod:
             continue
-        codigo = f'{figura}-{cod}' if figura else f'API-{cod}'
+        # CLAVE/figura: Santiago usa códigos completos ('MP-PXOU-OE-5',
+        # 'MP-OE-4/PERI-12'); el tipo se deriva del patrón.
+        if not figura:
+            if 'PERI' in cod.upper():
+                figura = 'PERI'
+            elif cod.upper().startswith('PE'):
+                figura = 'PE'
+            elif cod.upper().startswith(('MP', 'PXOU')):
+                figura = 'MP-PXOU'
+        codigo = cod if cod.startswith((figura or '') + '-') \
+            or figura in cod else (
+            f'{figura}-{cod}' if figura else cod)
         return {
             'codigo': codigo,
             'tipo': 'ambito',
-            'tipo_instrumento': figura or 'API',
-            'instrumento': str(p.get('nome') or '').strip(),
-            'figura': figura or 'API',
+            'tipo_instrumento': figura or 'Ambito',
+            'instrumento': nome,
+            'figura': figura or 'Ambito',
             'cat': p.get('cat'),
-            'edificabilidad': p.get('edif'),
-            'sup_m2': p.get('sup'),
-            'enl_ficha': p.get('enl_ficha'),
+            'edificabilidad': p.get('edif') or p.get('APROVECHAM'),
+            'sup_m2': p.get('sup') or p.get('SUPERFICIE'),
+            'enl_ficha': ficha_url or ficha,
             'observ': p.get('observ'),
             'data_quality': 'official',
-            'fuente': ('ArcGIS Concello de Vigo — PXOM 2025 '
-                       'aprobación definitiva'),
+            'fuente': fuente,
             'capa': p.get('_svc'),
         }
     return None
+
+
+def _doc_url(valor) -> str | None:
+    """URL desde un campo documental ArcGIS (ancla HTML o URL suelta)."""
+    if not valor:
+        return None
+    import re
+    m = re.search(r"href=['\"]([^'\"]+)['\"]", str(valor))
+    if m:
+        return m.group(1)
+    v = str(valor).strip()
+    return v if v.startswith('http') else v or None
 
 
 def ordenanza_2025_en_punto(lon: float, lat: float,

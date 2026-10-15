@@ -128,7 +128,7 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Copia ligera para consultas punto-en-polígono (`{ine}_clasif_puntos.geojson`, props crudas) — la usa `vector_downloader._point_tree` (STRtree cacheado) y `ambitos_service._ambito_tree` | `datos/mapas/`, `scripts/generate_map_layers.py` |
 | Modo beta ligera: `beta_light()` desactiva la medición LiDAR (rasterio/laspy ~200 MB RSS) cuando `RENDER` está definido o `BETA_LIGHT=1` — las alturas del mapa vienen precalculadas en la caché OSM | `src/building_data/mds_wcs.py` |
 | Documentos oficiales SIOTUGA (PDFs normativa, sesión+token) | `src/siotuga/document_client.py` |
-| Ordenanza SUC por punto vía capa municipal oficial (Vigo GeoServer, caché local + STRtree) | `src/muni_wfs.py` |
+| Ordenanza SUC por punto vía capa municipal oficial — Vigo GeoServer WFS; **A Coruña** IDE municipal (`PGM13_FICHAS_INFORMACION/MapServer/2`, códigos NZ_*, `where ESTADO=VIGENTE`); **Santiago** Xeoportal (`RegulacionUsos2025/FeatureServer/9`, códigos numéricos `Ordenanza N`). `tipo: arcgis` pagina con `resultOffset`; caché local + STRtree | `src/muni_wfs.py` → `ORDSUC_LAYERS` |
 | Ámbitos oficiales PXOM 2025 (PEP/PERI/PP/API) vía FeatureServer ArcGIS público del Concello — cubren los huecos de `4ordsuc` donde la zona rige por instrumento propio | `src/ambitos_service.py` → `ambito_oficial_en_punto` |
 | Ordenanzas SUC definitivas PXOM 2025 (capa `4ORDSUC_nome`, ~5.300 polígonos, paginada) — prevalece sobre la WFS municipal 2021 | `src/ambitos_service.py` → `ordenanza_2025_en_punto` (usada por `muni_wfs.consultar_ordenanza_punto`) |
 | Dotaciones oficiales PXOM 2025 (capa `2DOTPOL` — equipamentos, verde…) y contornos arqueolóxicos (`CAT_CONTORNO_ARQLX`) — explican huecos sin ordenanza | `src/ambitos_service.py` → `dotacion_en_punto`, `afeccion_arqueoloxica_en_punto` |
@@ -136,7 +136,8 @@ curl -s -o tile.png http://127.0.0.1:8002/official/siotuga-wms/tile/14/7795/6067
 | Ancho de rúa estimado desde OSM (fachadas opuestas ⊥ al vial más próximo; resuelve la tabla de altura U2 → `ancho_rua_estimado_m`/`altura_aplicable_m`, siempre `estimated`) | `src/subzones_service.py` → `_estimate_street_widths` |
 | RAG normativo sobre PDFs oficiales (índice BM25 + citas) | `src/normativa_rag.py` |
 | Cliente Catastro (OVC/INSPIRE/BU/ATOM) | `src/catastro/client.py` |
-| Alturas LiDAR + huellas Overture | `src/building_data/height_extractor.py` |
+| Alturas LiDAR + huellas Overture (fallback de `/proxy/osm-buildings` cuando Overpass está saturado — `osm_id` va prefijado `ov:` y `height_source='overture'`) | `src/building_data/height_extractor.py`, `src/subzones_service.py` → `_overture_features` |
+| PDFs normativa Coruña (NU PGM 2013, `NORMA ZONAL N` → códigos `NZ_N`, subzonas por listas/letras en `_subzonas_coruna`) y Santiago (14 ordenanzas `ORD*.pdf`, fórmulas `ancho+N`/`ancho×F` computables) | `datos/normativa/{15030,15078}/`, `src/normativa_params.py` |
 | Alturas vía WCS MDS del IDEE (nDSM 2.5m, sin captcha) | `src/building_data/mds_wcs.py` |
 | Preparación/procesado teselas LAZ CENDES | `src/building_data/lidar_prep.py` |
 

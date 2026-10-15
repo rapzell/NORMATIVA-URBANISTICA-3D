@@ -56,6 +56,26 @@ CODE_LABELS = {
     'SRPF': 'Suelo Rústico de Protección Forestal',
     'SRPPX': 'Suelo Rústico de Protección de Paisaje y Patrimonio',
     'SRPC': 'Suelo Rústico de Protección de Cauces',
+    # Categorías de la capa municipal de A Coruña (PGM 2013, IDE
+    # Concello): urbanizable delimitado/régimen transitorio, sistemas
+    # generales y suelo rústico de especial protección (sufijos _a–_g).
+    'SUD': 'Suelo Urbanizable Delimitado',
+    'SURT': 'Suelo Urbanizable Régimen Transitorio',
+    'SGA': 'Sistema General Adscrito',
+    'SREP_A': 'Suelo Rústico Especial Protección Forestal',
+    'SREP_B': 'Suelo Rústico Especial Protección Infraestructuras',
+    'SREP_C': 'Suelo Rústico Especial Protección Aguas',
+    'SREP_D': 'Suelo Rústico Especial Protección Costas',
+    'SREP_E': 'Suelo Rústico Especial Protección Paisaje',
+    'SREP_F': 'Suelo Rústico Especial Protección Patrimonial',
+    'SREP_G': 'Suelo Rústico Especial Protección Espacios Naturales',
+    # Categorías del PXOM de Santiago (Xeoportal municipal).
+    'SUBLE': 'Suelo Urbanizable',
+    'SUBLED': 'Suelo Urbanizable Delimitado',
+    'SUBLEND': 'Suelo Urbanizable No Delimitado',
+    'SR-PO': 'Suelo No Urbanizable Común (Protección Ordinaria)',
+    'SR-EP': 'Suelo No Urbanizable Especialmente Protegido',
+    'CSNR': 'Suelo de Núcleo Rural',
 }
 
 
@@ -363,6 +383,8 @@ def props_to_result(props: dict) -> dict:
             result['estado_zona'] = val
         elif field == 'cat_wiug':
             result['categoria_wiug'] = val
+        elif field == 'fuente':
+            result['fuente'] = val
     for key in ('clasificacion_ley', 'clasificacion_homo', 'clasificacion_plan',
                 'clase_ley', 'clase_homo'):
         if key in result and result[key] in CODE_LABELS:
@@ -525,7 +547,9 @@ def consultar_clasificacion_punto(
         best = _pick_best(_point_in_tree(lon, lat, ine_code))
     if best:
         result = props_to_result(best['properties'])
-        result['fuente'] = 'SIOTUGA WFS (vectorial local)'
+        # Capas municipales precalculadas (A Coruña, Santiago…) traen su
+        # propia fuente en props — prevalece sobre la etiqueta SIOTUGA.
+        result.setdefault('fuente', 'SIOTUGA WFS (vectorial local)')
         result['vectorial_local'] = True
         return result
     # Punto fuera de los polígonos descargados: puede ser suelo

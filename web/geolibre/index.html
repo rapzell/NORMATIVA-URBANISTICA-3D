@@ -475,7 +475,11 @@ let showOrds = false;
 // Capas WMS municipales con ordenanzas dibujadas (visor oficial del
 // concello) por INE — solo donde el GeoServer municipal la publica.
 const MUNI_ORDS_LAYER = { '36057': 'vigo:ordenanzas_alineaciones' };
-const MUNI_INE = { 'Vigo': '36057' };
+// INE de los municipios con capa oficial de ordenanzas servida por
+// /official/ordenanzas-vector (Vigo PXOM + A Coruña PGM13 + Santiago
+// Regulación dos Usos 2025).
+const MUNI_INE = {
+  'Vigo': '36057', 'A Coruna': '15030', 'Santiago': '15078' };
 let clasificacionLoading = false;
 let clasificacionMode = null;
 
@@ -1127,7 +1131,7 @@ async function toggleOrds() {
     return;
   }
   const ine = MUNI_INE[activeMunicipio];
-  if (!ine || !MUNI_ORDS_LAYER[ine]) {
+  if (!ine) {
     btn.textContent = 'Ordenanzas mapa: sin capa';
     btn.setAttribute('aria-pressed', 'false');
     showOrds = false;
@@ -1149,7 +1153,7 @@ async function toggleOrds() {
         if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'visible');
     } else {
       map.addSource('ords', { type: 'geojson', data: gj,
-        attribution: 'Concello de Vigo — ordenanzas SUC' });
+        attribution: 'Ordenanzas oficiales del concello' });
       // Contornos y tinte en el suelo, debajo de las extrusiones 3D
       const beforeId = map.getLayer('buildings-3d') ? 'buildings-3d' : undefined;
       map.addLayer({ id: 'ords-fill', type: 'fill', source: 'ords',

@@ -15,15 +15,28 @@ from pathlib import Path
 
 _DATOS = Path(__file__).resolve().parent.parent / 'datos' / 'normativa'
 _CACHE_TTL_S = 30 * 24 * 3600  # 30 días
-_EXTRACTOR_V = 3  # bump al añadir patrones: invalida el caché en disco
+_EXTRACTOR_V = 5  # bump al añadir patrones: invalida el caché en disco
 
 # Cabeceras de ordenanza: "ART. 76. ORDENANZA U1. MANTEMENTO...", "ORDENANZA U.4 ...",
 # "ORDENANZA RZ-2 ...", "ORDENANZA DE RESIDENCIAL ..." (fallback genérico).
+# Case-insensitive: Santiago publica "Art. 140. Ordenanza 3. ..." en
+# minúsculas; el filtro ``_header_plausible`` evita falsos positivos.
 _ORD_HDR = re.compile(
-    r'ORDENANZA\s+([A-ZÁÉÍÓÚÑÜ]{1,5}\.?\s*\d+(?:\.\d+)?|[A-ZÁÉÍÓÚÑÜ]{2,}(?:\s+DE\s+[A-ZÁÉÍÓÚÑÜ]+)?)'
-    r'\s*[.:\-]?\s*([A-ZÁÉÍÓÚÑÜ0-9][^\n.]{3,90})?',
+    r'ORDENANZA\s+([A-ZÁÉÍÓÚÑÜ]{1,5}\.?\s*\d+(?:[.\-]?\d*[A-Za-z]?)?|\d+[A-Za-z]?|[A-ZÁÉÍÓÚÑÜ]{2,}(?:\s+DE\s+[A-ZÁÉÍÓÚÑÜ]+)?)'
+    r'\s*[.:\-]?\s*([^\n.]{3,90})?',
+    re.I,
 )
-_ORD_GENERIC = re.compile(r'\bORDENANZA\s+([A-Z]{1,4}\.?\s*\d+(?:\.\d+)?)')
+_ORD_GENERIC = re.compile(
+    r'\bORDENANZA\s+([A-Z]{1,4}\.?\s*\d+(?:\.\d+)?[A-Za-z]?|\d+[A-Za-z]?)',
+    re.I)
+# A Coruña (PGOM 2013): los artículos 7.2.N son «NORMA ZONAL M.
+# TÍTULO» y las zonas del mapa llevan código NZ_M[_subzona]. Se emite
+# como código NZ_M para que ``buscar_ordenanza`` resuelva NZ_4_1→NZ_4
+# por prefijo.
+_NZ_HDR = re.compile(
+    r'(?:7\.2\.\d+\s*[.\-–]?\s*)?NORMA\s+ZONAL\s+(\d{1,2})'
+    r'\s*[.\-–]?\s*([^\n.]{3,90})?',
+    re.I)
 
 _NUM = r'(\d+(?:[.,]\d+)?)'
 
@@ -57,6 +70,13 @@ _PATTERNS = {
         re.compile(r'altura\s+m[áa]xima[^.]{0,90}?equivalente\s+a\s+' + _NUM + r'\s*metros', re.I),
         re.compile(r'altura\s+m[áa]xima\s+(?:de|f[íi]xase\s+en|establece\s+en)\s+' + _NUM + r'\s*metros', re.I),
         re.compile(r'altura\s+m[áa]xima[^.]{0,60}?' + _NUM + r'\s*metros', re.I),
+        # Coruña: «será de dos plantas (B + 1) y 7,00 m» / «tope máximo
+        # de 3 plantas y 9 metros» — altura tras el conteo de plantas.
+        # El conector «y/e» es obligatorio: sin él, cabeceras de tabla
+        # como «Nº de plantas / Altura en metros / Menor de 6 m»
+        # capturarían el ancho de rúa como altura.
+        re.compile(r'plantas?[\s\S]{0,35}?\s(?:y|e)\s+' + _NUM
+                   + r'\s*(?:metros|m)\b', re.I),
     ],
     'altura_absoluta_m': [
         # 'sen superar os 8,50 metros medidos desde calquera punto do terreo'
@@ -238,9 +258,15 @@ def _segment_ordenanzas(pages: list[str]) -> list[dict]:
         # buscar cabeceras de ordenanza en esta página
         marks = []
         for m in _ORD_HDR.finditer(text):
-            code = (m.group(1) or '').strip().replace(' ', '')
+            code = (m.group(1) or '').strip().replace(' ', '') \
+                .rstrip('.-')
             title = (m.group(2) or '').strip().rstrip('.')
-            if len(code) < 2 or code.upper() in ('DE', 'LA', 'DO', 'DA', 'NON', 'QUE'):
+            # Códigos de un solo carácter solo si son numéricos (las
+            # ordenanzas de Santiago se llaman "Ordenanza 3", "7"…).
+            if len(code) < 2 and not code.isdigit():
+                continue
+            if code.upper() in ('DE', 'LA', 'DO', 'DA', 'NON', 'QUE',
+                                'ESTÁ', 'ESTA', 'O', 'A', 'E', 'SE'):
                 continue
             if not _header_plausible(text, m.start(), m.end(), title):
                 continue
@@ -251,6 +277,17 @@ def _segment_ordenanzas(pages: list[str]) -> list[dict]:
                 if not _header_plausible(text, gm.start(), gm.end(), ''):
                     continue
                 marks.append((gm.start(), code, ''))
+        for nm in _NZ_HDR.finditer(text):
+            code = 'NZ_' + nm.group(1)
+            if all(abs(nm.start() - s) > 3 for s, _, _ in marks):
+                title = (nm.group(2) or '').strip().rstrip('.')
+                # Solo cabeceras con título propio o precedidas del
+                # número de artículo — descarta menciones en prosa.
+                prev = text[max(0, nm.start() - 30):nm.start()]
+                if not title and not re.search(
+                        r'art\.?\s*\d|7\.2\.\d', prev, re.I):
+                    continue
+                marks.append((nm.start(), code, title))
         marks.sort()
         if marks:
             if current:
@@ -311,6 +348,57 @@ def _extract_params(block: dict) -> dict:
         trazas['altura_por_ancho_rua'] = {
             'pagina': block['pag_ini'], 'tabla': rows,
             'texto': ' '.join(snippet.split())[:220]}
+    # Fórmulas de altura por ancho de rúa (Santiago ord. 1 Ensanche:
+    # «menor de 15 m → ancho+6 m; ≥15 m → ancho×1,5»). La tabla
+    # ``_tabla_ancho_rua`` solo cubre alturas fijas por tramo; aquí se
+    # emiten filas con ``formula`` que ``_resolve_fila_tabla`` evalúa.
+    if 'altura_por_ancho_rua' not in params and re.search(
+            r'ancho\s+d[aeo]\s*r[úu]a', texto, re.I):
+        partes, rows = [], []
+        m = re.search(
+            r'menor\s+de\s+' + _NUM + r'\s*metros?[^.]{0,90}?'
+            r'sumar\s+' + _NUM + r'\s*metros?\s+ao\s+ancho', texto, re.I)
+        if m:
+            lim, add = _numtxt(m.group(1)), _numtxt(m.group(2))
+            partes.append(f"rúa <{_fmt_num(lim)} m: "
+                          f"ancho+{_fmt_num(add)} m")
+            rows.append({'ancho_min_m': 0, 'ancho_max_m': lim,
+                         'formula': 'ancho+', 'op_m': add})
+        m = re.search(
+            _NUM + r'\s*ou\s+m[áa]is\s+metros?[^.]{0,90}?'
+            r'factor\s+' + _NUM, texto, re.I)
+        if m:
+            lim, fac = _numtxt(m.group(1)), _numtxt(m.group(2))
+            partes.append(f"rúa ≥{_fmt_num(_numtxt(m.group(1)))} m: "
+                          f"ancho×{_fmt_num(_numtxt(m.group(2)))}")
+            rows.append({'ancho_min_m': lim, 'ancho_max_m': None,
+                         'formula': 'ancho*', 'op_m': fac})
+        if partes:
+            params['altura_por_ancho_rua'] = '; '.join(partes)
+            idx = texto.lower().find('ancho')
+            snippet = texto[max(0, idx - 100):idx + 400] if idx >= 0 else ''
+            trazas['altura_por_ancho_rua'] = {
+                'pagina': block['pag_ini'], 'tabla': rows,
+                'texto': ' '.join(snippet.split())[:300]}
+    # Tablas 'N metros para N plantas' (ordenanzas de Santiago: la
+    # altura se fija por número de plantas en metros, p.ej. «9,82
+    # metros para 3 plantas»). El máximo es la altura máxima efectiva.
+    if 'altura_maxima_m' not in params:
+        tabla = re.findall(
+            r'(\d+(?:[.,]\d+)?)\s*metros?\s+para\s+(\d+)\s*plantas?',
+            texto, re.I)
+        vals = [(float(v.replace(',', '.')), int(p)) for v, p in tabla]
+        if len(vals) >= 2:
+            mx = max(vals)
+            params['altura_maxima_m'] = mx[0]
+            m = re.search(re.escape(tabla[0][0]) + r'\s*metros?\s+para',
+                          texto)
+            idx = m.start() if m else 0
+            snippet = texto[max(0, idx - 120):idx + 260]
+            trazas['altura_maxima_m'] = {
+                'pagina': block['pag_ini'],
+                'tabla': [{'plantas': p, 'altura_m': v} for v, p in vals],
+                'texto': ' '.join(snippet.split())[:220]}
     usos = _extract_usos(texto)
     if usos:
         params['usos_permitidos'] = '; '.join(usos)
@@ -333,6 +421,194 @@ def _extract_params(block: dict) -> dict:
                 'pagina': block['pag_ini'],
                 'texto': ' '.join(snippet.split())[:220]}
     return params, trazas
+
+
+# ——— A Coruña (PGOM 2013): parámetros por subzona ———
+# Las normas zonales (NZ_N) fijan parámetros por subzona con dos
+# formatos:
+#   A) secciones por letra «a)- Condiciones de la edificación en X.
+#      (4.1)» (NZ_4), o
+#   B) listados «Subzona N.- valor» bajo cada epígrafe de parámetro
+#      (NZ_5, NZ_6…).
+_CORUNA_SUB_SEC = re.compile(
+    r'(?:^|\n)\s*([a-h])\)\s*[-–]?\s*Condiciones[\s\S]{0,220}?'
+    r'\(\s*(?:subzona[s]?\s*)?\d+\.(\d+)\s*\)', re.I)
+_CORUNA_SUB_ROW = re.compile(
+    r'(?:^|\n)\s*[-–•·]{0,3}\s*Subzona\s+(\d+)(?:\(\d+\))?\s*[.:\-–\s]+'
+    + _NUM + r'\s*(m2/m2|m2|m\b|%)', re.I)
+
+
+def _numtxt_es(s: str) -> float | None:
+    """Número con separador de miles español: '1.000'→1000, '0,35'→0.35."""
+    s = str(s).strip()
+    if re.fullmatch(r'\d{1,3}(?:\.\d{3})+', s):      # miles con '.'
+        return float(s.replace('.', ''))
+    return _numtxt(s)
+
+
+def _coruna_subsecciones(block: dict) -> list[tuple[int, str]]:
+    """Secciones por letra con nº de subzona explícito → [(num, texto)]."""
+    texto = block['texto']
+    marks = []
+    for m in _CORUNA_SUB_SEC.finditer(texto):
+        # descarta secciones anidadas «a.5)-» (llevan punto tras letra)
+        if re.match(r'[a-h]\.\d', texto[m.start():m.start() + 6]):
+            continue
+        marks.append((m.start(), int(m.group(2))))
+    out = []
+    for i, (pos, num) in enumerate(marks):
+        fin = marks[i + 1][0] if i + 1 < len(marks) else len(texto)
+        out.append((num, texto[pos:fin]))
+    return out
+
+
+_CORUNA_PARAM_CTX = re.compile(
+    r'parcela\s+m[íi]nima|altura\s+de\s+la\s+edificaci[oó]n|'
+    r'altura\s+m[áa]xima|altura[s]?\b|edificabilidad|ocupaci[oó]n|'
+    r'metros?\s+y\s+n[úu]mero\s+de\s+plantas', re.I)
+_CORUNA_PARAM_KEY = [
+    (re.compile(r'parcela\s+m[íi]nima', re.I), 'parcela_minima_m2'),
+    (re.compile(r'altura|metros?\s+y\s+n[úu]mero\s+de\s+plantas',
+                re.I), 'altura_maxima_m'),
+    (re.compile(r'edificabilidad', re.I), 'edificabilidad_max_m2_m2'),
+    (re.compile(r'ocupaci[oó]n', re.I), 'ocupacion_max_pct'),
+]
+
+
+def _coruna_listas(block: dict) -> dict[int, dict]:
+    """Listados «Subzona N.- valor» bajo epígrafes de parámetro
+    (NZ_5, NZ_6…). Solo filas al inicio de línea con valor y unidad,
+    agrupadas (≥2 filas por epígrafe) para descartar menciones en prosa.
+    Devuelve {num_subzona: {param: valor}}."""
+    texto = block['texto']
+    # filas candidatas agrupadas por epígrafe de parámetro
+    grupos: dict[str, list[tuple[int, float]]] = {}
+    for m in _CORUNA_SUB_ROW.finditer(texto):
+        ctx = texto[max(0, m.start() - 800):m.start()]
+        ctxs = list(_CORUNA_PARAM_CTX.finditer(ctx))
+        if not ctxs:
+            continue
+        last = ctxs[-1].group(0).lower()
+        key = next((k for pat, k in _CORUNA_PARAM_KEY
+                    if pat.search(last)), None)
+        if not key:
+            continue
+        val = _numtxt_es(m.group(2))
+        if val is not None:
+            grupos.setdefault(key, []).append((int(m.group(1)), val))
+    out: dict[int, dict] = {}
+    for key, rows in grupos.items():
+        if len({n for n, _ in rows}) < 2:
+            continue  # una sola fila = probable mención en prosa
+        for num, val in rows:
+            out.setdefault(num, {})[key] = val
+    return out
+
+
+# NZ_2 (Ensanche): tres tablas «ancho de calle → nº de plantas» según la
+# configuración de manzana; cada configuración cubre varias subzonas.
+_CORUNA_NZ2_CFG = re.compile(
+    r'Configuraci[oó]n\s+(semiintensiva|intensiva|perif[eé]rica)'
+    r'([\s\S]{0,600}?)(?=Configuraci[oó]n|2\.\-|Criterio)', re.I)
+_CORUNA_NZ2_ROWS = [
+    # '10 ≤ A < 12 m 4'  (orden: rango antes que los casos sueltos)
+    (re.compile(_NUM + r'\s*[≤<]?\s*A\s*<\s*' + _NUM + r'\s*m\s*(\d{1,2})\b', re.I),
+     lambda m: {'ancho_min_m': _numtxt(m.group(1)),
+                'ancho_max_m': _numtxt(m.group(2)),
+                'plantas': int(m.group(3))}),
+    # 'A ≥ 25 m 8'
+    (re.compile(r'A\s*[≥>]\s*' + _NUM + r'\s*m\s*(\d{1,2})\b', re.I),
+     lambda m: {'ancho_min_m': _numtxt(m.group(1)),
+                'ancho_max_m': None, 'plantas': int(m.group(2))}),
+    # 'A < 10 m 3'
+    (re.compile(r'A\s*<\s*' + _NUM + r'\s*m\s*(\d{1,2})\b', re.I),
+     lambda m: {'ancho_min_m': 0, 'ancho_max_m': _numtxt(m.group(1)),
+                'plantas': int(m.group(2))}),
+]
+_CORUNA_NZ2_SUBZONAS = {
+    'semiintensiva': (1, 2),     # calle / manzana semi-intensiva
+    'intensiva': (3, 4),         # calle / manzana intensiva
+    'periférica': (5,),          # manzana periférica
+}
+
+
+def _coruna_nz2_tablas(block: dict) -> dict[int, list[dict]]:
+    """Tablas de plantas por ancho de calle de NZ_2 → {subzona: rows}."""
+    out: dict[int, list[dict]] = {}
+    for m in _CORUNA_NZ2_CFG.finditer(block['texto']):
+        cfg = m.group(1).lower()
+        seg = m.group(2)
+        rows: list[dict] = []
+        spans: list[tuple[int, int]] = []
+        for pat, mk in _CORUNA_NZ2_ROWS:
+            for rm in pat.finditer(seg):
+                if any(s <= rm.start() < e for s, e in spans):
+                    continue
+                rows.append(mk(rm))
+                spans.append((rm.start(), rm.end()))
+        if len(rows) >= 2:
+            rows.sort(key=lambda r: (r['ancho_min_m'] or 0))
+            for num in _CORUNA_NZ2_SUBZONAS.get(cfg, ()):
+                out[num] = rows
+    return out
+
+
+def _subzonas_coruna(blocks: list[dict], pdf_name: str) -> dict:
+    """A Coruña: desglosa cada bloque NZ_N en subzonas NZ_N_M con sus
+    parámetros (letras «x)- … (N.M)» o listas «Subzona N.- valor»)."""
+    out: dict = {}
+    for block in blocks:
+        m = re.fullmatch(r'NZ_(\d+)', block['ordenanza'] or '')
+        if not m:
+            continue
+        nz = int(m.group(1))
+        for num, subtexto in _coruna_subsecciones(block):
+            sub = {'ordenanza': f'NZ_{nz}_{num}', 'titulo': None,
+                   'pag_ini': block['pag_ini'], 'texto': subtexto}
+            params, trazas = _extract_params(sub)
+            code = f'NZ_{nz}_{num}'
+            out[code] = {'ordenanza': code,
+                         'titulo': f'Norma Zonal {nz} — subzona {num}',
+                         'params': params, 'trazas': trazas,
+                         'fuente': f"{pdf_name} pág. {block['pag_ini']}"}
+        for num, params in _coruna_listas(block).items():
+            code = f'NZ_{nz}_{num}'
+            entry = out.setdefault(code, {
+                'ordenanza': code,
+                'titulo': f'Norma Zonal {nz} — subzona {num}',
+                'params': {}, 'trazas': {},
+                'fuente': f"{pdf_name} pág. {block['pag_ini']}"})
+            entry['params'].update(params)
+            for k, v in params.items():
+                entry['trazas'].setdefault(k, {
+                    'pagina': block['pag_ini'],
+                    'texto': f'Subzona {num}: {v}'})
+        # NZ_2 Ensanche: altura por nº de plantas según ancho de calle
+        # (tablas por configuración de manzana).
+        if nz == 2:
+            for num, rows in _coruna_nz2_tablas(block).items():
+                code = f'NZ_{nz}_{num}'
+                entry = out.setdefault(code, {
+                    'ordenanza': code,
+                    'titulo': f'Norma Zonal 2 — subzona {num}',
+                    'params': {}, 'trazas': {},
+                    'fuente': f"{pdf_name} pág. {block['pag_ini']}"})
+                partes = '; '.join(
+                    (f"rúa <{_fmt_num(r['ancho_max_m'])} m"
+                     if r['ancho_min_m'] in (0, None)
+                     else f"rúa ≥{_fmt_num(r['ancho_min_m'])} m"
+                     if r['ancho_max_m'] is None else
+                     f"rúa {_fmt_num(r['ancho_min_m'])}–"
+                     f"{_fmt_num(r['ancho_max_m'])} m")
+                    + f": {r['plantas']} plantas" for r in rows)
+                entry['params']['altura_por_ancho_rua'] = (
+                    partes + ' — altura en nº de plantas (NU NZ 2, '
+                    'art. f)')
+                entry['trazas']['altura_por_ancho_rua'] = {
+                    'pagina': block['pag_ini'], 'tabla': rows,
+                    'texto': 'Tabla ancho de calle → nº de plantas '
+                             '(NU NZ_2, configuración de manzana)'}
+    return out
 
 
 def extraer_ordenanzas_municipio(ine: str, *, forzar: bool = False) -> dict:
@@ -368,9 +644,17 @@ def extraer_ordenanzas_municipio(ine: str, *, forzar: bool = False) -> dict:
         pages = _pdf_pages_text(pdf)
         if not pages:
             continue
-        for block in _segment_ordenanzas(pages):
+        blocks = _segment_ordenanzas(pages)
+        for block in blocks:
             params, trazas = _extract_params(block)
             key = block['ordenanza'].upper()
+            # A Coruña: los parámetros de una NZ se fijan por subzona —
+            # los valores a nivel NZ son ambiguos (mezclan subzonas), se
+            # conserva solo el título y el detalle va a NZ_N_M.
+            if str(ine) == '15030' and re.fullmatch(r'NZ_\d+', key):
+                params, trazas = {}, {}
+                block['titulo'] = (block.get('titulo')
+                                   or 'Norma Zonal').strip(' ,.-')
             prev = out.get(key)
             if prev and len(prev.get('params') or {}) >= len(params):
                 continue
@@ -384,6 +668,16 @@ def extraer_ordenanzas_municipio(ine: str, *, forzar: bool = False) -> dict:
             if not params:
                 out[key]['nota'] = ('A ordenanza non define parámetros numéricos extraíbles '
                                    '(conserva a edificabilidade existente ou expresa alturas en plantas).')
+        if str(ine) == '15030':
+            for code, entry in _subzonas_coruna(blocks, pdf.name).items():
+                prev = out.get(code)
+                if (prev and len(prev.get('params') or {})
+                        >= len(entry.get('params') or {})):
+                    continue
+                if not entry.get('params'):
+                    entry['nota'] = ('Parámetros definidos en la norma '
+                                     'zonal y fichas — ver documento.')
+                out[code] = entry
     if out:
         try:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -408,8 +702,16 @@ def buscar_ordenanza(ordenanzas: dict, consulta: str) -> tuple[str | None, dict 
     for key in ordenanzas:
         if _norm_code(key) == q:
             return key, ordenanzas[key]
-    # prefijo (U4 matchea U4 si solo hay una U4*)
-    cand = [k for k in ordenanzas if _norm_code(k).startswith(q) or q.startswith(_norm_code(k))]
+    # El código consultado es una subzona de una ordenanza madre
+    # (NZ_4_2_a → NZ_4_2 → NZ_4): gana el prefijo más largo — más
+    # específico, nunca ambiguo entre ascendientes.
+    padres = [k for k in ordenanzas
+              if q.startswith(_norm_code(k)) and _norm_code(k) != q]
+    if padres:
+        best = max(padres, key=lambda k: len(_norm_code(k)))
+        return best, ordenanzas[best]
+    # U4 → U4.x si solo existe una descendiente (si no, ambiguo).
+    cand = [k for k in ordenanzas if _norm_code(k).startswith(q)]
     if len(cand) == 1:
         return cand[0], ordenanzas[cand[0]]
     return None, None

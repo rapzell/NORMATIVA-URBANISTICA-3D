@@ -61,9 +61,14 @@ def test_subzonas_municipios_lista():
     assert len(data["municipios"]) >= 3
 
 
-def test_subzonas_lookup_punto_dentro():
-    """Punto dentro de la subzona piloto UC-1 (A Coruña no tiene capa
-    oficial configurada → cae al piloto etiquetado)."""
+def test_subzonas_lookup_punto_dentro(monkeypatch):
+    """Punto dentro de la subzona piloto UC-1 cuando el municipio no
+    tiene capa oficial configurada → cae al piloto etiquetado.
+    (A Coruña ya tiene capa oficial — el lookup real devuelve
+    official/unavailable; aquí se simula la ausencia de capa.)"""
+    import src.subzones_service as _ss
+    monkeypatch.setattr(_ss, "_ordenanza_municipal_punto",
+                        lambda lon, lat, municipio: None)
     resp = client.get("/planeamiento/subzonas/lookup",
                       params={"lon": -8.40, "lat": 43.37})
     assert resp.status_code == 200
