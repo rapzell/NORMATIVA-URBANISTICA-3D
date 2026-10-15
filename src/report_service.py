@@ -468,12 +468,20 @@ def render_assess_report_html(body: dict, res: Any, *, logo: Optional[str] = Non
             if bld.get('plantas'): bld_rows += f"<tr><td>Plantas (OSM)</td><td>{esc(bld['plantas'])}</td></tr>"
             if bld.get('huella_m2') is not None: bld_rows += f"<tr><td>Huella aproximada</td><td>{esc(bld['huella_m2'])} m²</td></tr>"
             if bld.get('osm_id'):
-                osm_url = f"https://www.openstreetmap.org/way/{esc(bld['osm_id'])}"
-                bld_rows += f"<tr><td>OSM ID</td><td><a href=\"{osm_url}\" target=\"_blank\" rel=\"noopener\">{esc(bld['osm_id'])}</a></td></tr>"
+                oid = str(bld['osm_id'])
+                if oid.startswith('ov:'):
+                    bld_rows += ("<tr><td>ID de huella</td><td>Overture Maps "
+                                 f"{esc(oid[3:19])}…</td></tr>")
+                else:
+                    osm_url = f"https://www.openstreetmap.org/way/{esc(oid)}"
+                    bld_rows += f"<tr><td>OSM ID</td><td><a href=\"{osm_url}\" target=\"_blank\" rel=\"noopener\">{esc(oid)}</a></td></tr>"
             if bld_rows:
+                src_label = ('Overture Maps'
+                             if str(bld.get('osm_id') or '').startswith('ov:')
+                             else 'OpenStreetMap')
                 building_html = (
                     "<section>"
-                    "<h2>Datos del edificio (OpenStreetMap)</h2>"
+                    f"<h2>Datos del edificio ({src_label})</h2>"
                     "<table><tbody>"
                     f"{bld_rows}"
                     "</tbody></table>"

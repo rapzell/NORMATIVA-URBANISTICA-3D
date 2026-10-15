@@ -657,7 +657,7 @@ function buildingTypeLabel(value) {
 }
 
 function heightSourceLabel(source) {
-  return ({ mdsn_lidar: 'medida LiDAR PNOA (nDSM edificación 2,5 m, IDEE)', osm_height: 'altura declarada en OSM', osm_levels: 'estimada desde plantas OSM', building_type: 'estimada por tipo de edificio', default: 'estimación genérica' })[source] || 'procedencia desconocida';
+  return ({ mdsn_lidar: 'medida LiDAR PNOA (nDSM edificación 2,5 m, IDEE)', osm_height: 'altura declarada en OSM', osm_levels: 'estimada desde plantas OSM', overture: 'medida Overture Maps (LiDAR/fotogrametría)', overture_levels: 'estimada desde plantas Overture', building_type: 'estimada por tipo de edificio', default: 'estimación genérica' })[source] || 'procedencia desconocida';
 }
 
 function initMap() {
@@ -1406,7 +1406,7 @@ function showBuildingTooltip(feature, point) {
   const status = props.cumplimiento_altura || 'sin_dato';
   const pilot = props.normative_status === 'pilot';
   tooltipEl.innerHTML = `
-    <div class="tt-title">${escapeHtml(props.name || ('Edificio #' + (props.osm_id || 'OSM')))}</div>
+    <div class="tt-title">${escapeHtml(props.name || ('Edificio #' + String(props.osm_id || 'OSM').replace(/^ov:/, 'OV-')))}</div>
     <div class="tt-row"><span class="tt-key">Altura</span><span>${escapeHtml(props.height || '—')} m</span></div>
     <div class="tt-row"><span class="tt-key">${pilot ? 'Subzona piloto' : 'Ordenanza'}</span><span>${escapeHtml(props.subzona || props.subzona_piloto || '—')}${props.titulo_ordenanza ? ' · ' + escapeHtml(props.titulo_ordenanza) : ''}</span></div>
     ${props.ambito ? `<div class="tt-row"><span class="tt-key">Ámbito</span><span>${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''}</span></div>` : ''}
@@ -2377,7 +2377,7 @@ async function selectBuilding(feature) {
   if (footprint != null) props.footprint_m2 = footprint;
   if (!props.municipio && activeMunicipio) props.municipio = activeMunicipio;
 
-  let html = `<h2>${escapeHtml(props.name || 'Edificio #' + (props.osm_id || 'OSM'))}</h2>`;
+  let html = `<h2>${escapeHtml(props.name || 'Edificio #' + String(props.osm_id || 'OSM').replace(/^ov:/, 'OV-'))}</h2>`;
   html += `<div style="margin-bottom:8px"><span class="badge ${statusClass(status)}">${escapeHtml(statusLabel(status, props))}</span></div>`;
   if (pilot) html += '<div class="hint" style="color:#d29922;margin-bottom:8px">Comparación piloto, no oficial. Verifica la parcela y la ordenanza en SIOTUGA/Catastro antes de tomar decisiones.</div>';
   html += '<div class="info-card">';
@@ -2433,7 +2433,10 @@ async function selectBuilding(feature) {
     html += `<div class="hint" style="margin:-4px 0 6px">Uso no residencial (<b>${escapeHtml(buildingTypeLabel(props.building))}</b>) en ordenanza ${escapeHtml(props.subzona)} de vivienda — su volumen suele ser anterior al plan o regirse por condiciones propias de equipamiento; la comparación de altura es orientativa.</div>`;
   }
   const osmId = String(props.osm_id || '');
-  html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—'}</span></div>`;
+  const osmLink = osmId.startsWith('ov:')
+    ? `Overture ${escapeHtml(osmId.slice(3, 11))}…`  // huella Overture Maps (sin way OSM)
+    : (osmId ? `<a href="https://www.openstreetmap.org/way/${encodeURIComponent(osmId)}" target="_blank" rel="noopener">${escapeHtml(osmId)}</a>` : '—');
+  html += `<div class="info-row"><span class="key">OSM ID</span><span class="val">${osmLink}</span></div>`;
   html += '</div>';
   if (props.height && props.height > 0) {
     html += `<button class="eval-btn" onclick="exportBuildingIFC(${Number(props.height)})">Exportar geometría IFC aproximada</button>`;
