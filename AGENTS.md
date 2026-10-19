@@ -56,6 +56,18 @@ HF Spaces ya no admite docker gratis (exige PRO). Ruta actual:
   rama `feat/demo-silencioso`, región Frankfurt.
 - Resubir datos tras cambios: `upload_folder` al dataset HF
   (ver `deploy/hf/upload_space.py`, que queda como referencia).
+- **Convención de rutas del dataset — CRÍTICO**: `fetch_beta_data.py`
+  hace `snapshot_download(local_dir='datos')`, así que los ficheros
+  deben subirse a la **raíz del dataset sin el prefijo `datos/`**
+  (`path_in_repo='cache/osm_buildings/x.json'`, NO
+  `'datos/cache/osm_buildings/x.json'`). Con el prefijo aterrizan en
+  `datos/datos/...` y Render los ignora silenciosamente — el endpoint
+  regenera en vivo (timeouts de 200-300 s en frío y props vacíos
+  como `pe1_articulo: null`). Después de subir datos hay que lanzar
+  un deploy para que el contenedor re-descargue el snapshot.
+- Nunca subir `datos/` entero con `upload_folder`: contiene ~4 GB de
+  cartografía PGOM bruta (zips/TIFs) que no pertenece al dataset.
+  Subir solo las rutas concretas (cachés, normativa, mapas).
 
 ## Comandos esenciales
 
