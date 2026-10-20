@@ -568,9 +568,11 @@ def _contexto_edificio(lon: float | None, lat: float | None,
     # las variantes con sus parámetros — nunca inventar los del padre.
     op = ctx.get('ordenanzas_params') or {}
     cod = op.get('ordenanza')
+    ords_map = (ctx.get('ordenanzas') or {}).get('ordenanzas') or {}
+    if cod and not op.get('nota'):
+        op['nota'] = (ords_map.get(cod) or {}).get('nota')
     if cod and not any(
             op.get(k) is not None for k in _ORD_PARAM_LABELS):
-        ords_map = (ctx.get('ordenanzas') or {}).get('ordenanzas') or {}
         vars_ = {k: (v.get('params') or {})
                  for k, v in ords_map.items()
                  if str(k).startswith(f'{cod}.')
