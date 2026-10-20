@@ -73,6 +73,53 @@ def get_ordenanza_punto(lon: float, lat: float, ine: str | None) -> dict:
         return {'data_quality': 'unavailable', 'error': str(e)}
 
 
+def get_ambito_punto(lon: float, lat: float, ine: str | None) -> dict:
+    """Ámbito oficial de planeamento singular que contiene el punto
+    (capas ArcGIS municipales: PEP/PERI/PP/API/MP/PE — cubre los
+    huecos donde la zona no se rige por ordenanzas xerais)."""
+    if not ine:
+        return {'data_quality': 'unavailable',
+                'error': 'Municipio sin código INE resuelto'}
+    try:
+        from src.ambitos_service import ambito_oficial_en_punto
+        amb = ambito_oficial_en_punto(lon, lat, ine)
+        if amb:
+            amb.setdefault('data_quality', 'official')
+            return amb
+        return {'data_quality': 'unavailable',
+                'error': 'Sin ámbito de planeamiento singular en el punto'}
+    except Exception as e:
+        return {'data_quality': 'unavailable', 'error': str(e)}
+
+
+def get_pe1_punto(lon: float, lat: float, ine: str | None) -> dict:
+    """Calificación oficial del PE-1 (casco histórico de Santiago,
+    INE 15078) en el punto: ordenanza del Plan Especial (RI/AU/LH/R/
+    THR/EQ), artículo, PDF oficial y alzados de ordenación próximos.
+
+    Solo aplica en Santiago; para otro INE devuelve ``unavailable``
+    sin consultar la capa.
+    """
+    if str(ine or '') != '15078':
+        return {'data_quality': 'unavailable',
+                'error': 'PE-1 solo aplica en Santiago de Compostela'}
+    try:
+        from src.ambitos_service import (pe1_en_punto,
+                                         pe1_alzados_en_punto,
+                                         pe1_ordenanza_params)
+        pe1 = pe1_en_punto(lon, lat, ine)
+        if not pe1:
+            return {'data_quality': 'unavailable',
+                    'error': 'Punto fuera del ámbito del PE-1'}
+        params = pe1_ordenanza_params(ine, pe1.get('califica'))
+        if params:
+            pe1['ordenanza_params'] = params
+        pe1['alzados'] = pe1_alzados_en_punto(lon, lat, ine)
+        return pe1
+    except Exception as e:
+        return {'data_quality': 'unavailable', 'error': str(e)}
+
+
 def get_ordenanzas_params(ine: str | None,
                           subzona: str | None = None) -> dict:
     """Parámetros normativos oficiales extraídos del PGOM (por ordenanza)."""

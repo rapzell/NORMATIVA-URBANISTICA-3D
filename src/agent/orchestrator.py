@@ -171,6 +171,22 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
             f"{clas.get('clasificacion_ley') or clas.get('clase_ley')}"
             + (f" ({clas.get('denominacion_zona')})"
                if clas.get('denominacion_zona') else ''))
+    pe1 = ctx.get('pe1') or {}
+    if pe1.get('califica'):
+        partes.append('**Plan Especial PE-1**: ' + _linea_pe1(pe1))
+        op1 = (pe1.get('ordenanza_params') or {}).get('params') or {}
+        if op1.get('altura_regimen') == 'alzados_ordenacion':
+            partes.append('*Altura máxima: nos alzados de ordenación '
+                          'da manzana (arts. 95-98 do PE-1).*')
+    amb_pt0 = ctx.get('ambito_punto') or {}
+    _amb_ya0 = bool(ctx.get('ambito')) \
+        or (pe1.get('califica')
+            and str(amb_pt0.get('codigo') or '').upper() == 'PE-1')
+    if amb_pt0.get('codigo') and not _amb_ya0:
+        inst0 = f" — {amb_pt0['instrumento']}" \
+            if amb_pt0.get('instrumento') else ''
+        partes.append(f"**Ámbito de planeamento oficial**: "
+                      f"{amb_pt0['codigo']}{inst0}")
     if ord_p.get('ordenanza'):
         partes.append(f"**Ordenanza**: {ord_p['ordenanza']}"
                       + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
@@ -202,7 +218,8 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         faltan.append('altura medida')
     if not (clas.get('clasificacion_ley') or clas.get('clase_ley')):
         faltan.append('clasificación SIOTUGA')
-    if not ord_p.get('ordenanza') and not ctx.get('ambito'):
+    if not ord_p.get('ordenanza') and not ctx.get('ambito') \
+            and not pe1.get('califica'):
         faltan.append('ordenanza aplicable (subzona)')
     out = ['Datos del edificio seleccionado (fuentes oficiales):', '']
     out += partes
@@ -210,6 +227,23 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         out.append('')
         out.append('*No disponible: ' + ', '.join(faltan) + '.*')
     return '\n'.join(out)
+
+
+def _linea_pe1(pe1: dict) -> str:
+    """Línea legible de la calificación oficial del PE-1 (Santiago)."""
+    txt = f"**{pe1.get('califica') or '?'}**"
+    if pe1.get('entidad'):
+        txt += f" — {pe1['entidad']}"
+    op = pe1.get('ordenanza_params') or {}
+    if op.get('articulo'):
+        txt += f" (art. {op['articulo']} do PE-1"
+        if op.get('titulo'):
+            txt += f" — {op['titulo']}"
+        txt += ')'
+    if pe1.get('masa'):
+        txt += f" · manzana {pe1['masa']}"
+    txt += ' — fuente oficial XeoPortal (Modificación puntual PE-1)'
+    return txt
 
 
 def _linea_ambito(amb: dict) -> str:
@@ -295,6 +329,43 @@ def _respuesta_suelo(ctx: dict) -> str:
     else:
         out.append('No se pudo obtener la clasificación urbanística '
                    'del punto (fuente SIOTUGA no disponible).')
+    pe1 = ctx.get('pe1') or {}
+    if pe1.get('califica'):
+        out.append('**Plan Especial PE-1**: ' + _linea_pe1(pe1))
+        op = pe1.get('ordenanza_params') or {}
+        if op.get('params'):
+            out.append('**Parámetros da ordenanza do PE-1**:')
+            out += [f"· {k}: {v}" for k, v in op['params'].items()
+                    if v is not None]
+        if (op.get('params') or {}).get('altura_regimen') \
+                == 'alzados_ordenacion':
+            out.append('*Altura máxima: fíxase nos alzados de '
+                       'ordenación da manzana (arts. 95-98 do PE-1) — '
+                       'non hai valor tabulado xeral; verificar o '
+                       'plano de fachada oficial da manzana.*')
+        if pe1.get('normativa_url'):
+            out.append(f"Ordenanza oficial (PDF): {pe1['normativa_url']}")
+        if pe1.get('alzados'):
+            mz = ', '.join(a.get('manzana') or '?'
+                           for a in pe1['alzados'][:3])
+            out.append(f"Planos de fachada próximos (manzana {mz}) "
+                       'disponibles no visor — a asociación é por '
+                       'proximidade; confirmar a manzana exacta.')
+    amb_pt = ctx.get('ambito_punto') or {}
+    _amb_ya = bool(ctx.get('ambito')) \
+        or (pe1.get('califica')
+            and str(amb_pt.get('codigo') or '').upper() == 'PE-1')
+    if amb_pt.get('codigo') and not _amb_ya:
+        inst = f" — {amb_pt['instrumento']}" \
+            if amb_pt.get('instrumento') else ''
+        fig = f"{amb_pt.get('figura') or 'Ámbito'}"
+        out.append(f"**Ámbito de planeamento oficial**: "
+                   f"{amb_pt['codigo']}{inst} ({fig}, capa "
+                   f"{amb_pt.get('capa') or 'municipal'})"
+                   + (f" — aprovechamiento {amb_pt['edificabilidad']}"
+                      if amb_pt.get('edificabilidad') else ''))
+        if amb_pt.get('enl_ficha'):
+            out.append(f"Ficha oficial: {amb_pt['enl_ficha']}")
     if ord_p.get('ordenanza'):
         out.append(f"**Ordenanza aplicable**: {ord_p['ordenanza']}"
                    + (f" {ord_p['titulo']}" if ord_p.get('titulo') else '')
@@ -313,7 +384,7 @@ def _respuesta_suelo(ctx: dict) -> str:
                    f"{ctx['ambito_detectado']} (indicado nos atributos "
                    'oficiais da zona; ficha non indexada — verificar '
                    'no planeamento municipal)')
-    elif ord_p.get('ordenanzas_disponibles'):
+    elif ord_p.get('ordenanzas_disponibles') and not pe1.get('califica'):
         res = ctx.get('ordenanza_resolucion') or {}
         if res.get('estado') == 'ambigua' and res.get('candidatas'):
             cands = ', '.join(res['candidatas'])
@@ -387,6 +458,11 @@ def _contexto_edificio(lon: float | None, lat: float | None,
             futs['ordenanza_wfs'] = ex.submit(
                 _safe, 'ordenanza_wfs', tools.get_ordenanza_punto,
                 lon, lat, ine)
+            futs['ambito_punto'] = ex.submit(
+                _safe, 'ambito_punto', tools.get_ambito_punto,
+                lon, lat, ine)
+            futs['pe1'] = ex.submit(
+                _safe, 'pe1', tools.get_pe1_punto, lon, lat, ine)
         futs['ordenanzas'] = ex.submit(
             _safe, 'ordenanzas', tools.get_ordenanzas_params, ine, subzona)
         futs['inventario'] = ex.submit(
@@ -482,6 +558,42 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
         f" / {clas.get('categoria_wiug') or clas.get('clasificacion_plan') or ''}"
         f" ({_fmt_dq(clas)})",
     ]
+    pe1 = ctx.get('pe1') or {}
+    if pe1.get('califica'):
+        op = pe1.get('ordenanza_params') or {}
+        lin = (f"- Plan Especial PE-1 (oficial, {pe1.get('capa')}): "
+               f"calificación {pe1['califica']}"
+               f" — {pe1.get('entidad') or ''}"
+               + (f", art. {op['articulo']} «{op.get('titulo') or ''}»"
+                  if op.get('articulo') else '')
+               + (f", manzana {pe1['masa']}" if pe1.get('masa') else '')
+               + f" ({_fmt_dq(pe1)})")
+        if (op.get('params') or {}).get('altura_regimen') \
+                == 'alzados_ordenacion':
+            lin += (' — a altura máxima fíxase nos alzados de '
+                    'ordenación da manzana (arts. 95-98 do PE-1), '
+                    'non hai valor tabulado')
+        if pe1.get('normativa_url'):
+            lin += f" [PDF oficial: {pe1['normativa_url']}]"
+        if pe1.get('uso'):
+            lin += f" — uso {pe1['uso']}"
+        lineas.append(lin)
+        if op.get('params'):
+            for k, v in op['params'].items():
+                if v is not None:
+                    lineas.append(f"  · PE-1 {k}: {v}")
+    amb_pt = ctx.get('ambito_punto') or {}
+    if amb_pt.get('codigo'):
+        lineas.append(
+            f"- Ámbito oficial de planeamento: {amb_pt['codigo']}"
+            + (f" — {amb_pt['instrumento']}"
+               if amb_pt.get('instrumento') else '')
+            + f" ({amb_pt.get('figura') or 'ámbito'}, capa "
+              f"{amb_pt.get('capa') or 'municipal'}, official)"
+            + (f" — aprovechamiento {amb_pt['edificabilidad']}"
+               if amb_pt.get('edificabilidad') else '')
+            + (' — réxime propio: os parámetros veñen do seu '
+               'instrumento/ficha, non das ordenanzas xerais'))
     inv = ctx.get('inventario') or {}
     rows = inv.get('rows') or []
     if rows:
