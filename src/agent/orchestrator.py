@@ -113,7 +113,8 @@ _ORD_PARAM_LABELS = {
     'usos_permitidos': 'Usos permitidos',
 }
 _ORD_META_KEYS = {'ordenanza', 'titulo', 'fuente', 'trazas', 'data_quality',
-                  'ordenanzas_disponibles', 'resolucion', 'origen_resolucion'}
+                  'ordenanzas_disponibles', 'resolucion', 'origen_resolucion',
+                  'nota', 'variantes'}
 
 
 def _params_ordenanza_lineas(ord_p: dict) -> list[str]:
@@ -121,6 +122,29 @@ def _params_ordenanza_lineas(ord_p: dict) -> list[str]:
     return [f"· {_ORD_PARAM_LABELS.get(k, k)}: {v}"
             for k, v in ord_p.items()
             if k not in _ORD_META_KEYS and v is not None]
+
+
+def _variantes_lineas(ord_p: dict) -> list[str]:
+    """Subvariantes de la ordenanza cuando la resuelta no fija
+    parámetros propios (p.ej. U6 → U6.1…U6.6)."""
+    vars_ = ord_p.get('variantes') or {}
+    if not vars_:
+        return []
+    out = [f"*A ordenanza {ord_p['ordenanza']} non fixa parámetros "
+           'propios — as súas subzonas si:*']
+    for k, p in list(vars_.items())[:8]:
+        resumen = [f"{_ORD_PARAM_LABELS.get(pk, pk)} {p[pk]}"
+                   for pk in ('altura_maxima_m', 'ocupacion_max_pct',
+                              'edificabilidad_max_m2_m2',
+                              'retranqueo_frontal_m')
+                   if p.get(pk) is not None]
+        out.append(f"· **{k}**: " + ('; '.join(resumen)
+                                    if resumen else '—'))
+    if len(vars_) > 8:
+        out.append(f"· … e {len(vars_) - 8} subzonas máis")
+    out.append('*Verificar a variante exacta na ficha urbanística '
+               'da parcela.*')
+    return out
 
 
 def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
@@ -135,6 +159,12 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
     alt_dq = alt.get('data_quality') if isinstance(alt, dict) else None
 
     if not cat.get('refcat') and not res.get('ref_catastral'):
+        # Sin Catastro aún puede haber datos oficiales del suelo
+        # (clasificación, PE-1, ámbito, ordenanza) — responderlos.
+        if clas or (ctx.get('pe1') or {}).get('califica') \
+                or ord_p.get('ordenanza') or ctx.get('ambito') \
+                or (ctx.get('ambito_punto') or {}).get('codigo'):
+            return _respuesta_suelo(ctx)
         return ('No hay un edificio con datos catastrales en el punto '
                 'seleccionado. Haz clic sobre un edificio del mapa o '
                 'indica la referencia catastral.')
@@ -195,6 +225,9 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         if pl:
             partes.append('**Parámetros (PGOM oficial)**:')
             partes += pl
+        if ord_p.get('nota'):
+            partes.append(f"*{ord_p['nota']}*")
+        partes += _variantes_lineas(ord_p)
     elif ctx.get('ambito'):
         partes.append('**Ámbito de planeamento**: '
                       + _linea_ambito(ctx['ambito']))
@@ -374,6 +407,9 @@ def _respuesta_suelo(ctx: dict) -> str:
         if pl:
             out.append('**Parámetros (PGOM oficial)**:')
             out += pl
+        if ord_p.get('nota'):
+            out.append(f"*{ord_p['nota']}*")
+        out += _variantes_lineas(ord_p)
         if ctx.get('ambito'):
             out.append('**Ámbito**: ' + _linea_ambito(ctx['ambito']))
     elif ctx.get('ambito'):
@@ -487,6 +523,7 @@ def _contexto_edificio(lon: float | None, lat: float | None,
     ctx['ordenanzas_params'] = {
         'ordenanza': ords.get('ordenanza'),
         'titulo': resultado.get('titulo'),
+        'nota': resultado.get('nota'),
         **params,
         'fuente': resultado.get('fuente'),
         'trazas': resultado.get('trazas'),
@@ -525,6 +562,21 @@ def _contexto_edificio(lon: float | None, lat: float | None,
                 op['origen_resolucion'] = res.get('origen')
         except Exception:
             pass
+    # Ordenanza padre sin parámetros propios pero con subvariantes
+    # (p.ej. U6 → U6.1…U6.6): el código de zona oficial resolvió el
+    # padre; la ficha de la parcela dirá qué variante aplica. Listar
+    # las variantes con sus parámetros — nunca inventar los del padre.
+    op = ctx.get('ordenanzas_params') or {}
+    cod = op.get('ordenanza')
+    if cod and not any(
+            op.get(k) is not None for k in _ORD_PARAM_LABELS):
+        ords_map = (ctx.get('ordenanzas') or {}).get('ordenanzas') or {}
+        vars_ = {k: (v.get('params') or {})
+                 for k, v in ords_map.items()
+                 if str(k).startswith(f'{cod}.')
+                 and (v.get('params') or {})}
+        if vars_:
+            op['variantes'] = vars_
     return ctx, usadas
 
 
@@ -610,6 +662,13 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
             f" {ord_p.get('titulo') or ''} (oficial PGOM,"
             f" {ord_p.get('fuente')})")
         lineas += _params_ordenanza_lineas(ord_p)
+        if ord_p.get('nota'):
+            lineas.append(f"  · nota: {ord_p['nota']}")
+        for vk, vp in (ord_p.get('variantes') or {}).items():
+            resumen = '; '.join(
+                f"{_ORD_PARAM_LABELS.get(pk, pk)} {vv}"
+                for pk, vv in vp.items() if vv is not None)
+            lineas.append(f"  · subzona {vk}: {resumen}")
     elif ctx.get('subzona'):
         lineas.append(f"- Subzona declarada: {ctx['subzona']} "
                       '(sin parámetros oficiales extraídos — indicarlo)')
