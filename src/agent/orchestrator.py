@@ -486,10 +486,12 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
     rows = inv.get('rows') or []
     if rows:
         r0 = rows[0]
-        lineas.append(
-            f"- Planeamiento vigente: {r0.get('instrumento') or r0.get('plan')}"
-            f" (aprobado {r0.get('fecha_aprobacion') or r0.get('aprobacion') or 's/f'},"
-            f" {r0.get('estado') or ''})")
+        instr = r0.get('instrumento') or r0.get('plan')
+        if instr and str(instr).strip().lower() not in ('none', 'null', 'nan'):
+            lineas.append(
+                f"- Planeamiento vigente: {instr}"
+                f" (aprobado {r0.get('fecha_aprobacion') or r0.get('aprobacion') or 's/f'},"
+                f" {r0.get('estado') or ''})")
     if ord_p.get('ordenanza'):
         lineas.append(
             f"- Ordenanza aplicable: {ord_p['ordenanza']}"
