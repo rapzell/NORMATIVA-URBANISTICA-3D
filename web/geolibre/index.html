@@ -641,6 +641,7 @@ function statusLabel(status, props) {
     orientativo_dentro: 'Dentro del límite piloto',
     orientativo_supera: 'Supera el límite piloto',
     altura_tabla: 'Altura por ancho de rúa',
+    altura_alzados: 'Altura fijada en alzados PE-1',
     sin_limite: 'Ordenanza sin altura máxima',
     sin_dato: 'Sin dato normativo',
   })[status] || 'Sin dato normativo';
@@ -736,6 +737,14 @@ async function goToMunicipio(municipio) {
   // Volar al municipio
   const center = MUNI_CENTERS[municipio] || MUNI_CENTERS['Vigo'];
   map.flyTo({ center: center.center, zoom: center.zoom, pitch: 60, bearing: -20, duration: 2000 });
+
+  // Reiniciar el filtro de cumplimiento — un filtro de otra ciudad
+  // (p.ej. 'sin_dato') dejaba el mapa vacío al cambiar de municipio.
+  currentBuildingFilter = 'all';
+  // Vaciar la fuente para no mostrar edificios del municipio anterior
+  // mientras carga el nuevo (ni dejarlos si la carga falla).
+  const bSrc = map.getSource('buildings');
+  if (bSrc) bSrc.setData({ type: 'FeatureCollection', features: [] });
 
   // Cargar subzonas
   try {
@@ -1410,7 +1419,7 @@ function showBuildingTooltip(feature, point) {
     <div class="tt-row"><span class="tt-key">Altura</span><span>${escapeHtml(props.height || '—')} m</span></div>
     <div class="tt-row"><span class="tt-key">${pilot ? 'Subzona piloto' : 'Ordenanza'}</span><span>${escapeHtml(props.subzona || props.subzona_piloto || '—')}${props.titulo_ordenanza ? ' · ' + escapeHtml(props.titulo_ordenanza) : ''}</span></div>
     ${props.ambito ? `<div class="tt-row"><span class="tt-key">Ámbito</span><span>${escapeHtml(props.ambito)}${props.ambito_nombre ? ' · ' + escapeHtml(props.ambito_nombre) : ''}</span></div>` : ''}
-    <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${props.altura_maxima_subzona_m != null ? escapeHtml(props.altura_maxima_subzona_m) + ' m' : (props.altura_por_ancho_rua ? 'según ancho de rúa' : '—')}</span></div>
+    <div class="tt-row"><span class="tt-key">${pilot ? 'Límite piloto' : 'Máx. subzona'}</span><span>${props.altura_maxima_subzona_m != null ? escapeHtml(props.altura_maxima_subzona_m) + ' m' : (props.pe1_altura_regimen === 'alzados_ordenacion' ? 'alzados PE-1' : (props.altura_por_ancho_rua ? 'según ancho de rúa' : '—'))}</span></div>
     <div class="tt-badge ${escapeHtml(status)}">${escapeHtml(statusLabel(status, props))}</div>
   `;
   tooltipEl.style.display = 'block';
@@ -1647,7 +1656,7 @@ function renderOfficialContext(ctx) {
 }
 
 function renderMunicipioStats(features) {
-  const stats = { compatible: 0, supera_altura: 0, supera_cornisa: 0, orientativo_dentro: 0, orientativo_supera: 0, sin_limite: 0, sin_dato: 0 };
+  const stats = { compatible: 0, supera_altura: 0, supera_cornisa: 0, orientativo_dentro: 0, orientativo_supera: 0, altura_alzados: 0, sin_limite: 0, sin_dato: 0 };
   let sinDatoExplicado = 0;
   for (const f of (features || [])) {
     const p = f.properties || {};
@@ -1660,6 +1669,7 @@ function renderMunicipioStats(features) {
       <div class="info-row"><span class="key">Sobre cornisa (≤ tope)</span><span class="val">${stats.supera_cornisa}</span></div>
       <div class="info-row"><span class="key">Dentro límite piloto</span><span class="val">${stats.orientativo_dentro}</span></div>
       <div class="info-row"><span class="key">Sobre límite piloto</span><span class="val">${stats.orientativo_supera}</span></div>
+      <div class="info-row"><span class="key">Altura en alzados PE-1</span><span class="val">${stats.altura_alzados}</span></div>
       <div class="info-row"><span class="key">Sin límite en ordenanza</span><span class="val">${stats.sin_limite}</span></div>
       <div class="info-row"><span class="key">Sin dato normativo</span><span class="val">${stats.sin_dato - sinDatoExplicado}</span></div>
       <div class="info-row"><span class="key">Ámbito propio / dotación</span><span class="val">${sinDatoExplicado}</span></div>
@@ -1676,6 +1686,7 @@ function renderBuildingFilters() {
         <button class="filter-btn ${currentBuildingFilter === 'orientativo_dentro' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_dentro')">Dentro (piloto)</button>
         <button class="filter-btn ${currentBuildingFilter === 'orientativo_supera' ? 'active' : ''}" onclick="setBuildingFilter('orientativo_supera')">Sobre (piloto)</button>
         <button class="filter-btn ${currentBuildingFilter === 'supera_cornisa' ? 'active' : ''}" onclick="setBuildingFilter('supera_cornisa')">Sobre cornisa</button>
+        <button class="filter-btn ${currentBuildingFilter === 'altura_alzados' ? 'active' : ''}" onclick="setBuildingFilter('altura_alzados')">Alzados PE-1</button>
         <button class="filter-btn ${currentBuildingFilter === 'sin_limite' ? 'active' : ''}" onclick="setBuildingFilter('sin_limite')">Sin límite</button>
         <button class="filter-btn ${currentBuildingFilter === 'sin_dato' ? 'active' : ''}" onclick="setBuildingFilter('sin_dato')">Sin dato</button>
       </div>
@@ -1753,6 +1764,7 @@ async function loadBuildings(municipio) {
             'supera_cornisa', '#e8a13a',
             'orientativo_dentro', '#d29922',
             'orientativo_supera', '#bc4c00',
+            'altura_alzados', '#a371f7',
             'sin_limite', '#e3b341',
             '#58a6ff'
           ],
@@ -2384,14 +2396,16 @@ async function selectBuilding(feature) {
                 : 'No asociada'))));
   const alturaSubzona = props.altura_maxima_subzona_m != null
     ? `${props.altura_maxima_subzona_m} m`
-    : (props.altura_por_ancho_rua
+    : (props.pe1_altura_regimen === 'alzados_ordenacion'
+       ? 'según alzados de ordenación (PE-1)'
+       : (props.altura_por_ancho_rua
        ? `según ancho de rúa: ${props.altura_por_ancho_rua}` +
          (props.altura_aplicable_m != null
           ? ` → aplicable ≈${props.altura_aplicable_m} m (ancho est. ~${props.ancho_rua_estimado_m} m)`
           : '')
        : (props.cumplimiento_altura === 'sin_limite'
           ? 'no fijada por la ordenanza'
-          : 'No disponible'));
+          : 'No disponible')));
   const status = props.cumplimiento_altura || 'sin_dato';
   const pilot = props.normative_status === 'pilot';
   let footprint = null;
