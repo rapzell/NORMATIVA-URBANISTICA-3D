@@ -11,17 +11,26 @@ git checkout feat/demo-silencioso
 python -m venv venv
 venv\Scripts\python.exe -m pip install -r requirements.txt
 
+# Datos de la app (334 ficheros del dataset público HF:
+# cachés de edificios, normativa Coruña/Santiago, mapas, corpus…)
+venv\Scripts\python.exe scripts\fetch_beta_data.py
+
 # Entorno RAG/embeddings (Python 3.13)
 py -3.13 -m venv venv_rag          # o: python3.13 -m venv venv_rag
 venv_rag\Scripts\python.exe -m pip install -r requirements_rag.txt
 ```
 
-Los PDFs oficiales (corpus RAG + normativa Vigo PXOM 2025 + fichas de
-ámbitos) y los embeddings precalculados **van en el repo** — no hay que
-descargar nada. Lo que se regenera solo: `datos/cache/` (capas SIOTUGA
-y WFS municipal al primer uso) y `_index.json` (BM25, automático).
-Las API keys (`api.txt`, `docs/apikey*`) NO están en el repo —
-copiarlas a mano o crear el fichero en la máquina nueva.
+`datos/` está en `.gitignore` (excepto la normativa de Vigo y el corpus
+autonómico, que sí van en el repo). Todo lo demás — cachés
+`osm_buildings`, `arcgis_ambitos`, `muni_wfs`, `mapas/`, normativa de
+Coruña (`15030`) y Santiago (`15078`, PE-1 incluido), índices — vive en
+el dataset público HF `DavidVRM/normativa-galicia-data` y lo baja
+`scripts/fetch_beta_data.py` a `datos/` (idempotente; `--forzar`
+re-descarga). Sin ese paso la app arranca pero regenera capas en vivo
+(lento) y no tiene los datos PE-1 ni las cachés precargadas.
+Las API keys (`api.txt`, `api key.txt`, `docs/apikey*`) NO están en el
+repo — copiarlas a mano a la máquina nueva (hacen falta para subir al
+dataset HF y para el asistente con LLM local).
 
 ## Despliegue beta (Render free + dataset HF)
 
