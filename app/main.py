@@ -1441,15 +1441,42 @@ async def qa_edificio_stream(req: QAEdificioRequest):
                                         _guardar_turno)
 
     def eventos():
-        try:
-            prep = preparar_consulta(
-                req.pregunta.strip(), lon=req.lon, lat=req.lat,
-                municipio=req.municipio, ref_catastral=req.ref_catastral,
-                subzona=req.subzona, ambito=req.ambito,
-                top_k=req.top_k, chat_id=req.chat_id)
-        except Exception as e:
+        import queue as _queue
+        import threading as _threading
+        q: '_queue.Queue[str | None]' = _queue.Queue()
+        holder: dict = {}
+
+        def _run_prep():
+            try:
+                holder['prep'] = preparar_consulta(
+                    req.pregunta.strip(), lon=req.lon, lat=req.lat,
+                    municipio=req.municipio,
+                    ref_catastral=req.ref_catastral,
+                    subzona=req.subzona, ambito=req.ambito,
+                    top_k=req.top_k, chat_id=req.chat_id,
+                    on_step=q.put)
+            except Exception as e:
+                holder['error'] = e
+            finally:
+                q.put(None)
+
+        _threading.Thread(target=_run_prep, daemon=True).start()
+        while True:
+            try:
+                msg = q.get(timeout=15)
+            except _queue.Empty:
+                yield 'data: {"tipo":"ping"}\n\n'
+                continue
+            if msg is None:
+                break
+            yield 'data: ' + _json.dumps(
+                {'tipo': 'paso', 'paso': msg}, ensure_ascii=False) + '\n\n'
+
+        if 'error' in holder:
+            e = holder['error']
             yield f"data: {_json.dumps({'tipo': 'error', 'error': str(e)})}\n\n"
             return
+        prep = holder['prep']
         yield 'data: ' + _json.dumps({'tipo': 'contexto',
                                       'herramientas': prep['herramientas'],
                                       'municipio': prep['ctx'].get('municipio'),
@@ -1470,6 +1497,9 @@ async def qa_edificio_stream(req: QAEdificioRequest):
                                      ensure_ascii=False) + '\n\n'
 
         if prep.get('intencion') != 'normativa':
+            yield 'data: ' + _json.dumps(
+                {'tipo': 'paso', 'paso': 'Componiendo la respuesta…'},
+                ensure_ascii=False) + '\n\n'
             final = finalizar_respuesta(
                 prep, None, False, 'respuesta de contexto')
             _guardar_turno(prep, final)
@@ -1478,6 +1508,9 @@ async def qa_edificio_stream(req: QAEdificioRequest):
                 ensure_ascii=False) + '\n\n'
             return
 
+        yield 'data: ' + _json.dumps(
+            {'tipo': 'paso', 'paso': 'Generando la respuesta con el '
+             'modelo…'}, ensure_ascii=False) + '\n\n'
         respuesta, llm_ok, motivo = None, False, 'sin proveedor LLM'
         try:
             from src.model_gateway import stream_with_fallback
@@ -1506,6 +1539,9 @@ async def qa_edificio_stream(req: QAEdificioRequest):
             except Exception:
                 pass
 
+        yield 'data: ' + _json.dumps(
+            {'tipo': 'paso', 'paso': 'Verificando la respuesta contra '
+             'las fuentes…'}, ensure_ascii=False) + '\n\n'
         final = finalizar_respuesta(prep, respuesta, llm_ok, motivo)
         _guardar_turno(prep, final)
         yield 'data: ' + _json.dumps({'tipo': 'final', 'resultado': final},

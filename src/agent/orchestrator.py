@@ -473,11 +473,26 @@ def _respuesta_saludo(ctx: dict) -> str:
                    'preguntas concretas.')
 
 
+# Etiquetas legibles por herramienta — se emiten como pasos de
+# progreso por el canal ``on_step`` (endpoint SSE /qa/edificio/stream).
+_STEP_LABELS = {
+    'catastro': 'Consultando Catastro (parcela, uso, plantas)…',
+    'clasificacion': 'Consultando clasificación SIOTUGA…',
+    'building': 'Midiendo altura y datos del edificio…',
+    'ordenanza_wfs': 'Resolviendo la ordenanza municipal…',
+    'ambito_punto': 'Comprobando ámbitos de planeamiento…',
+    'pe1': 'Comprobando calificación del PE-1…',
+    'ordenanzas': 'Cargando parámetros de las ordenanzas…',
+    'inventario': 'Consultando inventario de planeamiento…',
+}
+
+
 def _contexto_edificio(lon: float | None, lat: float | None,
                        ine: str | None, municipio: str | None,
                        subzona: str | None,
                        ref_catastral: str | None,
-                       ambito: str | None = None) -> tuple[dict, list[str]]:
+                       ambito: str | None = None,
+                       on_step=None) -> tuple[dict, list[str]]:
     """Ejecuta las herramientas de contexto en paralelo."""
     ctx: dict = {'municipio': municipio, 'subzona': subzona,
                  'ambito_input': ambito, 'ine': ine,
@@ -485,6 +500,11 @@ def _contexto_edificio(lon: float | None, lat: float | None,
     usadas: list[str] = []
 
     def _safe(name, fn, *a):
+        if on_step:
+            try:
+                on_step(_STEP_LABELS.get(name, f'Consultando {name}…'))
+            except Exception:
+                pass
         try:
             return fn(*a)
         except Exception as e:
@@ -772,15 +792,26 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                       subzona: str | None = None,
                       ambito: str | None = None,
                       top_k: int = 10,
-                      chat_id: str | None = None) -> dict:
+                      chat_id: str | None = None,
+                      on_step=None) -> dict:
     """Fase 1-4: contexto + RAG + cálculo + prompt (sin invocar el LLM).
 
     Devuelve todo lo necesario para generar la respuesta — lo usa tanto
     ``responder_consulta_edificio`` como el endpoint SSE, que necesita
     emitir el contexto y las fuentes antes de los tokens.
+    ``on_step`` es un callback opcional que recibe textos legibles de
+    progreso («Consultando Catastro…») para el chat.
     """
     from app.main import _get_ine_for_municipio
 
+    def _emit(msg: str) -> None:
+        if on_step:
+            try:
+                on_step(msg)
+            except Exception:
+                pass
+
+    _emit('Analizando la consulta…')
     mem = get_session(chat_id)
     if mem and mem.usa_referencia(pregunta) and mem.last_building:
         lb = mem.last_building
@@ -796,12 +827,18 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
     # clasificar_intencion cae al regex sin coste de latencia.
     with ThreadPoolExecutor(max_workers=1) as ex:
         fut_int = ex.submit(clasificar_intencion, pregunta, True)
-        ctx, herramientas = _contexto_edificio(
-            lon, lat, ine, municipio, subzona, ref_catastral, ambito)
+        if on_step:
+            ctx, herramientas = _contexto_edificio(
+                lon, lat, ine, municipio, subzona, ref_catastral, ambito,
+                on_step=on_step)
+        else:
+            ctx, herramientas = _contexto_edificio(
+                lon, lat, ine, municipio, subzona, ref_catastral, ambito)
         intencion = fut_int.result()
 
     ctx['punto'] = {'lon': lon, 'lat': lat}
 
+    _emit('Contrastando la consistencia de los datos…')
     ctx['advertencias'] = detectar_contradicciones(ctx)
 
     # Preguntas de contexto/saludo: no hace falta RAG ni LLM — la
@@ -815,6 +852,7 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                'rerank': False}
         fragmentos = []
     else:
+        _emit('Buscando en el corpus normativo…')
         rag = tools.search_normativa(pregunta, ine=ine,
                                      municipio=municipio, top_k=top_k)
         fragmentos = rag.get('fragmentos') or []
@@ -864,6 +902,7 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                     pass
                 if url_pdf and paginas:
                     url_pdf = f"{url_pdf}#page={paginas[0]}"
+                _emit(f'Extrayendo parámetros de la ordenanza {key}…')
                 params_txt = '; '.join(
                     f"{k}: {v}" for k, v in
                     (found.get('params') or {}).items())
@@ -915,6 +954,7 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
                    else tools.get_ambito_ficha(code, ine=ine))
             if not amb or amb.get('data_quality') != 'official':
                 continue
+            _emit(f'Localizando la ficha del ámbito {code}…')
             herramientas.append('get_ambito_ficha')
             if amb.get('tipo') == 'api':
                 partes = [
@@ -978,12 +1018,15 @@ def preparar_consulta(pregunta: str, lon: float | None = None,
 
     calculo = None
     if _PISCINA_RE.search(pregunta or ''):
+        _emit('Evaluando la viabilidad de la piscina…')
         calculo = tools.check_piscina_viability(ctx)
         herramientas.append('check_piscina_viability')
     elif _CAMBIO_USO_RE.search(pregunta or ''):
+        _emit('Evaluando el cambio de uso…')
         calculo = tools.check_cambio_uso(ctx)
         herramientas.append('check_cambio_uso')
 
+    _emit('Componiendo el contexto para el modelo…')
     historial = mem.build_history_context() if mem else ''
     prompt = _prompt(pregunta, ctx, fragmentos, calculo,
                      historial=historial)
