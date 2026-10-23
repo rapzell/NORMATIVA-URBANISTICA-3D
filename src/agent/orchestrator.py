@@ -195,6 +195,15 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
     if alt_v is not None:
         partes.append(f"**Altura**: {alt_v} m"
                       + (f" ({alt_dq})" if alt_dq else ''))
+    n_pl = cat.get('plantas_oficiales') or cat.get('plantas_sobre_rasante')
+    if n_pl:
+        partes.append(f"**Plantas (Catastro)**: {n_pl}"
+                      + (f" + {cat['sotanos']} sótano(s)"
+                         if cat.get('sotanos') else '')
+                      + ' (official)')
+    elif alt_v is not None:
+        partes.append(f"**Plantas**: ≈{round(alt_v / 3.2, 1)} "
+                      '(estimado, ~3,2 m/planta)')
     if clas.get('clasificacion_ley') or clas.get('clase_ley'):
         partes.append(
             f"**Clasificación urbanística**: "
@@ -595,6 +604,7 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
     res = ctx.get('resumen') or {}
     clas = ctx.get('clasificacion') or {}
     ord_p = ctx.get('ordenanzas_params') or {}
+    cat = ctx.get('catastro') or {}
     bld = ctx.get('building') or {}
     alt = bld.get('altura') or {}
     alt_v = alt.get('value') if isinstance(alt, dict) else None
@@ -608,6 +618,20 @@ def _prompt(pregunta: str, ctx: dict, fragmentos: list[dict],
         f" ({_fmt_dq(ctx.get('catastro'))})",
         f"- Altura medida: {alt_v if alt_v is not None else 'no disponible'} m"
         f" ({alt.get('data_quality', 'unavailable') if isinstance(alt, dict) else 'unavailable'})",
+    ]
+    if cat.get('plantas_oficiales') or cat.get('plantas_sobre_rasante'):
+        n_pl = cat.get('plantas_oficiales') or cat['plantas_sobre_rasante']
+        lineas.append(
+            f"- Plantas oficiales (Catastro BuildingPart): {n_pl}"
+            + (f" + {cat['sotanos']} sótano(s)" if cat.get('sotanos')
+               else '')
+            + ' (official)')
+    if alt_v:
+        est_pl = round(alt_v / 3.2, 1)
+        lineas.append(
+            f"- Plantas estimadas desde altura medida: ≈{est_pl}"
+            ' (estimated — ~3,2 m/planta, non oficial)')
+    lineas += [
         f"- Clasificación SIOTUGA: {clas.get('clase_ley') or clas.get('clasificacion_ley') or 'no disponible'}"
         f" / {clas.get('categoria_wiug') or clas.get('clasificacion_plan') or ''}"
         f" ({_fmt_dq(clas)})",

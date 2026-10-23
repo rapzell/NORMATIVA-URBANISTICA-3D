@@ -618,6 +618,63 @@ def test_contradiccion_subzona_valida_sin_aviso():
     assert detectar_contradicciones(ctx) == []
 
 
+# ---------- PE-1 (casco histórico Santiago): alzados + sobreedificación ----------
+
+def _ctx_pe1(altura=None, plantas_of=None, califica='RI', masa='76802',
+             tiene_plano=True):
+    return {
+        'building': {'altura': {'value': altura}},
+        'catastro': ({'plantas_oficiales': plantas_of}
+                     if plantas_of else {}),
+        'resumen': {},
+        'ordenanzas_params': {},
+        'pe1': {
+            'califica': califica, 'masa': masa,
+            'entidad': 'Recinto intramuros',
+            'ordenanza_params': {
+                'articulo': 150,
+                'params': {'altura_regimen': 'alzados_ordenacion'}},
+            'alzados': ([{'manzana': masa, 'pdfs': [{'url': 'x'}]}]
+                        if tiene_plano else []),
+        },
+        'pe1_altura_regimen': 'alzados_ordenacion',
+    }
+
+
+def test_pe1_aviso_alzados_sin_valor_tabulado():
+    adv = detectar_contradicciones(_ctx_pe1(altura=14.2, plantas_of=4))
+    assert adv and 'alzado' in adv[0] and '95' in adv[0]
+    assert '76802' in adv[0]          # cita la manzana del alzado
+    # 14,2 m ≈ 4,4 plantas vs 4 oficiales: coherente, sin falso aviso
+    assert all('sobreedificaci' not in a for a in adv)
+
+
+def test_pe1_posible_sobreedificacion_vs_catastro():
+    adv = detectar_contradicciones(_ctx_pe1(altura=25.0, plantas_of=4))
+    assert any('sobreedificaci' in a for a in adv)
+
+
+def test_pe1_sin_plano_avisa_localizador():
+    adv = detectar_contradicciones(_ctx_pe1(altura=9.0, tiene_plano=False))
+    assert adv and 'Xeoportal' in adv[0]
+
+
+def test_pe1_no_aplica_sin_califica():
+    ctx = _ctx_pe1(altura=50.0, plantas_of=2)
+    ctx['pe1'] = {}                    # punto fuera del PE-1
+    assert detectar_contradicciones(ctx) == []
+
+
+def test_pe1_ctx_official_shape():
+    # /official/context usa edificio_datos en lugar de building
+    ctx = _ctx_pe1(altura=None)
+    ctx.pop('building')
+    ctx['edificio_datos'] = {'altura': {'value': 12.0,
+                                        'data_quality': 'measured'}}
+    adv = detectar_contradicciones(ctx)
+    assert adv and '12' in adv[0]
+
+
 # ---------- validación semántica (env-gated) ----------
 
 def test_semantica_desactivada_por_defecto(monkeypatch):

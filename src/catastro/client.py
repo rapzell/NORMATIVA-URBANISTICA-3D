@@ -379,11 +379,24 @@ def obtener_edificio_por_coordenadas(lon: float, lat: float,
     refcat = result.get('refcat')
     if refcat and len(refcat) >= 14:
         for fn in (obtener_detalles_por_ref, obtener_parcela_por_ref,
-                   obtener_edificios_por_parcela):
+                   obtener_edificios_por_parcela,
+                   obtener_plantas_buildingpart):
             try:
                 extra = fn(refcat, fetch=fetch)
                 if extra:
                     result.update(extra)
             except Exception:
                 continue
+    # Nº de plantas oficial: Building si el WFS lo publica, si no el
+    # máximo entre las BuildingPart (plantas_sobre_rasante).
+    if not result.get('plantas_oficiales'):
+        for ed in result.get('edificios') or []:
+            if ed.get('plantas'):
+                result['plantas_oficiales'] = ed['plantas']
+                break
+        if not result.get('plantas_oficiales') \
+                and result.get('plantas_sobre_rasante'):
+            result['plantas_oficiales'] = result['plantas_sobre_rasante']
+            if result.get('sotanos'):
+                result['sotanos_oficiales'] = result['sotanos']
     return result

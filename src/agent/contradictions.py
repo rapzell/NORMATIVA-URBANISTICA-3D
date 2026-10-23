@@ -53,6 +53,9 @@ def detectar_contradicciones(ctx: dict) -> list[str]:
 
     ordenanza = ord_p.get('ordenanza')
     if not ordenanza:
+        # Sin ordenanza tabulada aún puede haber advertencias del PE-1
+        # (casco histórico: altura en alzados de ordenación).
+        adv.extend(detectar_altura_pe1(ctx, alt_v))
         return adv
 
     altura_max = ord_p.get('altura_maxima_m')
@@ -103,4 +106,70 @@ def detectar_contradicciones(ctx: dict) -> list[str]:
                 f"('{cat.get('uso_principal')}') — probablemente la "
                 f"ordenanza correcta sea otra.")
 
+    adv.extend(detectar_altura_pe1(ctx, alt_v))
+    return adv
+
+
+def detectar_altura_pe1(ctx: dict,
+                        alt_v: float | None = None) -> list[str]:
+    """Advertencias de altura cuando la parcela rige por PE-1.
+
+    El Plan Especial del casco histórico de Santiago fija la altura
+    máxima en los alzados de ordenación de cada manzana (arts. 95-98),
+    no en una tabla: el sistema nunca inventa un límite numérico, pero
+    sí (a) recuerda que la comprobación pasa por el alzado oficial y
+    (b) detecta una posible sobreedificación cuando la altura medida
+    implica claramente más plantas de las que Catastro declara.
+
+    Acepta las dos formas de contexto: la del orquestador
+    (``building.altura.value``) y la de ``/official/context``
+    (``edificio_datos.altura.value``).
+    """
+    adv: list[str] = []
+    pe1 = ctx.get('pe1') or {}
+    if not pe1.get('califica'):
+        return adv
+    op = pe1.get('ordenanza_params') or pe1.get('params') or {}
+    regimen = ((op.get('params') or {}).get('altura_regimen')
+               or op.get('altura_regimen')
+               or ctx.get('pe1_altura_regimen'))
+    if alt_v is None:
+        alt_v = ((ctx.get('edificio_datos') or {}).get('altura') or {}) \
+            .get('value')
+    masa = pe1.get('masa') or ''
+    alz = pe1.get('alzados') or ctx.get('pe1_alzados') or []
+    tiene_plano = any(a.get('pdfs') for a in alz if isinstance(a, dict))
+    if regimen == 'alzados_ordenacion':
+        msg = ("La altura máxima de esta parcela la fija el alzado de "
+               "ordenación del PE-1 (arts. 95-98), no un valor "
+               "tabulado")
+        if alt_v is not None:
+            msg += (f" — la altura medida por LiDAR es {alt_v:g} m; "
+                    "compárela con el alzado oficial")
+            msg += (f" de la manzana {masa}." if masa else
+                    " de su manzana.")
+            if not tiene_plano:
+                msg += (" (Plano de fachada no localizado "
+                        "automáticamente — consúltelo en el localizador"
+                        " do Xeoportal.)")
+        else:
+            msg += "."
+        adv.append(msg)
+
+    # Posible sobreedificación: la altura medida (~3,2 m/planta) implica
+    # más plantas de las que Catastro declara oficialmente. Es una
+    # heurística marcada como estimada — LiDAR incluye cubierta y
+    # Catastro no siempre refleja reformas — nunca una conclusión legal.
+    cat = ctx.get('catastro') or {}
+    plantas_of = cat.get('plantas_oficiales') \
+        or cat.get('plantas_sobre_rasante')
+    if alt_v and plantas_of:
+        plantas_est = alt_v / 3.2
+        if plantas_est > plantas_of + 1.5:
+            adv.append(
+                f"Posible sobreedificación: la altura medida "
+                f"({alt_v:g} m ≈ {plantas_est:.1f} plantas) supera las "
+                f"{plantas_of} plantas declaradas en Catastro — "
+                "revisar el alzado oficial o la ficha catastral "
+                "(estimación ~3,2 m/planta).")
     return adv

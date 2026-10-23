@@ -3808,6 +3808,13 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
         'label': 'Ver ocupación del suelo en esta parcela',
       })
     ctx['official_links'] = links
+  # Advertencias de consistencia (PE-1: altura en alzados; posible
+  # sobreedificación altura medida vs plantas Catastro, etc.)
+  try:
+    from src.agent.contradictions import detectar_contradicciones
+    ctx['advertencias'] = detectar_contradicciones(ctx)
+  except Exception:
+    ctx.setdefault('advertencias', [])
   return ctx
 
 

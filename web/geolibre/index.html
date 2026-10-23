@@ -1630,6 +1630,16 @@ function renderOfficialContext(ctx) {
     html += aff.disclaimer ? `<div class="hint">${escapeHtml(aff.disclaimer)}</div>` : '';
     html += '</div>';
   }
+  // Advertencias de consistencia (PE-1 alzados, posible sobreedificación…)
+  const advs = (ctx && ctx.advertencias) || [];
+  if (advs.length) {
+    html += '<div class="info-card">';
+    html += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">Advertencias</div>';
+    for (const w of advs.slice(0, 4)) {
+      html += `<div class="hint" style="color:#d29922">${escapeHtml(w)}</div>`;
+    }
+    html += '</div>';
+  }
   // Enlaces a fuentes oficiales con datos específicos
   const links = (ctx && ctx.official_links) || [];
   if (links.length > 0) {
