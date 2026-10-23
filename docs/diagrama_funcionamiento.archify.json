@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "NORMATIVA GALICIA 3D — Arquitectura",
+    "quality_profile": "showcase",
+    "viewBox": [
+      980,
+      560
+    ]
+  },
+  "components": [
+    {
+      "id": "arquitecto",
+      "type": "external",
+      "label": "Arquitecto",
+      "sublabel": "prevabilidad",
+      "pos": [
+        40,
+        270
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "visor",
+      "type": "frontend",
+      "label": "Visor GeoLibre",
+      "sublabel": "MapLibre GL + Three.js",
+      "pos": [
+        215,
+        264
+      ],
+      "size": [
+        160,
+        72
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API FastAPI",
+      "sublabel": "edificios · contexto · QA",
+      "pos": [
+        430,
+        264
+      ],
+      "size": [
+        180,
+        72
+      ]
+    },
+    {
+      "id": "hfdata",
+      "type": "database",
+      "label": "Dataset HF",
+      "sublabel": "cachés + corpus (snapshot)",
+      "pos": [
+        440,
+        90
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "agente",
+      "type": "backend",
+      "label": "Orquestador agéntico",
+      "sublabel": "herramientas · contradicciones",
+      "pos": [
+        430,
+        388
+      ],
+      "size": [
+        180,
+        72
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "OpenRouter",
+      "sublabel": "LLM con citas",
+      "pos": [
+        660,
+        394
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "rag",
+      "type": "database",
+      "label": "Corpus normativo",
+      "sublabel": "BM25 · PDFs oficiales",
+      "pos": [
+        430,
+        496
+      ],
+      "size": [
+        180,
+        56
+      ]
+    },
+    {
+      "id": "catastro",
+      "type": "external",
+      "label": "Catastro",
+      "sublabel": "parcela · usos · plantas",
+      "pos": [
+        660,
+        40
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "siotuga",
+      "type": "external",
+      "label": "SIOTUGA Xunta",
+      "sublabel": "clasificación WFS/WMS",
+      "pos": [
+        660,
+        124
+      ],
+      "size": [
+        170,
+        56
+      ]
+    },
+    {
+      "id": "municipal",
+      "type": "external",
+      "label": "GIS municipales",
+      "sublabel": "Vigo · Coruña · Santiago PE-1",
+      "pos": [
+        660,
+        200
+      ],
+      "size": [
+        170,
+        72
+      ]
+    },
+    {
+      "id": "edificios",
+      "type": "external",
+      "label": "Edificios 3D",
+      "sublabel": "OSM/Overture + LiDAR",
+      "pos": [
+        660,
+        292
+      ],
+      "size": [
+        170,
+        64
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "usr-visor",
+      "from": "arquitecto",
+      "to": "visor",
+      "label": "HTTPS beta",
+      "variant": "emphasis"
+    },
+    {
+      "id": "visor-api",
+      "from": "visor",
+      "to": "api",
+      "label": "REST JSON"
+    },
+    {
+      "id": "api-hf",
+      "from": "api",
+      "to": "hfdata",
+      "label": "snapshot datos/",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "variant": "dashed"
+    },
+    {
+      "id": "api-agente",
+      "from": "api",
+      "to": "agente",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "agente-llm",
+      "from": "agente",
+      "to": "llm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agente-rag",
+      "from": "agente",
+      "to": "rag",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-cat",
+      "from": "api",
+      "to": "catastro"
+    },
+    {
+      "id": "api-sio",
+      "from": "api",
+      "to": "siotuga"
+    },
+    {
+      "id": "api-muni",
+      "from": "api",
+      "to": "municipal"
+    },
+    {
+      "id": "api-edif",
+      "from": "api",
+      "to": "edificios"
+    }
+  ]
+}
