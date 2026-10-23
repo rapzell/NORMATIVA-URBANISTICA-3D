@@ -36,8 +36,17 @@ _OVERPASS_DISK_TTL_S = 7 * 24 * 3600  # 7 días
 _PROPS_SCHEMA = 16
 
 
+# Alias de municipio → nombre canónico usado en los ficheros de caché
+# precargados del dataset (datos/cache/osm_buildings/).
+_DISK_KEY_ALIASES = {
+    "coruna": "a coruna",
+    "santiago": "santiago de compostela",
+}
+
+
 def _overpass_disk_path(muni_key: str, limit: int) -> str:
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in muni_key)
+    canon = _DISK_KEY_ALIASES.get(muni_key, muni_key)
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in canon)
     return os.path.join(
         _OVERPASS_DISK_CACHE_DIR,
         f"{safe}_{int(limit)}_v{_PROPS_SCHEMA}.json")
