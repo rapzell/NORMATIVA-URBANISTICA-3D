@@ -3507,7 +3507,7 @@ def _build_official_context(municipio: str | None = None, subzona: str | None = 
       'sources': [
         {'name': 'Catastro (OVC)', 'url': 'https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCBusqueda.aspx', 'type': 'coordenadas/referencia'},
         {'name': 'SIOTUGA', 'url': 'https://siotuga.xunta.gal/siotuga/inventario', 'type': 'planeamiento territorial'},
-        {'name': 'SIOSE (IDEE)', 'url': 'https://servicios.idee.es/wfs-inspire/ocupacion-suelo', 'type': 'ocupación del suelo'},
+        {'name': 'SIOSE (IDEE)', 'url': 'https://servicios.idee.es/wfs-inspire/ocupacion-suelo?SERVICE=WFS&REQUEST=GetCapabilities&VERSION=2.0.0', 'type': 'ocupación del suelo'},
         {'name': 'Inventario municipal', 'url': '', 'type': 'planeamiento vigente'},
       ],
     },

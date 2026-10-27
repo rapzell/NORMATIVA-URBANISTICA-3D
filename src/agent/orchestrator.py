@@ -147,8 +147,60 @@ def _variantes_lineas(ord_p: dict) -> list[str]:
     return out
 
 
+def _num_es(s: str) -> float | None:
+    """Parsea un número en formato español («10.000,5» → 10000.5)."""
+    s = s.strip()
+    if ',' in s:
+        s = s.replace('.', '').replace(',', '.')
+    else:
+        s = s.replace('.', '')
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _correcciones_afirmaciones(pregunta: str, ctx: dict) -> list[str]:
+    """Contrasta cifras que el usuario afirma con los datos oficiales.
+
+    «el Catastro dice que tiene 10.000 m²» cuando la parcela oficial
+    tiene 300 m² → la respuesta debe corregir, no asentir.
+    """
+    if not pregunta:
+        return []
+    res = ctx.get('resumen') or {}
+    bld = ctx.get('building') or {}
+    alt = bld.get('altura') or {}
+    alt_v = alt.get('value') if isinstance(alt, dict) else None
+    sup_oficial = res.get('superficie_parcela_m2')
+    corr = []
+    m = re.search(r'(\d[\d.,]*)\s*m[²2]\b', pregunta, re.I)
+    if m and sup_oficial:
+        afirmada = _num_es(m.group(1))
+        if afirmada and abs(afirmada - sup_oficial) / sup_oficial > 0.25:
+            f = lambda n: f"{n:,.0f}".replace(',', '.')
+            corr.append(
+                f"⚠ Corrección: la superficie oficial de la parcela es "
+                f"{f(sup_oficial)} m², no {f(afirmada)} m² "
+                f"(fuente: Catastro).")
+    m2 = re.search(r'(\d[\d.,]*)\s*m(?:etros)?\s*de\s*altura|'
+                   r'altura\s*(?:de|es|son)?\s*(\d[\d.,]*)\s*m\b',
+                   pregunta, re.I)
+    if m2 and alt_v:
+        afirmada = _num_es(m2.group(1) or m2.group(2) or '')
+        if afirmada and abs(afirmada - alt_v) / max(alt_v, 1) > 0.25:
+            dq = {'measured': 'medida LiDAR/MDSN',
+                  'estimated': 'estimada'}.get(
+                      alt.get('data_quality'), 'registrada')
+            corr.append(
+                f"⚠ Corrección: la altura {dq} del edificio es "
+                f"{alt_v:g} m, no {afirmada:g} m.")
+    return corr
+
+
 def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
     """Respuesta determinista sobre el edificio desde las herramientas."""
+    corr = _correcciones_afirmaciones(pregunta, ctx)
     cat = ctx.get('catastro') or {}
     res = ctx.get('resumen') or {}
     clas = ctx.get('clasificacion') or {}
@@ -164,13 +216,14 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
         if clas or (ctx.get('pe1') or {}).get('califica') \
                 or ord_p.get('ordenanza') or ctx.get('ambito') \
                 or (ctx.get('ambito_punto') or {}).get('codigo'):
-            return _respuesta_suelo(ctx)
-        return ('No hay un edificio con datos catastrales en el punto '
-                'seleccionado. Haz clic sobre un edificio del mapa o '
-                'indica la referencia catastral.')
+            return '\n'.join(corr + [_respuesta_suelo(ctx)])
+        return '\n'.join(corr + [
+            'No hay un edificio con datos catastrales en el punto '
+            'seleccionado. Haz clic sobre un edificio del mapa o '
+            'indica la referencia catastral.'])
 
     if _SUELO_TEMA_RE.search(pregunta):
-        return _respuesta_suelo(ctx)
+        return '\n'.join(corr + [_respuesta_suelo(ctx)])
 
     partes = []
     if cat.get('uso_principal'):
@@ -263,7 +316,7 @@ def _respuesta_contexto(pregunta: str, ctx: dict) -> str:
     if not ord_p.get('ordenanza') and not ctx.get('ambito') \
             and not pe1.get('califica'):
         faltan.append('ordenanza aplicable (subzona)')
-    out = ['Datos del edificio seleccionado (fuentes oficiales):', '']
+    out = corr + ['Datos del edificio seleccionado (fuentes oficiales):', '']
     out += partes
     if faltan:
         out.append('')

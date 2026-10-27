@@ -789,6 +789,7 @@ async function goToMunicipio(municipio) {
 async function loadOrdenanzas(municipio) {
   const resp = await fetch(`${API}/ordenanzas/${encodeURIComponent(municipio)}`);
   const data = await resp.json();
+  if (activeMunicipio !== municipio) return; // cambio de ciudad en vuelo
   const panel = document.getElementById('info-panel');
   let html = '<div class="info-card" id="ordenanzas-card">';
   html += '<div style="font-weight:600;margin-bottom:6px">Ordenanzas municipales de cambio de uso</div>';
@@ -2392,6 +2393,10 @@ async function submitGenerateReport() {
 }
 
 async function selectBuilding(feature) {
+  // Guardia de secuencia: clics rápidos en varios edificios lanzan
+  // fetches en paralelo; solo la respuesta del último clic puede
+  // escribir en el panel — las anteriores se descartan al volver.
+  const seq = (window._selectSeq = (window._selectSeq || 0) + 1);
   const props = feature.properties || {};
   const panel = document.getElementById('info-panel');
   const h = props.height != null ? `${props.height} m` : 'No disponible';
@@ -2533,6 +2538,7 @@ async function selectBuilding(feature) {
       fetch(`${API}/official/building-data?${bdParams}`).then(r => r.json()).catch(() => null),
     ]);
     hideMapLoading();
+    if (seq !== window._selectSeq) return; // respuesta obsoleta — otro edificio seleccionado
     if (ctx) ctx.building_data = bdata || ctx.edificio_datos || {};
     window._officialContext = ctx || {};
     // Dibujar lindero de la parcela catastral si está disponible
